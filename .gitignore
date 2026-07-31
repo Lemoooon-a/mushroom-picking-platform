@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# macOS
+.DS_Store
+
+# Linux temporary files
+*~
+*.swp
+*.swo
+
+# Build outputs
+build/
+dist/
+install/
+log/
+*.egg-info/
+
+# Runtime logs
+logs/
+*.log
+
+# Local configuration
+config/robot.yaml
+host/config/robot.yaml
+.env
+
+# Recorded data
+data/
+datasets/
+rosbags/
+captures/
+
+# RealSense / images / point clouds
+*.bag
+*.pcd
+*.ply
+
+# Models
+*.pt
+*.pth
+*.onnx
+*.engine
+
+# STM32 generated build files
+firmware/**/Debug/
+firmware/**/Release/
+firmware/**/build/
+
+# STM32CubeIDE metadata
+firmware/**/.settings/
+firmware/**/.project
+firmware/**/.cproject
