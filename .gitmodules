@@ -1,0 +1,3 @@
+[submodule "firmware/stm32_motion_controller"]
+	path = firmware/stm32_motion_controller
+	url = git@github.com:Lemoooon-a/surf2026-stm32-motion-controller.git
