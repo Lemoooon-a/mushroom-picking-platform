@@ -558,6 +558,45 @@ class JointCliSafetyTests(unittest.TestCase):
             self.assertEqual(joint_cli.main(self.common_args()), 0)
         fake_joint.command_position.assert_not_called()
 
+    def test_disable_stops_only_selected_joint_without_initialization(self) -> None:
+        fake_bus = MagicMock()
+        fake_bus.__enter__.return_value = object()
+        fake_joint = MagicMock()
+        output = io.StringIO()
+        with (
+            patch.object(joint_cli, "CanMotorBus", return_value=fake_bus),
+            patch.object(joint_cli, "MG4010Driver"),
+            patch.object(joint_cli, "CanRotaryJoint", return_value=fake_joint),
+            redirect_stdout(output),
+        ):
+            self.assertEqual(
+                joint_cli.main(["--joint", "shoulder", "--disable"]),
+                0,
+            )
+        fake_joint.stop.assert_called_once_with()
+        fake_joint.initialize.assert_not_called()
+        fake_joint.get_state.assert_not_called()
+        fake_joint.command_position.assert_not_called()
+        self.assertIn("CAN motor ID 1 with 0x81", output.getvalue())
+
+    def test_disable_rejects_position_options_before_opening_bus(self) -> None:
+        args = [
+            "--joint",
+            "elbow",
+            "--disable",
+            "--target-rad",
+            "0.1",
+            "--velocity-rad-s",
+            "0.05",
+        ]
+        with (
+            patch.object(joint_cli, "CanMotorBus") as bus_class,
+            redirect_stdout(io.StringIO()),
+            self.assertLogs(joint_cli.LOGGER, level="ERROR"),
+        ):
+            self.assertEqual(joint_cli.main(args), 2)
+        bus_class.assert_not_called()
+
     def test_motion_callback_prints_final_actual_a4_frame(self) -> None:
         message = can.Message(
             arbitration_id=0x141,

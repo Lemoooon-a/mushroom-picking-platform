@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MG4010 有限行程关节位置命令的只读预览与显式人工测试工具。"""
+"""MG4010 有限行程关节位置测试与单关节失能工具。"""
 
 from __future__ import annotations
 
@@ -63,7 +63,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Preview or explicitly submit one calibrated MG4010 joint position "
-            "command. Motion is disabled unless --enable-motion is present."
+            "command, or disable one joint with 0x81. Position motion is disabled "
+            "unless --enable-motion is present."
         )
     )
     parser.add_argument(
@@ -72,8 +73,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="use a complete named config from config/joints.py",
     )
     parser.add_argument("--motor-id", type=int, choices=range(1, 33))
-    parser.add_argument("--target-rad", type=_finite_float, required=True)
-    parser.add_argument("--velocity-rad-s", type=_positive_float, required=True)
+    parser.add_argument("--target-rad", type=_finite_float)
+    parser.add_argument("--velocity-rad-s", type=_positive_float)
     parser.add_argument("--gear-ratio", type=_positive_float)
     parser.add_argument(
         "--encoder-zero-output-deg", type=_finite_float
@@ -119,7 +120,46 @@ def build_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="explicitly permit one A4 submission; ignored when --dry-run is set",
     )
+    parser.add_argument(
+        "--disable",
+        action="store_true",
+        help=(
+            "send one 0x81 motor-off command to the selected joint; does not "
+            "require --enable-motion"
+        ),
+    )
     return parser
+
+
+def _validate_mode_args(args: argparse.Namespace) -> None:
+    if args.disable:
+        conflicting = []
+        for option in (
+            "target_rad",
+            "velocity_rad_s",
+            "dry_run",
+            "enable_motion",
+            "current_circle_angle_raw",
+            "current_multi_turn_deg",
+        ):
+            value = getattr(args, option)
+            if value is not None and value is not False:
+                conflicting.append(f"--{option.replace('_', '-')}")
+        if conflicting:
+            raise ValueError(
+                "--disable cannot be combined with: " + ", ".join(conflicting)
+            )
+        return
+
+    missing = []
+    if args.target_rad is None:
+        missing.append("--target-rad")
+    if args.velocity_rad_s is None:
+        missing.append("--velocity-rad-s")
+    if missing:
+        raise ValueError(
+            "position mode requires: " + ", ".join(missing)
+        )
 
 
 def _finite_float(value: str) -> float:
@@ -358,7 +398,15 @@ def _offline_dry_run(args: argparse.Namespace, config: JointConfig) -> int:
 
 def _live_run(args: argparse.Namespace, config: JointConfig) -> int:
     motion_enabled = args.enable_motion and not args.dry_run
-    print("MOTION ENABLED" if motion_enabled else "DRY RUN - NO MOTOR COMMAND WILL BE SENT")
+    control_enabled = motion_enabled or args.disable
+    if args.disable:
+        print("DISABLE COMMAND ENABLED")
+    else:
+        print(
+            "MOTION ENABLED"
+            if motion_enabled
+            else "DRY RUN - NO MOTOR COMMAND WILL BE SENT"
+        )
     with CanMotorBus(
         interface=args.interface,
         channel=args.channel,
@@ -366,12 +414,20 @@ def _live_run(args: argparse.Namespace, config: JointConfig) -> int:
         allow_same_id_response=args.allow_same_id_response,
         raw_frame_callback=(
             _motion_frame_printer(args.raw)
-            if motion_enabled
+            if control_enabled
             else (_raw_printer if args.raw else None)
         ),
     ) as bus:
         driver = MG4010Driver(bus, config.motor_id)
         joint = CanRotaryJoint(driver, config)
+        if args.disable:
+            print(
+                f"Disabling joint {config.name} on CAN motor ID "
+                f"{config.motor_id} with 0x81"
+            )
+            joint.stop()
+            print("Joint disable command accepted by motor")
+            return 0
         joint.initialize()
         state = joint.get_state()
         plan = build_plan_from_state(
@@ -397,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_argument_parser()
     args = parser.parse_args(argv)
     try:
+        _validate_mode_args(args)
         config = config_from_args(args)
         if args.dry_run:
             return _offline_dry_run(args, config)

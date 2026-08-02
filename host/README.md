@@ -42,6 +42,8 @@ host/
   有限行程角度解析和软限位。
 - `Planar2RKinematics` 是不依赖 CAN 的纯计算层，使用 x 前、y 左、z 上右手
   坐标系，提供肩肘二连杆的 XY 平面正逆运动学。
+- `Planar2RArmController` 将逆运动学解与肩肘逻辑软限位连接，
+  在双关节参数预检查后背靠背下发两条位置命令。
 
 ## 四层角度
 
@@ -200,6 +202,96 @@ python scripts/test_joint_position.py \
 不加 `--enable-motion` 时只生成在线预览。机械安装或编码器对应关系变化后，
 必须重新标定零点、方向和限位。
 
+单独失能某个关节时，使用 `--disable` 发送 `0x81` 电机关闭命令：
+
+```bash
+python scripts/test_joint_position.py \
+  --joint shoulder \
+  --disable \
+  --allow-same-id-response \
+  --raw
+```
+
+`--disable` 不需要 `--enable-motion`，且不能与目标位置、速度或
+`--dry-run` 同时使用。该命令只失能 `--joint` 选中的电机，不替代硬件急停。
+
 `0x81` 是软件停止，不替代切断动力或使能的独立硬件急停。角度正方向、A4 速度
 换算和同 ID 应答兼容来自当前 MG4010E-i36 协议解释及实测，换电机型号或固件后
 仍需重新验证。
+
+## 肩肘双关节 XY 测试
+
+`scripts/test_planar_2r_motion.py` 将末端 XY 目标转换为肩肘逻辑角，
+并使用当前标定软限位筛选解。不加 `--enable-motion` 时完全离线，
+不打开 CAN。下面的 300/250 只是演示尺寸，上机前必须替换为实际
+`L1/L2`；连杆长度和 `x/y` 必须使用同一单位：
+
+```bash
+python scripts/test_planar_2r_motion.py \
+  --link1-length 300 \
+  --link2-length 250 \
+  --x 511.948 \
+  --y 177.094 \
+  --elbow-branch positive \
+  --velocity-rad-s 0.1745329252
+```
+
+确认预览中的肩肘角、软限位和机械空间后，在同一条命令末尾加上：
+
+```bash
+  --allow-same-id-response \
+  --raw \
+  --enable-motion
+```
+
+肩和肘共享一个 `CanMotorBus`，两条 `0xA4` 依次快速发送。
+这可用于空载联动测试，但不是严格同步轨迹，也不保证两关节同时到位。
+
+## STM32 正式 Host 客户端
+
+`drivers/stm32_motion.py` 将固件子模块的 ASCII machine protocol v1 整理为根项目
+正式客户端。`STM32SerialTransport` 只有显式 `open()` 才打开串口；
+`STM32MotionClient` 负责 sequence、同步响应、异步 `DONE/ABORT/FAULT`、日志过滤、
+状态解析和 timeout。协议版本和最大行长通过离线测试与以下固件真值锁定：
+
+```text
+firmware/stm32_motion_controller/App/Inc/app_protocol.h
+firmware/stm32_motion_controller/App/README.md
+```
+
+客户端提供 Slide/Z 的查询、相对/绝对运动、归零、停止、禁用、使能、清错和全停，
+以及吸盘查询、吸附、释放和停止。构造客户端不会连接硬件，代码也没有默认串口。
+
+## Feetech 末端旋转轴
+
+`drivers/feetech_protocol.py` 提供帧编码、状态包验证、timeout、显式 open/close 和
+可注入串口；`robot/feetech_rotation.py` 提供有限行程角度换算、反馈读取、位置命令
+和显式 torque enable/disable。位置命令按 Feetech 磁编码协议从 `0x2A` 连续写入
+`position/time/speed` 六字节。具体舵机型号仍未确认，因此下列参数没有项目默认值：
+
+- port 和 baud rate；
+- servo ID；
+- counts per turn 和 zero raw；
+- direction、minimum/maximum angle；
+- maximum raw speed；
+- 写指令是否返回 status packet。
+
+人工工具默认完全离线。下面仅演示参数形式，不是实机配置，也不会打开串口：
+
+```bash
+cd host
+.venv/bin/python scripts/test_feetech_rotation.py \
+  --position-rad 0.1 \
+  --speed-raw 100 \
+  --servo-id 1 \
+  --counts-per-turn 4096 \
+  --zero-raw 2048 \
+  --direction-sign 1 \
+  --min-position-rad -1.0 \
+  --max-position-rad 1.0 \
+  --max-speed-raw 1000
+```
+
+真实访问必须额外提供 `--execute --port ... --baudrate ...`。运动前还需根据具体型号
+数据手册复核总线类型、寄存器表、反馈语义、Status Return Level 和标定值；本次没有
+进行任何舵机硬件测试。

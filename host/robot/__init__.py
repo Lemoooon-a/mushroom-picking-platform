@@ -13,9 +13,32 @@ from .joint import (
     JointPositionOutOfRangeError,
     JointState,
 )
+from .feetech_rotation import (
+    FeetechRotationAxis,
+    FeetechRotationConfig,
+    FeetechRotationError,
+    FeetechRotationFeedback,
+    FeetechRotationLimitError,
+    FeetechRotationPositionError,
+)
+from .planar_arm import (
+    NoJointLimitSolutionError,
+    Planar2RArmController,
+    PlanarArmCommandError,
+    PlanarArmError,
+    PlanarArmTarget,
+    joint_limited_solutions,
+    select_joint_target,
+)
 
 __all__ = [
     "CanRotaryJoint",
+    "FeetechRotationAxis",
+    "FeetechRotationConfig",
+    "FeetechRotationError",
+    "FeetechRotationFeedback",
+    "FeetechRotationLimitError",
+    "FeetechRotationPositionError",
     "JointConfig",
     "JointConfigurationError",
     "JointError",
@@ -26,4 +49,11 @@ __all__ = [
     "JointMotorMovingError",
     "JointPositionOutOfRangeError",
     "JointState",
+    "NoJointLimitSolutionError",
+    "Planar2RArmController",
+    "PlanarArmCommandError",
+    "PlanarArmError",
+    "PlanarArmTarget",
+    "joint_limited_solutions",
+    "select_joint_target",
 ]

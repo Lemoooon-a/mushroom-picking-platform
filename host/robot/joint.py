@@ -451,6 +451,15 @@ class CanRotaryJoint:
 
         self.driver.stop()
 
+    def validate_position_command(
+        self,
+        position_rad: float,
+        velocity_rad_s: float,
+    ) -> None:
+        """只验证位置和速度参数，不访问 CAN，也不发送命令。"""
+
+        self._validate_command(position_rad, velocity_rad_s)
+
     def _validate_command(self, position_rad: float, velocity_rad_s: float) -> None:
         _validate_finite_joint_position(position_rad, self.config)
         if not (
