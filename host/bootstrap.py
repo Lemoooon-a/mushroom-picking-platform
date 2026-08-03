@@ -202,6 +202,10 @@ def create_upper_motion_runtime(
         interface="gs_usb",
         channel=0,
         bitrate=hardware_config.can_adapter.bitrate,
+        # 当前 MG4010 实机在 0x141/0x142 请求 ID 上原样应答，而不是
+        # 使用协议定义的 0x181/0x182 响应 ID。兼容模式仍校验命令字、
+        # 标准帧格式，并排除 gs_usb 的 TX echo。
+        allow_same_id_response=True,
         gs_usb_device=resolved.can_adapter.device,
     )
     shoulder_joint = CanRotaryJoint(

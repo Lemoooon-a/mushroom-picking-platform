@@ -394,7 +394,9 @@ stop，timeout 不会自动 torque disable。所有真实运动仍要求显式�
 `HardwareConfig` 与 `MotionRuntimeConfig`，调用一次 `resolve_hardware()`，并用解析得到的
 STM32/Feetech port 和 gs_usb device 创建 transport、bus、肩肘关节、Rotation、唯一的
 `UnifiedMotionController` 及两个 façade。构造会进行设备发现，但不会打开通信、初始化关节、
-使能、机械归零、torque enable 或提交运动。
+使能、机械归零、torque enable 或提交运动。当前 MG4010 实机已确认在请求 ID `0x141/0x142`
+上原样应答，因此 Runtime 显式启用 `allow_same_id_response`；CAN 层仍校验命令字、帧格式并
+排除 gs_usb TX echo。
 
 `runtime.open()` 才按 STM32 transport → CAN bus → Feetech bus 打开通信资源；任一步失败时，
 已打开资源按相反顺序回滚。`runtime.close()` 按 Feetech → CAN → STM32 关闭，即使某一资源

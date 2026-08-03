@@ -131,6 +131,7 @@ class BootstrapAssemblyTests(unittest.TestCase):
         self.assertEqual(runtime.feetech_bus.config.port, "/dev/ttyUSB9")
         self.assertIs(runtime.can_bus.gs_usb_device, resolved.can_adapter.device)
         self.assertEqual(runtime.can_bus.bitrate, 1_000_000)
+        self.assertTrue(runtime.can_bus.allow_same_id_response)
         self.assertIs(runtime.shoulder_joint.config, SHOULDER_JOINT_CONFIG)
         self.assertIs(runtime.elbow_joint.config, ELBOW_JOINT_CONFIG)
         self.assertIs(runtime.rotation_axis.config, END_EFFECTOR_ROTATION_CONFIG)
