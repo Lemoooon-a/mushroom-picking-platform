@@ -60,6 +60,41 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(event.kind, "DONE")
         self.assertEqual(transport.writes, ["@0 MR S 10000 5000 10000"])
 
+    def test_submit_returns_after_ok_without_waiting_for_done(self) -> None:
+        transport = FakeTransport(["=0 OK"])
+        client = STM32MotionClient(transport)
+        submission = client.submit_move_absolute("slide", 12345, 2000, 3000)
+        self.assertEqual(submission.sequence, 0)
+        self.assertEqual(submission.axis, "S")
+        self.assertEqual(submission.command, "MA")
+        self.assertEqual(transport.writes, ["@0 MA S 12345 2000 3000"])
+        self.assertIsNone(client.poll_command(submission))
+
+    def test_submit_preserves_early_event_for_later_poll(self) -> None:
+        transport = FakeTransport(["!0 DONE Z 1000", "=0 OK"])
+        client = STM32MotionClient(transport)
+        submission = client.submit_move_absolute("z", 1000, 2000, 3000)
+        event = client.poll_command(submission)
+        self.assertIsNotNone(event)
+        self.assertEqual(event.kind, "DONE")
+
+    def test_poll_returns_abort_and_fault_without_collapsing_them(self) -> None:
+        for kind in ("ABORT", "FAULT"):
+            transport = FakeTransport(["=0 OK", f"!0 {kind} Z 9"])
+            client = STM32MotionClient(transport)
+            submission = client.submit_home("z")
+            event = client.poll_command(submission)
+            self.assertIsNotNone(event)
+            self.assertEqual(event.kind, kind)
+
+    def test_wait_for_command_uses_submission_sequence(self) -> None:
+        transport = FakeTransport(["=7 OK", "!7 DONE S 12345"])
+        client = STM32MotionClient(transport, first_sequence=7)
+        submission = client.submit_move_relative("slide", 12345, 2000, 3000)
+        event = client.wait_for_command(submission, timeout=0.01)
+        self.assertEqual(event.sequence, submission.sequence)
+        self.assertEqual(event.kind, "DONE")
+
     def test_sequence_wraps_at_uint16(self) -> None:
         transport = FakeTransport(["=65535 OK", "=0 OK"])
         client = STM32MotionClient(transport, first_sequence=65535)

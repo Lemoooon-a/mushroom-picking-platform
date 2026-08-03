@@ -167,6 +167,15 @@ class STM32Message:
 
 
 @dataclass(frozen=True)
+class STM32CommandSubmission:
+    """An accepted non-blocking command tracked by protocol sequence."""
+
+    sequence: int
+    axis: str
+    command: str
+
+
+@dataclass(frozen=True)
 class AxisStatus:
     axis: str
     configured: bool
@@ -309,6 +318,19 @@ class STM32MotionClient:
     def _nonblocking(
         self, command: str, *, sync_timeout: float, event_timeout: float
     ) -> STM32Message:
+        axis = command.split(maxsplit=2)[1] if " " in command else ""
+        submission = self._submit_nonblocking(command, axis, sync_timeout)
+        event = self.wait_for_command(submission, timeout=event_timeout)
+        if event.kind != "DONE":
+            raise STM32CommandEventError(event)
+        return event
+
+    def _submit_nonblocking(
+        self,
+        command: str,
+        axis: str,
+        sync_timeout: float,
+    ) -> STM32CommandSubmission:
         sequence = self._send(command)
         response = self._wait(sequence, "=", sync_timeout)
         if response.kind == "ERR":
@@ -317,10 +339,37 @@ class STM32MotionClient:
             raise STM32CommandError(sequence, _parse_int(response.arguments[0], "error"))
         if response.kind != "OK" or response.arguments:
             raise STM32MotionProtocolError("motion acceptance must be '=seq OK'")
-        event = self._wait(sequence, "!", event_timeout)
-        if event.kind != "DONE":
-            raise STM32CommandEventError(event)
-        return event
+        return STM32CommandSubmission(sequence, axis, command.split(maxsplit=1)[0])
+
+    def poll_command(
+        self,
+        submission: STM32CommandSubmission,
+    ) -> STM32Message | None:
+        """Return the command event if already available, otherwise poll once."""
+
+        for index, message in enumerate(self._pending):
+            if message.sequence == submission.sequence and message.channel == "!":
+                return self._pending.pop(index)
+        line = self.transport.read_line()
+        if line is None:
+            return None
+        message = parse_machine_line(line)
+        if message is None:
+            return None
+        if message.sequence == submission.sequence and message.channel == "!":
+            return message
+        self._pending.append(message)
+        return None
+
+    def wait_for_command(
+        self,
+        submission: STM32CommandSubmission,
+        *,
+        timeout: float = 120.0,
+    ) -> STM32Message:
+        """Wait for and return DONE, ABORT, or FAULT for a submission."""
+
+        return self._wait(submission.sequence, "!", timeout)
 
     def query_axis(self, axis: str, timeout: float = 2.0) -> AxisStatus:
         response = self._sync(f"QS {_axis_code(axis)}", timeout)
@@ -407,6 +456,44 @@ class STM32MotionClient:
             command, sync_timeout=sync_timeout, event_timeout=event_timeout
         )
 
+    def submit_move_absolute(
+        self,
+        axis: str,
+        position_um: int,
+        speed_um_s: int,
+        acceleration_um_s2: int,
+        *,
+        sync_timeout: float = 2.0,
+    ) -> STM32CommandSubmission:
+        """Submit an absolute move and return after the synchronous OK."""
+
+        axis_code = _axis_code(axis)
+        command = (
+            f"MA {axis_code} {_integer(position_um, 'position_um')} "
+            f"{_integer(speed_um_s, 'speed_um_s', positive=True)} "
+            f"{_integer(acceleration_um_s2, 'acceleration_um_s2', positive=True)}"
+        )
+        return self._submit_nonblocking(command, axis_code, sync_timeout)
+
+    def submit_move_relative(
+        self,
+        axis: str,
+        distance_um: int,
+        speed_um_s: int,
+        acceleration_um_s2: int,
+        *,
+        sync_timeout: float = 2.0,
+    ) -> STM32CommandSubmission:
+        """Submit a relative move and return after the synchronous OK."""
+
+        axis_code = _axis_code(axis)
+        command = (
+            f"MR {axis_code} {_integer(distance_um, 'distance_um')} "
+            f"{_integer(speed_um_s, 'speed_um_s', positive=True)} "
+            f"{_integer(acceleration_um_s2, 'acceleration_um_s2', positive=True)}"
+        )
+        return self._submit_nonblocking(command, axis_code, sync_timeout)
+
     def home(
         self, axis: str, *, sync_timeout: float = 2.0, event_timeout: float = 60.0
     ) -> STM32Message:
@@ -415,6 +502,17 @@ class STM32MotionClient:
             sync_timeout=sync_timeout,
             event_timeout=event_timeout,
         )
+
+    def submit_home(
+        self,
+        axis: str,
+        *,
+        sync_timeout: float = 2.0,
+    ) -> STM32CommandSubmission:
+        """Submit homing and return after the synchronous OK."""
+
+        axis_code = _axis_code(axis)
+        return self._submit_nonblocking(f"HM {axis_code}", axis_code, sync_timeout)
 
     def stop(self, axis: str, timeout: float = 2.0) -> None:
         self._expect_ok(self._sync(f"ST {_axis_code(axis)}", timeout))

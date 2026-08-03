@@ -348,6 +348,93 @@ can_bus = CanMotorBus(
 > 如果以后增加第二个相同 VID/PID 的设备，再为设备配置增加可选 `serial_number`，将其
 > 作为第二级精确匹配条件。当前阶段不要提前引入未使用的复杂匹配逻辑。
 
+## Unified asynchronous point-to-point control
+
+`motion.UnifiedMotionController` 为 `slide`、`z`、`shoulder`、`elbow` 和 `rotation`
+提供统一的异步绝对点到点接口。直线轴公开单位为 mm、mm/s、mm/s²，旋转轴公开单位为
+deg、deg/s、deg/s²；底层的 µm、rad、电机角和 raw count 不进入运动学或前端边界。
+
+运动学只需生成 `MultiAxisTarget`。`submit_positions()` 先完整验证目标，再按输入顺序
+背靠背下发并立即返回 group handle；它不等待机械到位。`wait_group()` 轮询所有参与轴，
+使用各轴显式注入的 `ArrivalConfig` 判断到位、稳定窗口和 deadline。命令
+`accepted=True` 只代表后端接受，不代表 `arrived` 或 `completed=True`。
+
+```python
+from motion import AxisName, AxisTarget, MultiAxisTarget
+
+target = MultiAxisTarget(
+    targets=(
+        AxisTarget(AxisName.SLIDE, 300.0),
+        AxisTarget(AxisName.Z, 120.0),
+        AxisTarget(AxisName.SHOULDER, 25.0),
+        AxisTarget(AxisName.ELBOW, -60.0),
+        AxisTarget(AxisName.ROTATION, 90.0),
+    )
+)
+
+handle = controller.submit_positions(target)
+result = controller.wait_group(handle, timeout_s=10.0)
+```
+
+若目标省略 velocity/acceleration，构造控制器时必须通过
+`default_motion_parameters` 注入已经确认的工程单位默认值；核心层不会从示例或未经验证
+的机械参数猜测默认运动 profile。Slide/Z 描述符当前复现已锁定 STM32 固件中的临时保守
+machine soft limits，最终机械验收后应通过 `axis_descriptors` 注入更新值。
+
+This is coordinated point-to-point submission, not interpolated or strictly synchronized motion.
+
+当前没有轨迹插补、严格多轴同步、同时到达规划或完整采摘状态机；
+`startup_position` 不属于普通运动目标，也不会参与坐标换算。Rotation 当前没有可靠的独立
+stop，timeout 不会自动 torque disable。所有真实运动仍要求显式硬件配置、已确认的默认
+速度/加速度、逐轴机械验证和现场安全措施；软件 stop 不是硬件急停。
+
+### Frontend and kinematics client boundaries
+
+`motion.FrontendMotionInterface` 和 `motion.KinematicsMotionInterface` 是建议冻结的同进程
+调用边界。`FrontendMotionFacade` 与 `KinematicsMotionFacade` 只转发方法，必须复用同一个
+`UnifiedMotionController`：
+
+```python
+from bootstrap import create_upper_motion_runtime
+
+runtime = create_upper_motion_runtime(controller)
+frontend_motion = runtime.frontend_motion
+kinematics_motion = runtime.kinematics_motion
+```
+
+当前仓库没有完整硬件 runtime/factory；`bootstrap.py` 因此接收程序入口已构造的唯一
+controller，构造过程不打开硬件，不自动 enable/home，也不发送运动。硬件资源生命周期仍由
+创建 controller/backends 的程序入口负责。
+
+当前统一 API 映射如下：
+
+| Client member | Unified controller member | Direct forwarding | Minimal core addition |
+| --- | --- | ---: | ---: |
+| `list_axes` / `describe_axis` / `get_state` | same name | Yes | No |
+| `get_axis_states` | same name | Yes | Yes: ordered batch query |
+| `submit_absolute` / `submit_positions` | same name | Yes | No |
+| `get_command_result` | same name | Yes | No |
+| `get_group_result` | same name | Yes | Yes: non-blocking aggregation |
+| `wait_group` | same name | Yes | No |
+| `stop` / `home_reference` | same name | Yes | No |
+
+两个新增 core 方法只组合现有公开状态/result，不新增单位换算、命令记录、底层分发或硬件
+访问。前端 façade 不暴露阻塞 `wait`/`wait_group`；运动学 façade 不暴露单轴提交、stop 或
+home。
+
+两个示例完全使用 fake，不读取本地硬件配置：
+
+```bash
+cd host
+.venv/bin/python -m examples.frontend_motion_usage
+.venv/bin/python -m examples.kinematics_motion_usage
+```
+
+成员交接文档位于：
+
+- `docs/handoffs/FRONTEND_MOTION_INTERFACE_HANDOFF.md`
+- `docs/handoffs/KINEMATICS_MOTION_INTERFACE_HANDOFF.md`
+
 ## Feetech 末端旋转轴
 
 `drivers/feetech_protocol.py` 提供帧编码、状态包验证、timeout、显式 open/close 和

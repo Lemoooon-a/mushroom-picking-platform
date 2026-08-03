@@ -1,20 +1,21 @@
 # 蘑菇采摘平台当前进度
 
 > 更新时间：2026-08-03
-> 证据范围：当前源码/配置、Git 状态、151 项 Host 离线测试、已验收 STM32 tag 及仓库内
+> 证据范围：当前源码/配置、Git 状态、253 项 Host 离线测试、已验收 STM32 tag 及仓库内
 > 历史构建/硬件记录。编译和离线测试不视为硬件验收。上层运动专项详见
 > [UPPER_MOTION_CONTROL_HANDOFF.md](UPPER_MOTION_CONTROL_HANDOFF.md)。
 
 ## 1. 技术结论
 
-项目处于“底层执行器组件初步可用、Host 上层边界刚形成、系统协调待开发”阶段。
+项目处于“底层执行器组件初步可用、五轴统一点到点边界已离线实现、整机协调待开发”阶段。
 
 - 最成熟的是已锁定为 `stm32-motion-v0.1.0` 的 STM32 Slide/Z/吸盘和 machine protocol；
 - MG4010E 已具备 CAN、协议、单关节、肩肘配置和最小 Planar 2R 命令桥；
 - Feetech 已确认为 `SM-45BL-C001`、RS-485、自动方向 USB 转换板、115200 baud 和 ID 1；
   已完成 ping/raw read、正方向和零点确认，并把当前调试参数固化为项目配置；
-- 最大缺口是 arrival wait、motion timeout、统一停止/故障传播、坐标变换和采摘状态机；
-- 下一里程碑应是固化本次基线并完成 Feetech 机械标定，不是直接做整机采摘。
+- Host 已形成 `UnifiedMotionController`，并通过共享 façade 向前端和运动学提供窄接口；
+- 最大缺口转为五轴统一层的真实硬件验证、vacuum 协调、坐标变换和采摘状态机；
+- 下一里程碑应是先固化当前未提交基线，再逐轴低速验证统一点到点生命周期，不是直接做整机采摘。
 
 ## 2. 总体进度矩阵
 
@@ -26,11 +27,11 @@
 | Vacuum | Implemented/Compiles | 吸附/释放状态机、互锁、查询、停止 | 无真空反馈、参数待机械验证 | 固件已验收；完整吸取未验证 |
 | TMC5160 diagnostics/homing | Implemented/Compiles | SPI 配置、DIAG、Slide/Z homing | 最终参数和全异常矩阵 | 部分 bench/mechanical evidence |
 | MG4010E CAN/protocol | Implemented/Offline tested | transport、`0x94/92/9A/9C/A4/81` | 长时间双电机实机稳定性 | Offline tested |
-| MG4010E single joint | Implemented/Offline tested | 绝对位置解释、软限位、命令、软件停止 | 到位、超时、运行中故障协调 | Offline tested；部分历史实测说明 |
+| MG4010E single joint | Implemented/Offline tested | 绝对位置解释、软限位、命令、软件停止；统一层轮询到位 | 原生到位事件、统一层真实硬件复验 | Offline tested；部分历史实测说明 |
 | Shoulder/elbow calibration | Implemented/Not fully verified | 零点、方向、限位、速度配置 | 独立原始校准记录和复测 | Code/test evidence，校准证据不足 |
 | Planar 2R | Implemented/Offline tested | FK/IK、双解、不可达/奇异、按关节限位筛解 | 实际连杆长度、碰撞和连续性 | Mathematical offline tested |
 | Feetech rotation | Implemented/部分 Bench/Mechanical tested | C001 profile、项目安装配置、ping/raw read、位置/反馈、六字节位置命令、torque disable、dry-run | 最终限位/负载速度、完整反馈、重复性验证 | ID 1 ping/raw read；方向与零点受控确认 |
-| Multi-joint coordination | 初步桥接 | 肩肘背靠背下发、失败尽力停止 | 到位/超时/统一故障传播/严格协调 | Offline tested only |
+| Multi-joint coordination | Implemented/Offline tested | 五轴逻辑 DTO、背靠背提交、到位/timeout、组结果、失败尽力停止、前端/运动学 façade | 真实硬件验证、vacuum 纳入、严格协调/轨迹（当前不支持） | 纯 fake/offline tested only |
 | Coordinate transforms | Planned | 架构文档 | camera/base/slide/tool frames 均未落地 | Not verified |
 | Harvesting task | Planned | 架构文档 | 视觉、接近、下探、吸附确认、搬运、释放、恢复 | Not verified |
 
@@ -39,11 +40,12 @@
 ### 根仓库
 
 - path：项目根目录；branch：`main`；upstream：`origin/main`；
-- HEAD：`673a373`，`feat(host): integrate upper motion control backends`；
-- 既有上层运动整合已形成 commit；当前工作树 dirty，包含本次 `SM45BL-C001` profile、
-  CLI、tests 和文档更新，以及既存的 `docs/hardware`、`docs/interfaces` 和旧进度文件调整；
+- 本轮提交前基线 HEAD：`894c041`，`feat(host): resolve hardware devices by USB VID and PID`；
+- 当前版本已将 STM32 Host 异步提交、统一 controller/protocol、frontend/kinematics façade、
+  bootstrap、fake examples、tests 和成员交接文档纳入同一可复现提交；最终 hash 以
+  `git log -1 --oneline` 为准；
 - `feetech_arm.zip` 保持原文件且被 Git 忽略；
-- 风险：本次确认的 C001 配置与 151 tests 尚未绑定到新的 root commit。
+- 当前 253 tests 只证明离线软件行为，不证明五轴真实硬件联调。
 
 ### STM32 submodule
 
@@ -62,19 +64,20 @@ STM32 Slide/Z/Vacuum firmware
         ↑ ASCII serial protocol v1
 STM32MotionClient ───────┐
                         │
-MG4010 CanRotaryJoint ───┼─> future MultiAxisCoordinator
-        ↑                │              ↑
-Planar 2R IK/FK          │      coordinate transforms
-                        │              ↑
-FeetechRotationAxis ─────┘      harvesting task state machine
+MG4010 CanRotaryJoint ───┼─> UnifiedMotionController
+        ↑                │              ├─> FrontendMotionFacade
+Planar 2R IK/FK          │              └─> KinematicsMotionFacade
+                        │                         ↑
+FeetechRotationAxis ─────┘              future planner/task workflow
 ```
 
 - reusable Host libraries：`host/drivers/`、`host/robot/`、`host/kinematics/`；
 - platform firmware：`firmware/stm32_motion_controller`；
 - algorithm-only：`host/kinematics/planar_2r.py`；
 - 最小 actuator bridge：`host/robot/planar_arm.py`；
+- 统一运动与客户端边界：`host/motion/unified_*`、`client_*`、`host/bootstrap.py`；
 - capability 声明：`host/motion/capabilities.py`；
-- 未完成集成层：正式 coordinator、坐标系、`host/tasks/` 采摘流程。
+- 未完成集成层：vacuum 协调、坐标系、`host/tasks/` 采摘流程。
 
 ## 5. STM32 固件进度
 
@@ -120,7 +123,8 @@ CF QH SQ SU SR SX VR`。根 Host 已新增正式 `STM32MotionClient`，并以测
 - shoulder：ID 1、zero 100°、direction +1、-60°..+70°；
 - elbow：ID 2、zero 158°、direction -1、-152°..+152°；
 - 两者 max speed 50°/s；
-- 缺失：自动 enable/clear fault/home、arrival、stable window、motion timeout 和轨迹协调。
+- 单关节底层仍缺自动 enable/clear fault/home 和原生 arrival event；统一控制器已用逻辑位置、
+  tolerance、stable window 与 deadline 提供离线验证的 arrival/timeout，但尚未实机复验。
 
 ## 7. 标定与运动学进度
 
@@ -132,10 +136,12 @@ y 向左、z 向上的右手系，提供 forward kinematics（正运动学，FK�
 
 ## 8. 系统协调与采摘任务
 
-六类后端已可在 fake 下装配并查询 capability。Slide/Z/Vacuum 走 STM32，Shoulder/Elbow
-走 MG4010E，Rotation 走 Feetech。仍缺 common arrival contract、deadline、统一 stop、fault
-propagation、camera-to-robot transform、vacuum confirmation，以及接近/下探/搬运/释放/
-恢复状态机。目录或架构说明不视为实现。
+六类后端已可在 fake 下装配并查询 capability。Slide/Z 走 STM32，Shoulder/Elbow 走
+MG4010E，Rotation 走 Feetech；五个运动轴已接入 `UnifiedMotionController`，具备统一逻辑
+DTO、软限位复核、异步提交、结果轮询、arrival/timeout 和组失败尽力停止。前端与运动学
+façade 共享同一 controller，bootstrap 构造不执行硬件 I/O。Vacuum 尚未纳入该五轴接口，
+真实硬件级 fault/stop 策略仍需验证；camera-to-robot transform、vacuum confirmation 及
+接近/下探/搬运/释放/恢复状态机仍缺失。
 
 ## 9. 验证结果
 
@@ -152,7 +158,7 @@ propagation、camera-to-robot transform、vacuum confirmation，以及接近/下
 .venv/bin/python -m unittest discover -s tests -q
 ```
 
-exit 0，`Ran 151 tests`，全部通过，0 failures，0 skips；硬件未参与。
+exit 0，`Ran 253 tests`，全部通过，0 failures，0 skips；硬件未参与。
 
 ### 9.3 Mathematical Tests
 
@@ -173,7 +179,7 @@ Feetech 已完成受控小角度方向确认，用户确认 `direction_sign=+1`�
 
 ### 9.6 Integrated System Tests
 
-只有 fake backend smoke test；无整机采摘测试。
+统一 controller、两组 façade、bootstrap 和 examples 只有 fake/offline test；无整机采摘测试。
 
 ## 10. 资源与性能
 
@@ -181,7 +187,7 @@ Feetech 已完成受控小角度方向确认，用户确认 `direction_sign=+1`�
 - 固件协议与 debug log 共用 USART1，正式运行需控制日志量；
 - Feetech 与 STM32 Python transport 均有有限 timeout、无无限重试；
 - MG4010 transport 有配置化 timeout/retry，并以共享锁串行化同一 CAN 总线事务；
-- 本轮 Host 测试 151 项约 0.20 s；
+- 本轮 Host 测试 253 项约 0.21 s；
 - 本轮没有重新采集 STM32 FLASH/RAM 或真实串口/CAN 吞吐量。
 
 ## 11. 安全默认行为
@@ -192,6 +198,7 @@ Feetech 已完成受控小角度方向确认，用户确认 `direction_sign=+1`�
 - MG4010 CLI 不加显式 motion flag 时为预览，`0x81` 仅软件停止；
 - Feetech import/构造不打开串口，CLI 默认 dry-run；真实访问要求 `--execute`、显式 port/
   baud，enable torque 还需额外显式参数；
+- `UpperMotionRuntime` 构造只创建共享 façade，不 open/close 硬件，不自动 enable/home/move；
 - 通信失败抛出异常；MG4010 A4 结果未知时尽力发 `0x81`；Feetech 不无限重试；
 - STM32 `DI/SA` 和相关异常会使开环位置 invalid；突然断电后必须重新确认位置/归零；
 - 当前未发现 Host 自动真实运动宏；STM32 boot-test 与 real-motion 宏默认值仍以验收 commit
@@ -201,13 +208,15 @@ Feetech 已完成受控小角度方向确认，用户确认 `direction_sign=+1`�
 
 ### Confirmed issues
 
-- 根工作树含本次尚未提交的 C001 profile、CLI、tests 和文档更新；
+- 统一运动 controller/protocol、client façade、bootstrap、tests、examples 和交接文档已按
+  完整依赖范围组成同一提交；
 - Feetech zip 没有 license/provenance，原始代码存在错误的 4-byte position write；
 - Feetech 型号/总线/baud、当前 port、servo ID 1、方向和零点已确认；`±45°` 与 500 raw
   仅为当前调试约束，不能视为最终机械验收值；
 - `docs/calibration/` 缺肩肘独立记录；
 - STM32 App README 的旧 `0..200 step` 描述与当前源码软限位不一致；
-- 无 vacuum feedback；无跨后端 arrival/timeout/coordinator/task state machine。
+- 无 vacuum feedback；五运动轴统一层已离线实现，但尚无硬件验证、vacuum 协调、坐标变换
+  或 task state machine。
 
 ### Risks
 
@@ -224,7 +233,7 @@ Feetech 已完成受控小角度方向确认，用户确认 `direction_sign=+1`�
 - vacuum PWM/timing、传感器和 emergency release 策略；
 - shoulder/elbow 实际 link lengths、安装偏移和校准复验；
 - IK branch/连续性/碰撞筛选；
-- coordinator 的 arrival window、timeout、stop/fault policy；
+- 统一层最终 arrival window、timeout、stop/fault policy 及真实硬件验证方案；
 - camera/base/slide/tool 坐标系；
 - 未提交修改的提交拆分及 `feetech_arm.zip` 是否归档到外部制品存储。
 
@@ -232,22 +241,24 @@ Feetech 已完成受控小角度方向确认，用户确认 `direction_sign=+1`�
 
 | Priority | Goal | 影响文件 | 证据/硬件 | 验收标准 | 安全要求 |
 | --- | --- | --- | --- | --- | --- |
-| P0 | 固化 root 可复现基线 | 当前 dirty Host/docs | 无硬件 | clean checkout 安装后 151 tests pass | 分组提交，不覆盖用户修改 |
+| P0 | 复核 root 可复现基线 | 当前 Host/docs 提交 | 无硬件 | clean checkout 安装后 253 tests pass | 不覆盖后续用户修改 |
 | P1 | Feetech 只读识别 | driver、calibration docs | 铭牌、接线、官方手册、适配器 | ping/read 重复成功，错误/断线明确失败 | 不 enable torque |
 | P1 | Feetech 低速标定 | config、calibration docs | 空载/安全机械区域 | zero/direction/limits 可复测 | 小角度、低速、可断电 |
-| P2 | arrival/timeout/fault | `host/motion/`、tests | fake 后再台架 | 所有后端 deadline 和失败 stop 有测试 | 软件 stop 不替代急停 |
-| P2 | 低速多轴协调 | coordinator、tests | 分阶段台架 | 点到点到位或安全失败 | 单后端逐步接入 |
+| P2 | 统一五轴接口台架验证 | `host/motion/`、bootstrap、tests | 逐轴真实硬件 | 各轴 arrival/deadline/fault/stop 与逻辑单位可复测 | 单轴低速、人工急停就绪 |
+| P2 | 低速多轴协调 | unified controller、tests | 分阶段台架 | 点到点到位或安全失败；不声称严格同步 | 单后端逐步接入 |
 | P3 | 完整采摘 workflow | transforms、tasks | 视觉/真空/整机 | 吸附确认、搬运、释放、恢复闭环 | 故障注入与人工急停 |
 
 ## 15. 交接信息
 
 - overall stage：组件实现 + 离线集成；
-- active task：复验 Feetech 最终机械限位、负载安全速度和 feedback/status 行为；
-- read first：本文件、`UPPER_MOTION_CONTROL_HANDOFF.md`、`host/README.md`、各 driver/tests；
-- run first：`git status --short`、`git submodule status`、Host 151 tests；
+- active task：评审已提交的统一五轴 controller 及前端/运动学共享接口，随后进行逐轴低速验证；
+- read first：本文件、两份 `docs/handoffs/*_MOTION_INTERFACE_HANDOFF.md`、`host/README.md`、
+  `host/motion/unified_*`、`host/motion/client_*` 及对应 tests；
+- run first：`git status --short`、`git submodule status`、Host 253 tests；
 - confirmed hardware config：Feetech C001/RS-485/115200/4096 counts、ID 1、
   `zero_raw=2130`、`direction_sign=+1`/`+X`，shoulder/elbow 当前代码配置与 STM32 验收 tag；
 - must not guess：Feetech 最终 limits/负载速度、真实 link lengths、最终 travel、vacuum success；
-- uncommitted：本次 C001 profile、CLI、tests 和文档更新，另有既存文档目录调整；
-  STM32 submodule clean；
-- next milestone：Feetech 完整反馈和调试范围复验，随后实现 arrival/timeout 和 coordinator。
+- commit scope：统一运动 controller/protocol、STM32 Host 异步依赖、client façade、bootstrap、
+  tests、examples 和交接文档；STM32 submodule clean；
+- next milestone：从干净检出复核离线基线，再逐轴验证统一 arrival/timeout/fault/stop，之后接入
+  vacuum/坐标变换；严格同步和轨迹插补仍不在当前实现范围。
