@@ -61,6 +61,8 @@ class CanMotorBus:
 
     ``bus`` is intended for tests and other already-created python-can
     transports.  It is treated as open and is shut down by :meth:`close`.
+    ``gs_usb_device`` accepts an already VID/PID-resolved gs_usb handle; opening
+    then targets its current USB bus/address instead of selecting scan index 0.
     """
 
     def __init__(
@@ -74,6 +76,7 @@ class CanMotorBus:
         allow_same_id_response: bool = False,
         raw_frame_callback: RawFrameCallback | None = None,
         bus: CanBusLike | None = None,
+        gs_usb_device: object | None = None,
     ) -> None:
         if timeout <= 0:
             raise ValueError("timeout must be greater than zero")
@@ -91,6 +94,7 @@ class CanMotorBus:
         self.retries = retries
         self.allow_same_id_response = allow_same_id_response
         self.raw_frame_callback = raw_frame_callback
+        self.gs_usb_device = gs_usb_device
 
         self._bus: CanBusLike | None = bus
         self._lock = threading.RLock()
@@ -140,12 +144,22 @@ class CanMotorBus:
                         "install host/requirements-macos.txt"
                     ) from exc
 
-                devices = GsUsb.scan()
-                if channel < 0 or channel >= len(devices):
-                    raise can.CanInitializationError(
-                        f"Cannot find gs_usb device index {channel}. "
-                        f"Devices found: {len(devices)}"
-                    )
+                if self.gs_usb_device is None:
+                    devices = GsUsb.scan()
+                    if channel < 0 or channel >= len(devices):
+                        raise can.CanInitializationError(
+                            f"Cannot find gs_usb device index {channel}. "
+                            f"Devices found: {len(devices)}"
+                        )
+                else:
+                    device_bus = getattr(self.gs_usb_device, "bus", None)
+                    device_address = getattr(self.gs_usb_device, "address", None)
+                    if device_bus is None or device_address is None:
+                        raise can.CanInitializationError(
+                            "resolved gs_usb device requires bus and address metadata"
+                        )
+                    kwargs["bus"] = device_bus
+                    kwargs["address"] = device_address
                 kwargs["bitrate"] = bitrate
             elif interface != "socketcan":
                 raise ValueError(
@@ -317,7 +331,7 @@ class CanMotorBus:
 
         if interface is None:
             system_name = platform.system().lower()
-            if system_name == "darwin":
+            if self.gs_usb_device is not None or system_name == "darwin":
                 interface = "gs_usb"
             elif system_name == "linux":
                 interface = "socketcan"
@@ -339,6 +353,10 @@ class CanMotorBus:
             if bitrate is None:
                 bitrate = DEFAULT_BITRATE
         elif interface == "socketcan":
+            if self.gs_usb_device is not None:
+                raise ValueError(
+                    "gs_usb_device cannot be used with interface 'socketcan'"
+                )
             # SocketCAN bitrate belongs to the OS network interface configuration.
             bitrate = None
 

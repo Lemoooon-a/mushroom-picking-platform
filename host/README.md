@@ -262,6 +262,92 @@ firmware/stm32_motion_controller/App/README.md
 客户端提供 Slide/Z 的查询、相对/绝对运动、归零、停止、禁用、使能、清错和全停，
 以及吸盘查询、吸附、释放和停止。构造客户端不会连接硬件，代码也没有默认串口。
 
+## 按 VID/PID 发现本机硬件
+
+本机硬件配置采用 `config/hardware.py` 中的 frozen dataclass（冻结数据类）。首次使用时
+复制模板，实际文件已被 Git 忽略：
+
+```bash
+cd host
+cp config/hardware_local.example.py config/hardware_local.py
+```
+
+当前三类设备身份互不相同：
+
+| role | device | VID:PID | default parameter |
+| --- | --- | --- | --- |
+| `feetech` | Feetech USB 串口转换器 | `1A86:55D3` | 115200 baud |
+| `stm32_motion` | STM32 STLink Virtual COM Port | `0483:374B` | 115200 baud |
+| `can_adapter` | gs_usb CAN 适配器 | `1D50:606F` | 1,000,000 bit/s |
+
+第一版只按 VID/PID（Vendor ID / Product ID，厂商标识符/产品标识符）精确匹配。
+USB serial number 只保留在枚举结果、错误和诊断输出中，不参与匹配；端口名、USB bus 和
+address 同样只是本次启动的运行时信息，不是永久设备身份。macOS、Linux 和 Windows 共用
+同一份配置：pySerial 会自然返回 `/dev/cu.*`、`/dev/ttyACM*`、`/dev/ttyUSB*` 或
+`COMx`，代码不按操作系统构造路径。`gs_usb` 不是串口，因此不返回串口路径。Windows
+使用 `gs_usb` 时需要由部署人员正确安装 WinUSB 兼容驱动，发现代码不会修改系统驱动。
+
+只读诊断命令如下；它们只枚举 USB descriptor 或匹配配置，不打开串口、不启动 CAN、
+不设置 bitrate，也不发送任何控制命令：
+
+```bash
+cd host
+.venv/bin/python scripts/list_hardware_devices.py --list-all
+.venv/bin/python scripts/list_hardware_devices.py --resolve
+```
+
+默认解析要求 VID/PID 恰好唯一。没有匹配会抛出 `DeviceNotFoundError`；存在多个相同
+VID/PID 会抛出 `AmbiguousDeviceError`，程序不会选择第一个候选。调试时可在本机配置中
+设置 `port_override`，但覆盖路径仍必须通过 VID/PID 身份验证，否则抛出
+`DeviceIdentityMismatchError`。
+
+串口驱动只接收解析出的字符串，仍由调用方显式打开：
+
+```python
+from config.hardware import load_local_hardware_config
+from drivers.device_discovery import resolve_usb_serial_port
+from drivers.feetech_protocol import FeetechBus, FeetechSerialConfig
+from drivers.stm32_motion import STM32SerialConfig, STM32SerialTransport
+
+hardware = load_local_hardware_config()
+
+stm32 = resolve_usb_serial_port("stm32_motion", hardware.stm32_motion)
+stm32_transport = STM32SerialTransport(
+    STM32SerialConfig(stm32.port, hardware.stm32_motion.baudrate)
+)
+
+feetech = resolve_usb_serial_port("feetech", hardware.feetech)
+feetech_bus = FeetechBus(
+    FeetechSerialConfig(feetech.port, hardware.feetech.baudrate)
+)
+
+# 后续由明确的运行入口调用 stm32_transport.open()/feetech_bus.open()。
+```
+
+CAN 侧可把已经唯一解析的设备注入 `CanMotorBus`。发现阶段不启动设备；只有调用方后续
+显式执行 `open()` 时，`python-can` 才按已验证设备的本次 bus/address 打开后端并配置
+bitrate：
+
+```python
+from drivers.can_bus import CanMotorBus
+from drivers.device_discovery import resolve_gs_usb_device
+
+can_adapter = resolve_gs_usb_device("can_adapter", hardware.can_adapter)
+can_bus = CanMotorBus(
+    interface="gs_usb",
+    bitrate=hardware.can_adapter.bitrate,
+    gs_usb_device=can_adapter.device,
+)
+
+# 后续由明确的运行入口调用 can_bus.open()。
+```
+
+为兼容旧工具，`CanMotorBus` 未注入设备时仍保留原有索引扫描方式；配置了设备身份的入口
+应始终先调用 resolver，不再无条件使用第一个扫描结果。
+
+> 如果以后增加第二个相同 VID/PID 的设备，再为设备配置增加可选 `serial_number`，将其
+> 作为第二级精确匹配条件。当前阶段不要提前引入未使用的复杂匹配逻辑。
+
 ## Feetech 末端旋转轴
 
 `drivers/feetech_protocol.py` 提供帧编码、状态包验证、timeout、显式 open/close 和

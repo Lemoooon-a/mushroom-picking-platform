@@ -41,6 +41,7 @@ logs/
 # Local configuration
 config/robot.yaml
 host/config/robot.yaml
+/host/config/hardware_local.py
 .env
 
 # Recorded data

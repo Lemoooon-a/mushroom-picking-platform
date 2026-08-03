@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -387,6 +388,46 @@ class LifecycleTests(unittest.TestCase):
 
         constructor.assert_not_called()
         self.assertFalse(bus.is_open)
+
+    def test_resolved_gs_usb_device_uses_verified_bus_address(self) -> None:
+        resolved_device = SimpleNamespace(bus=3, address=7)
+        backend = Mock()
+        with patch("gs_usb.gs_usb.GsUsb.scan") as scan:
+            with patch("drivers.can_bus.can.Bus", return_value=backend) as constructor:
+                bus = CanMotorBus(
+                    interface="gs_usb",
+                    bitrate=1_000_000,
+                    gs_usb_device=resolved_device,
+                )
+                bus.open()
+
+        scan.assert_not_called()
+        constructor.assert_called_once_with(
+            interface="gs_usb",
+            channel=0,
+            ignore_config=True,
+            bus=3,
+            address=7,
+            bitrate=1_000_000,
+        )
+
+    def test_resolved_gs_usb_device_requires_bus_address(self) -> None:
+        bus = CanMotorBus(
+            interface="gs_usb",
+            bitrate=1_000_000,
+            gs_usb_device=SimpleNamespace(bus=None, address=None),
+        )
+        with self.assertRaisesRegex(can.CanInitializationError, "bus and address"):
+            bus.open()
+
+    def test_resolved_gs_usb_device_rejects_socketcan(self) -> None:
+        bus = CanMotorBus(
+            interface="socketcan",
+            channel="can0",
+            gs_usb_device=SimpleNamespace(bus=1, address=2),
+        )
+        with self.assertRaisesRegex(ValueError, "socketcan"):
+            bus.open()
 
 
 if __name__ == "__main__":
