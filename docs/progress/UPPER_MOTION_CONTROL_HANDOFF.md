@@ -168,15 +168,15 @@ machine position；成功归零后 `homed` 和 `valid` 才成立，`DI`、`SA` �
 | 内容 | 分类 | 原因 |
 | --- | --- | --- |
 | header、length、instruction、checksum 基本结构 | 重构后复用 | 结构可与官方协议交叉验证 |
-| feedback 地址与字段线索 | 只作参考 | 具体型号未知，必须按型号数据手册复核 |
+| feedback 地址与字段线索 | 重构后复用 | `0x38` position 已由 C001 实机只读确认，其他 feedback 字段仍待复核 |
 | `main.py` | 不纳入 | 硬编码 `COM9`、115200、ID 1，运行后 enable、0°/180°运动和死循环读取 |
 | `protocol.py` | 不直接复用 | sleep + `in_waiting` 读包、不校验 ID/error/checksum、异常吞掉、默认参数可变 |
 | `servo.py` | 不直接复用 | 静默角度 clamp，stop 语义不可靠，位置命令只写 4 字节 |
 | `.venv`/IDE/cache | 不纳入 | 生成物、本机环境和二进制，不可审计且无需版本控制 |
 
-原代码自称 SMS 系列，115200 baud，单圈 12-bit/360°，但没有具体型号和适配器类型。
-Feetech 官方资料表明 SMS/SMCL 通常为 RS485，STS/SCS 通常为 TTL，默认 baud 也可能
-不同；FE-URT-1 同时支持两类半双工总线。因此不能把压缩包参数升级为项目实机默认值。
+原压缩包没有具体型号和适配器类型。2026-08-03 用户确认项目实机为
+`SM-45BL-C001`、RS-485、USB 转 485 自动收发切换板、115200 baud。该信息与原代码的
+飞特自定义 `FF FF` 协议及官方 C001 资料一致；不适用于使用 Modbus-RTU 的 C002。
 
 官方磁编码协议手册给出的示例从 `0x2A` 连续写 6 字节：position、time、speed；原
 `servo.py` 的 4 字节布局遗漏 time 且寄存器偏移冲突。本轮采用官方布局。参考：
@@ -197,13 +197,22 @@ Feetech 官方资料表明 SMS/SMCL 通常为 RS485，STS/SCS 通常为 TTL，�
   - `resolve_raw_position()`、`position_rad_to_raw()`；
   - `FeetechRotationAxis.read_position/read_feedback/command_position`；
   - `enable_torque/disable_torque`，不自动 enable；
+- `host/config/feetech.py`
+  - `SM45BL_C001_PROFILE` 固化型号、协议、RS-485、115200、4096 counts 和寄存器表；
+  - `END_EFFECTOR_ROTATION_CONFIG` 固化 ID 1、`zero_raw=2130`、`direction_sign=+1`、
+    `±45°` 调试限位和 500 raw 调试速度上限；逻辑正方向记录为 `+X`；
 - `host/scripts/test_feetech_rotation.py`
-  - 默认 dry-run，只输出 target raw、payload 和 frame；
-  - 真实访问必须显式 `--execute --port --baudrate`；
+  - 默认 dry-run，支持 `--ping`、`--read-raw-position` 和位置帧预览；
+  - 支持 `--position-deg`、`--limit-deg` 和 degree min/max，默认采用项目配置；
+  - 位置/速度/限位在打开串口和 enable torque 之前完成验证；
+  - 真实访问必须显式 `--execute --port`，baud 默认取 profile 的 115200；
   - 真实运动如需上 torque，还必须显式 `--enable-torque`。
 
-没有端口扫描，没有硬编码设备路径，没有默认实机 ID/零点/限位。串口在上下文退出或
-异常时关闭。当前 read feedback/寄存器表只在离线协议层实现，未获具体型号硬件验证。
+没有端口扫描，没有硬编码设备路径。串口在上下文退出或
+异常时关闭。2026-08-03 已通过 `/dev/cu.usbmodem5B790798091`、115200 baud 对 ID 1 完成
+实机 ping，并从 `0x38` 连续读取三次 `position_raw=2047`；完整 feedback 字段、写回包、
+torque 行为仍未完整验证。用户随后完成受控小角度方向和零点确认，最终项目配置为
+`direction_sign=+1`、`+X`、`zero_raw=2130`；`±45°` 和 500 raw 仍是待整机复验的调试值。
 
 ## 7. 执行器能力矩阵
 
@@ -255,8 +264,7 @@ git diff --check
 
 不得猜测：
 
-- Feetech 具体型号、TTL/RS485、适配器、port、baud、ID、protocol variant；
-- Feetech counts per turn、零点、方向、角度限位、速度/加速度单位和上限；
+- Feetech 最终机械角度限位、负载安全速度和加速度安全上限；
 - Feetech feedback/current/load/error 位定义与 write status return level；
 - shoulder/elbow 独立校准原始记录；
 - Planar 2R 实际 `L1/L2`；
@@ -272,13 +280,12 @@ git diff --check
 P0 — 固化可复现基线：区分并提交用户原有 shoulder/elbow/Planar 2R 修改与本轮 Host
 边界修改，保留 zip 来源记录；验收条件为 clean checkout 可安装依赖并通过全量测试。
 
-P1 — 确认 Feetech 型号和只读台架：拍摄铭牌/接线，保存官方型号手册，确认总线、适配器、
-baud、ID 和寄存器；先 ping/read-only，不 enable torque。验收为可重复读取 ID、位置、
-温度和 error，断线/错误 ID/校验错误可明确失败且串口释放。
+P1 — Feetech 只读台架：ping 和 raw position 已通过，且串口退出后无进程占用。下一步
+补读完整 feedback，验证温度/error 与断线/错误 ID 行为，全程不 enable torque。
 
-P2 — Feetech 机械标定：断开负载或确保安全空间，标定 zero/direction/limits/max speed，
-新增 `docs/calibration/` 记录；验收为低速小角度命令方向正确、软限位拒绝、torque disable
-可控，不声称急停能力。
+P2 — Feetech 参数复验：在安全空间复验当前 zero/direction 和调试 limits/max speed，
+新增 `docs/calibration/` 原始记录；验收为参数可重复、软限位拒绝、torque disable 可控，
+不声称急停能力。
 
 P3 — 到位与停止语义：为 shoulder/elbow/rotation 增加 stable window、deadline、timeout
 停止和 fault propagation；验收为 fake 故障矩阵和低速台架超时测试通过。
@@ -307,5 +314,5 @@ cd host
 .venv/bin/python -m unittest discover -s tests -q
 ```
 
-当前主动任务应是“固化基线并取得 Feetech 具体型号/接线证据”，而不是直接实现完整采摘
-状态机或连接未知参数的实机。
+当前已确认 `direction_sign=+1`、逻辑正方向 `+X`、`zero_raw=2130`。主动任务应是“测量最终机械限位并确定
+负载安全速度”，而不是直接实现完整采摘状态机或使用临时调试范围运行。

@@ -267,31 +267,54 @@ firmware/stm32_motion_controller/App/README.md
 `drivers/feetech_protocol.py` 提供帧编码、状态包验证、timeout、显式 open/close 和
 可注入串口；`robot/feetech_rotation.py` 提供有限行程角度换算、反馈读取、位置命令
 和显式 torque enable/disable。位置命令按 Feetech 磁编码协议从 `0x2A` 连续写入
-`position/time/speed` 六字节。具体舵机型号仍未确认，因此下列参数没有项目默认值：
+`position/time/speed` 六字节。
 
-- port 和 baud rate；
-- servo ID；
-- counts per turn 和 zero raw；
-- direction、minimum/maximum angle；
-- maximum raw speed；
-- 写指令是否返回 status packet。
+`config/feetech.py` 包含两层配置：`SM45BL_C001_PROFILE` 固化型号、飞特自定义串口协议、
+RS-485 半双工、USB 转换板自动收发切换、115200 baud、12-bit/4096 counts 磁编码器和
+C001 寄存器表；`END_EFFECTOR_ROTATION_CONFIG` 固化当前项目安装参数：ID 1、
+`zero_raw=2130`、`direction_sign=+1`（逻辑正方向为 `+X`）、`-45°..+45°` 调试限位和
+`max_speed_raw=500`。默认位置命令速度同为 500 raw。限位和速度是当前调试配置，仍需
+随最终机构负载完成机械验收。设备 port 不固化，真实访问必须在运行时显式传入；写指令
+status packet 行为也仍需实机复验。
 
-人工工具默认完全离线。下面仅演示参数形式，不是实机配置，也不会打开串口：
+人工工具默认完全离线。以下命令只生成 C001 ping 和读位置帧，不打开串口：
 
 ```bash
 cd host
-.venv/bin/python scripts/test_feetech_rotation.py \
-  --position-rad 0.1 \
-  --speed-raw 100 \
-  --servo-id 1 \
-  --counts-per-turn 4096 \
-  --zero-raw 2048 \
-  --direction-sign 1 \
-  --min-position-rad -1.0 \
-  --max-position-rad 1.0 \
-  --max-speed-raw 1000
+.venv/bin/python scripts/test_feetech_rotation.py --ping
+.venv/bin/python scripts/test_feetech_rotation.py --read-raw-position
 ```
 
-真实访问必须额外提供 `--execute --port ... --baudrate ...`。运动前还需根据具体型号
-数据手册复核总线类型、寄存器表、反馈语义、Status Return Level 和标定值；本次没有
-进行任何舵机硬件测试。
+只读实机检查需要显式提供 `--execute` 和 port；baudrate 默认取 profile 的 115200：
+
+```bash
+.venv/bin/python scripts/test_feetech_rotation.py \
+  --ping \
+  --execute --port /dev/cu.YOUR_USB_RS485
+
+.venv/bin/python scripts/test_feetech_rotation.py \
+  --read-raw-position \
+  --execute --port /dev/cu.YOUR_USB_RS485
+```
+
+CLI 支持直接使用 degree。以下命令自动采用项目配置，仍是完全离线 dry-run：
+
+```bash
+.venv/bin/python scripts/test_feetech_rotation.py \
+  --position-deg 5
+```
+
+`--servo-id`、`--zero-raw`、`--direction-sign`、角度限位、`--speed-raw` 和
+`--max-speed-raw` 均可显式覆盖，便于受控调试；越过当前 500 raw 上限会在打开串口和
+enable torque 之前拒绝。放宽上限必须同时显式传入 `--max-speed-raw`。
+
+只有确认预览、机械区域和急停条件后，才能在同一命令末尾增加：
+
+```text
+--enable-torque --execute --port /dev/cu.YOUR_USB_RS485
+```
+
+命令完成后 torque 仍保持开启；需使用 `--disable --execute --port ...` 显式关闭。
+2026-08-03 已在 ID 1 实机完成 ping 和 `0x38` raw-position 只读测试，连续读数均为
+`2047`；随后用户确认逻辑正方向正确，机械零点最终微调为 `zero_raw=2130`。当前
+`±45°` 和 500 raw 已固化为调试约束，最终机械限位和负载安全速度仍待验收。

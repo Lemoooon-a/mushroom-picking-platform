@@ -1,7 +1,7 @@
 # 蘑菇采摘平台当前进度
 
-> 更新时间：2026-08-02
-> 证据范围：当前源码/配置、Git 状态、144 项 Host 离线测试、已验收 STM32 tag 及仓库内
+> 更新时间：2026-08-03
+> 证据范围：当前源码/配置、Git 状态、151 项 Host 离线测试、已验收 STM32 tag 及仓库内
 > 历史构建/硬件记录。编译和离线测试不视为硬件验收。上层运动专项详见
 > [UPPER_MOTION_CONTROL_HANDOFF.md](UPPER_MOTION_CONTROL_HANDOFF.md)。
 
@@ -11,9 +11,10 @@
 
 - 最成熟的是已锁定为 `stm32-motion-v0.1.0` 的 STM32 Slide/Z/吸盘和 machine protocol；
 - MG4010E 已具备 CAN、协议、单关节、肩肘配置和最小 Planar 2R 命令桥；
-- Feetech 旋转轴已完成安全重构与离线测试，但具体型号和任何硬件参数均未确认；
+- Feetech 已确认为 `SM-45BL-C001`、RS-485、自动方向 USB 转换板、115200 baud 和 ID 1；
+  已完成 ping/raw read、正方向和零点确认，并把当前调试参数固化为项目配置；
 - 最大缺口是 arrival wait、motion timeout、统一停止/故障传播、坐标变换和采摘状态机；
-- 下一里程碑应是可复现提交基线与 Feetech 只读台架确认，不是直接做整机采摘。
+- 下一里程碑应是固化本次基线并完成 Feetech 机械标定，不是直接做整机采摘。
 
 ## 2. 总体进度矩阵
 
@@ -28,7 +29,7 @@
 | MG4010E single joint | Implemented/Offline tested | 绝对位置解释、软限位、命令、软件停止 | 到位、超时、运行中故障协调 | Offline tested；部分历史实测说明 |
 | Shoulder/elbow calibration | Implemented/Not fully verified | 零点、方向、限位、速度配置 | 独立原始校准记录和复测 | Code/test evidence，校准证据不足 |
 | Planar 2R | Implemented/Offline tested | FK/IK、双解、不可达/奇异、按关节限位筛解 | 实际连杆长度、碰撞和连续性 | Mathematical offline tested |
-| Feetech rotation | Implemented/Offline tested | 串口协议、位置/反馈、六字节位置命令、torque disable、dry-run | 型号/总线/配置/硬件验证 | Offline tested only |
+| Feetech rotation | Implemented/部分 Bench/Mechanical tested | C001 profile、项目安装配置、ping/raw read、位置/反馈、六字节位置命令、torque disable、dry-run | 最终限位/负载速度、完整反馈、重复性验证 | ID 1 ping/raw read；方向与零点受控确认 |
 | Multi-joint coordination | 初步桥接 | 肩肘背靠背下发、失败尽力停止 | 到位/超时/统一故障传播/严格协调 | Offline tested only |
 | Coordinate transforms | Planned | 架构文档 | camera/base/slide/tool frames 均未落地 | Not verified |
 | Harvesting task | Planned | 架构文档 | 视觉、接近、下探、吸附确认、搬运、释放、恢复 | Not verified |
@@ -37,12 +38,12 @@
 
 ### 根仓库
 
-- path：项目根目录；branch：`main`；upstream：未在本轮确认到跟踪分支；
-- HEAD：`919213ba1ff681abc77345f39f31494d2e38513b`；
-- 工作树 dirty，包含任务开始前的 MG4010/Planar 2R 修改和本轮 STM32 Host/Feetech/
-  docs 修改；所有这些代码均未提交；
-- `feetech_arm.zip` 保持原始 untracked 文件；
-- 风险：离线测试结果尚未绑定到新的 root commit，可复现性需要通过分组提交固化。
+- path：项目根目录；branch：`main`；upstream：`origin/main`；
+- HEAD：`673a373`，`feat(host): integrate upper motion control backends`；
+- 既有上层运动整合已形成 commit；当前工作树 dirty，包含本次 `SM45BL-C001` profile、
+  CLI、tests 和文档更新，以及既存的 `docs/hardware`、`docs/interfaces` 和旧进度文件调整；
+- `feetech_arm.zip` 保持原文件且被 Git 忽略；
+- 风险：本次确认的 C001 配置与 151 tests 尚未绑定到新的 root commit。
 
 ### STM32 submodule
 
@@ -151,7 +152,7 @@ propagation、camera-to-robot transform、vacuum confirmation，以及接近/下
 .venv/bin/python -m unittest discover -s tests -q
 ```
 
-exit 0，`Ran 144 tests`，全部通过，0 failures，0 skips；硬件未参与。
+exit 0，`Ran 151 tests`，全部通过，0 failures，0 skips；硬件未参与。
 
 ### 9.3 Mathematical Tests
 
@@ -159,11 +160,16 @@ Planar 2R、joint conversion、Feetech raw/rad conversion 均包含在上述离�
 
 ### 9.4 Electrical Bench Tests
 
-本轮无。STM32 和 MG4010 的历史说明不能替代本轮完整台架证据。
+2026-08-03 使用 `/dev/cu.usbmodem5B790798091`、115200 baud 对
+`SM-45BL-C001` ID 1 执行只读台架测试：ping 成功，首次和随后三次 `0x38` 位置读取均为
+`position_raw=2047`（`179.912109375°`），程序退出后 `lsof` 未发现端口占用。未读取完整
+feedback，未执行 torque 或位置写入。STM32 和 MG4010 的历史说明不能替代完整台架证据。
 
 ### 9.5 Mechanical Tests
 
-本轮无；Feetech 完全未连接硬件。
+Feetech 已完成受控小角度方向确认，用户确认 `direction_sign=+1`、逻辑正方向为 `+X`，
+机械零点最终微调为 `zero_raw=2130`。当前 `±45°` 和 500 raw 是调试配置，尚无最终机械
+限位、负载速度或重复回零验收记录。
 
 ### 9.6 Integrated System Tests
 
@@ -175,7 +181,7 @@ Planar 2R、joint conversion、Feetech raw/rad conversion 均包含在上述离�
 - 固件协议与 debug log 共用 USART1，正式运行需控制日志量；
 - Feetech 与 STM32 Python transport 均有有限 timeout、无无限重试；
 - MG4010 transport 有配置化 timeout/retry，并以共享锁串行化同一 CAN 总线事务；
-- 本轮 Host 测试 144 项约 0.21 s；
+- 本轮 Host 测试 151 项约 0.20 s；
 - 本轮没有重新采集 STM32 FLASH/RAM 或真实串口/CAN 吞吐量。
 
 ## 11. 安全默认行为
@@ -195,16 +201,17 @@ Planar 2R、joint conversion、Feetech raw/rad conversion 均包含在上述离�
 
 ### Confirmed issues
 
-- 根工作树含大量未提交的当前功能与文档；
+- 根工作树含本次尚未提交的 C001 profile、CLI、tests 和文档更新；
 - Feetech zip 没有 license/provenance，原始代码存在错误的 4-byte position write；
-- Feetech 具体型号与所有项目硬件参数未知；
+- Feetech 型号/总线/baud、当前 port、servo ID 1、方向和零点已确认；`±45°` 与 500 raw
+  仅为当前调试约束，不能视为最终机械验收值；
 - `docs/calibration/` 缺肩肘独立记录；
 - STM32 App README 的旧 `0..200 step` 描述与当前源码软限位不一致；
 - 无 vacuum feedback；无跨后端 arrival/timeout/coordinator/task state machine。
 
 ### Risks
 
-- Feetech 型号不同可能导致 TTL/RS485、baud、寄存器和 feedback 语义不兼容；
+- C001 feedback、write status 和 USB 转换板行为仍需实机只读验证；
 - 临时 Slide/Z soft limits 和 sensorless homing 参数可能不覆盖完整机构；
 - 肩肘背靠背命令不能保证同时到位；
 - 软件 stop 不是硬件急停，故障传播策略未统一；
@@ -212,7 +219,7 @@ Planar 2R、joint conversion、Feetech raw/rad conversion 均包含在上述离�
 
 ## 13. 开放决策
 
-- Feetech 型号、总线/适配器、baud、ID、zero/direction/limits/max speed；
+- Feetech 最终机械 limits、负载 max speed 与 write status 行为；设备路径继续运行时注入；
 - Slide/Z 最终 travel 与 homing 参数；
 - vacuum PWM/timing、传感器和 emergency release 策略；
 - shoulder/elbow 实际 link lengths、安装偏移和校准复验；
@@ -225,7 +232,7 @@ Planar 2R、joint conversion、Feetech raw/rad conversion 均包含在上述离�
 
 | Priority | Goal | 影响文件 | 证据/硬件 | 验收标准 | 安全要求 |
 | --- | --- | --- | --- | --- | --- |
-| P0 | 固化 root 可复现基线 | 当前 dirty Host/docs | 无硬件 | clean checkout 安装后 144 tests pass | 分组提交，不覆盖用户修改 |
+| P0 | 固化 root 可复现基线 | 当前 dirty Host/docs | 无硬件 | clean checkout 安装后 151 tests pass | 分组提交，不覆盖用户修改 |
 | P1 | Feetech 只读识别 | driver、calibration docs | 铭牌、接线、官方手册、适配器 | ping/read 重复成功，错误/断线明确失败 | 不 enable torque |
 | P1 | Feetech 低速标定 | config、calibration docs | 空载/安全机械区域 | zero/direction/limits 可复测 | 小角度、低速、可断电 |
 | P2 | arrival/timeout/fault | `host/motion/`、tests | fake 后再台架 | 所有后端 deadline 和失败 stop 有测试 | 软件 stop 不替代急停 |
@@ -235,10 +242,12 @@ Planar 2R、joint conversion、Feetech raw/rad conversion 均包含在上述离�
 ## 15. 交接信息
 
 - overall stage：组件实现 + 离线集成；
-- active task：固化未提交基线，取得 Feetech 型号和只读台架证据；
+- active task：复验 Feetech 最终机械限位、负载安全速度和 feedback/status 行为；
 - read first：本文件、`UPPER_MOTION_CONTROL_HANDOFF.md`、`host/README.md`、各 driver/tests；
-- run first：`git status --short`、`git submodule status`、Host 144 tests；
-- confirmed hardware config：shoulder/elbow 当前代码配置与 STM32 验收 tag；
-- must not guess：Feetech 全部硬件参数、真实 link lengths、最终 travel、vacuum success；
-- uncommitted：当前 root Host/Feetech/docs 工作全部尚未提交；STM32 submodule clean；
-- next milestone：Feetech 型号确认 + read-only bench，随后才做低速机械标定和 coordinator。
+- run first：`git status --short`、`git submodule status`、Host 151 tests；
+- confirmed hardware config：Feetech C001/RS-485/115200/4096 counts、ID 1、
+  `zero_raw=2130`、`direction_sign=+1`/`+X`，shoulder/elbow 当前代码配置与 STM32 验收 tag；
+- must not guess：Feetech 最终 limits/负载速度、真实 link lengths、最终 travel、vacuum success；
+- uncommitted：本次 C001 profile、CLI、tests 和文档更新，另有既存文档目录调整；
+  STM32 submodule clean；
+- next milestone：Feetech 完整反馈和调试范围复验，随后实现 arrival/timeout 和 coordinator。

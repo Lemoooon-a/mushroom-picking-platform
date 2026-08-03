@@ -130,6 +130,87 @@ class CLITests(unittest.TestCase):
         self.assertIn('"mode": "dry-run"', output.getvalue())
         self.assertIn('"write_payload_hex": "a00f00006400"', output.getvalue())
 
+    def test_sm45bl_ping_dry_run_needs_no_mechanical_calibration(self) -> None:
+        output = io.StringIO()
+        with patch.object(cli, "FeetechBus", side_effect=AssertionError("hardware opened")):
+            with redirect_stdout(output):
+                self.assertEqual(cli.main(["--ping", "--servo-id", "7"]), 0)
+        rendered = output.getvalue()
+        self.assertIn('"model": "SM-45BL-C001"', rendered)
+        self.assertIn('"baudrate": 115200', rendered)
+        self.assertIn('"counts_per_turn": 4096', rendered)
+        self.assertIn('"packet_hex": "ffff070201f5"', rendered)
+
+    def test_execute_ping_uses_profile_baudrate_without_real_io(self) -> None:
+        instances: list[object] = []
+
+        class FakeExecuteBus:
+            def __init__(self, serial_config: object) -> None:
+                self.config = serial_config
+                self.ping_ids: list[int] = []
+                instances.append(self)
+
+            def __enter__(self) -> "FakeExecuteBus":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                pass
+
+            def ping(self, servo_id: int) -> None:
+                self.ping_ids.append(servo_id)
+
+        output = io.StringIO()
+        with patch.object(cli, "FeetechBus", FakeExecuteBus):
+            with redirect_stdout(output):
+                self.assertEqual(
+                    cli.main(
+                        [
+                            "--ping",
+                            "--servo-id",
+                            "7",
+                            "--execute",
+                            "--port",
+                            "fake-port",
+                        ]
+                    ),
+                    0,
+                )
+        bus = instances[0]
+        self.assertEqual(bus.config.baudrate, 115200)  # type: ignore[attr-defined]
+        self.assertEqual(bus.ping_ids, [7])  # type: ignore[attr-defined]
+        self.assertIn('"ping": "ok"', output.getvalue())
+
+    def test_degree_command_uses_project_rotation_config_by_default(self) -> None:
+        argv = ["--position-deg", "5"]
+        output = io.StringIO()
+        with patch.object(cli, "FeetechBus", side_effect=AssertionError("hardware opened")):
+            with redirect_stdout(output):
+                self.assertEqual(cli.main(argv), 0)
+        rendered = output.getvalue()
+        self.assertIn('"target_position_deg": 5.0', rendered)
+        self.assertIn('"limits_deg": [', rendered)
+        self.assertIn('"zero_raw": 2130', rendered)
+        self.assertIn('"direction_sign": 1', rendered)
+        self.assertIn('"positive_direction": "+X"', rendered)
+        self.assertIn('"speed_raw": 500', rendered)
+        self.assertIn('"max_speed_raw": 500', rendered)
+        self.assertIn('"target_raw": 2187', rendered)
+        self.assertIn('"write_payload_hex": "8b080000f401"', rendered)
+
+    def test_invalid_position_is_rejected_before_bus_or_torque_enable(self) -> None:
+        argv = [
+            "--position-deg", "5",
+            "--speed-raw", "501",
+            "--enable-torque",
+            "--execute",
+            "--port", "fake-port",
+        ]
+        with patch.object(cli, "FeetechBus", side_effect=AssertionError("hardware opened")):
+            with self.assertRaisesRegex(
+                FeetechRotationLimitError, "speed_raw must be in 1..500"
+            ):
+                cli.main(argv)
+
 
 if __name__ == "__main__":
     unittest.main()
