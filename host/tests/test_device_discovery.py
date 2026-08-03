@@ -6,7 +6,7 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from config.hardware import (
     GsUsbDeviceConfig,
@@ -24,6 +24,7 @@ from drivers.device_discovery import (
     list_gs_usb_devices,
     list_usb_serial_devices,
     resolve_gs_usb_device,
+    resolve_hardware,
     resolve_usb_serial_port,
 )
 
@@ -366,6 +367,38 @@ class GsUsbDiscoveryTests(unittest.TestCase):
 
 
 class HardwareConfigTests(unittest.TestCase):
+    @patch("drivers.device_discovery.resolve_gs_usb_device")
+    @patch("drivers.device_discovery.resolve_usb_serial_port")
+    def test_aggregate_resolver_uses_each_config_once_without_control_io(
+        self,
+        resolve_serial: Mock,
+        resolve_can: Mock,
+    ) -> None:
+        stm32 = SimpleNamespace(port="COM7")
+        feetech = SimpleNamespace(port="COM8")
+        can_adapter = SimpleNamespace(device=object())
+        resolve_serial.side_effect = [stm32, feetech]
+        resolve_can.return_value = can_adapter
+        config = HardwareConfig(
+            feetech=serial_config(FEETECH_IDENTITY),
+            stm32_motion=serial_config(STM32_IDENTITY),
+            can_adapter=gs_usb_config(),
+        )
+
+        resolved = resolve_hardware(config)
+
+        self.assertIs(resolved.stm32_motion, stm32)
+        self.assertIs(resolved.can_adapter, can_adapter)
+        self.assertIs(resolved.feetech, feetech)
+        self.assertEqual(
+            resolve_serial.call_args_list,
+            [
+                call("stm32_motion", config.stm32_motion),
+                call("feetech", config.feetech),
+            ],
+        )
+        resolve_can.assert_called_once_with("can_adapter", config.can_adapter)
+
     def test_vid_below_range_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             UsbVidPid(-1, 0)

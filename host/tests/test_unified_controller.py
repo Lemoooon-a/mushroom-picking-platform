@@ -9,6 +9,7 @@ import unittest
 from config.feetech import END_EFFECTOR_ROTATION_CONFIG
 from config.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from drivers.stm32_motion import AxisStatus, STM32CommandSubmission, STM32Message
+from motion.authorization import MotionAuthorization, RuntimeMode
 from motion.unified_controller import (
     MultiAxisSubmissionError,
     UnifiedMotionController,
@@ -183,6 +184,13 @@ def arrival_configs(stable_time_s: float = 0.1) -> dict[AxisName, ArrivalConfig]
     }
 
 
+def motion_authorization() -> MotionAuthorization:
+    return MotionAuthorization(
+        mode=RuntimeMode.MOTION,
+        allow_unverified_rotation_motion=True,
+    )
+
+
 class ControllerTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.clock = FakeClock()
@@ -202,6 +210,7 @@ class ControllerTestCase(unittest.TestCase):
                 AxisName.SHOULDER: (5.0, None),
                 AxisName.ELBOW: (6.0, None),
             },
+            authorization=motion_authorization(),
             clock=self.clock,
             sleep=self.clock.advance,
         )
@@ -241,6 +250,7 @@ class DescriptorAndDispatchTests(ControllerTestCase):
             rotation_axis=self.rotation,
             arrival_configs=arrival_configs(),
             default_motion_parameters={AxisName.Z: (1.0, 2.0)},
+            authorization=motion_authorization(),
             clock=self.clock,
             sleep=self.clock.advance,
         )
@@ -267,6 +277,7 @@ class DescriptorAndDispatchTests(ControllerTestCase):
             rotation_axis=self.rotation,
             arrival_configs=arrival_configs(),
             default_motion_parameters={AxisName.SLIDE: (1.0, 1.0)},
+            authorization=motion_authorization(),
         )
         with self.assertRaises(UnifiedMotionError) as missing:
             controller.submit_absolute(AxisTarget(AxisName.SLIDE, 1.0))
@@ -310,6 +321,7 @@ class DescriptorAndDispatchTests(ControllerTestCase):
             elbow_joint=self.elbow,
             rotation_axis=self.rotation,
             arrival_configs=arrival_configs(),
+            authorization=motion_authorization(),
         )
         with self.assertRaises(UnifiedMotionError) as invalid:
             controller.submit_absolute(AxisTarget(AxisName.SLIDE, 1.0))
@@ -411,7 +423,7 @@ class ArrivalAndTimeoutTests(ControllerTestCase):
         handle = self.controller.submit_absolute(AxisTarget(AxisName.ROTATION, 10.0))
         result = self.controller.wait(handle, timeout_s=0.03)
         self.assertEqual(result.status, MotionCommandStatus.TIMEOUT)
-        self.assertIn("no independent stop", result.message)
+        self.assertIn("no verified independent stop", result.message)
         self.assertEqual(self.rotation.disable_calls, 0)
 
     def test_rotation_feedback_error_maps_to_fault(self) -> None:
@@ -444,6 +456,7 @@ class ArrivalAndTimeoutTests(ControllerTestCase):
                     rotation_axis=self.rotation,
                     arrival_configs=arrival_configs(),
                     default_motion_parameters={AxisName.SLIDE: (1.0, 2.0)},
+                    authorization=motion_authorization(),
                 )
                 handle = controller.submit_absolute(AxisTarget(AxisName.SLIDE, 1.0))
                 stm32.events.append(STM32Message("!", 0, kind, ("S",)))
@@ -539,6 +552,7 @@ class MultiAxisTests(ControllerTestCase):
                 AxisName.SHOULDER: (2.0, None),
                 AxisName.ELBOW: (2.0, None),
             },
+            authorization=motion_authorization(),
             clock=self.clock,
             sleep=self.clock.advance,
         )

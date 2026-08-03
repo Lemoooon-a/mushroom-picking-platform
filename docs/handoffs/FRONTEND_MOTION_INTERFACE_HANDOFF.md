@@ -13,15 +13,21 @@
 
 ```python
 from bootstrap import create_upper_motion_runtime
+from config.hardware import load_local_hardware_config
+from config.motion_runtime import load_local_motion_config
 from motion import (
     AxisName,
     AxisTarget,
     FrontendMotionInterface,
     MultiAxisTarget,
+    RuntimeMode,
 )
 
-# controller 由程序入口用真实依赖显式构造；本模块不创建硬件。
-runtime = create_upper_motion_runtime(controller)
+runtime = create_upper_motion_runtime(
+    load_local_hardware_config(),
+    load_local_motion_config(),
+    mode=RuntimeMode.READ_ONLY,
+)
 motion: FrontendMotionInterface = runtime.frontend_motion
 ```
 
@@ -163,9 +169,11 @@ def on_motion_timer() -> None:
 
 ## 14. Runtime Lifecycle
 
-当前 `UpperMotionRuntime` 是无副作用的接口容器：构造时只创建两个 façade，不 open/close
-硬件，不 enable、home 或发送运动。程序入口仍负责底层资源生命周期，并把唯一的
-`UnifiedMotionController` 注入 `create_upper_motion_runtime(controller)`。
+`create_upper_motion_runtime()` 完成 VID/PID（Vendor ID/Product ID，厂商/产品标识符）设备
+解析和唯一 controller 的对象组装，但不打开通信、不初始化、enable、home 或发送运动。
+应用入口用 `with runtime:` 或显式 `open()/close()` 管理资源；打开顺序为 STM32、CAN、
+Feetech，关闭和失败回滚顺序相反。默认 `READ_ONLY` 会拒绝运动和 home，真实运动必须显式
+选择 `MOTION`，Rotation 还需要额外风险授权。
 
 前端模块本身不得创建 runtime 或硬件；应用入口创建一次后注入前端。
 

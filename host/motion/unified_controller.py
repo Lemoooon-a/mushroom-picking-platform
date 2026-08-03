@@ -27,6 +27,7 @@ from drivers.stm32_motion import (
     STM32MotionProtocolError,
     STM32MotionTimeoutError,
 )
+from motion.authorization import MotionAuthorization
 from motion.unified_protocol import (
     ArrivalConfig,
     AxisCapabilities,
@@ -144,6 +145,7 @@ class UnifiedMotionController:
             AxisName, tuple[float | None, float | None]
         ]
         | None = None,
+        authorization: MotionAuthorization | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         max_command_history: int = 1024,
@@ -160,6 +162,9 @@ class UnifiedMotionController:
         self._arrival_configs = self._validate_arrival_configs(arrival_configs)
         self._descriptors = self._build_descriptors(axis_descriptors)
         self._default_motion_parameters = dict(default_motion_parameters or {})
+        self.authorization = authorization or MotionAuthorization()
+        if not isinstance(self.authorization, MotionAuthorization):
+            raise TypeError("authorization must be MotionAuthorization")
         self._clock = clock
         self._sleep = sleep
         self._max_command_history = max_command_history
@@ -281,17 +286,24 @@ class UnifiedMotionController:
         return tuple(self.get_state(axis) for axis in selected)
 
     def submit_absolute(self, target: AxisTarget) -> MotionCommandHandle:
+        if isinstance(target, AxisTarget):
+            self.authorization.require_axis_motion(target.axis)
+        else:
+            self.authorization.require_motion()
         target = self._validate_target(target)
         with self._lock:
             self._ensure_axis_idle(target.axis)
             return self._submit_validated(target)
 
     def submit_positions(self, target: MultiAxisTarget) -> MultiAxisCommandHandle:
+        self.authorization.require_motion()
         if not isinstance(target, MultiAxisTarget):
             raise UnifiedMotionError(
                 MotionErrorCode.INVALID_REQUEST,
                 "target must be a MultiAxisTarget",
             )
+        for item in target.targets:
+            self.authorization.require_axis_motion(item.axis)
         validated = tuple(self._validate_target(item) for item in target.targets)
         group_id = uuid4().hex
         with self._lock:
@@ -578,6 +590,7 @@ class UnifiedMotionController:
         *,
         timeout_s: float | None = None,
     ) -> MotionCommandResult:
+        self.authorization.require_motion()
         axis = self._require_axis(axis)
         if axis not in _LINEAR_AXES:
             return MotionCommandResult(
@@ -1000,6 +1013,8 @@ class UnifiedMotionController:
 
     def _best_effort_stop(self, axis: AxisName) -> str:
         if not self._descriptors[axis].capabilities.stop:
+            if axis is AxisName.ROTATION:
+                return "no verified independent stop is available for Rotation"
             return "backend has no independent stop capability"
         backend = self._backends[axis]
         if backend is None:

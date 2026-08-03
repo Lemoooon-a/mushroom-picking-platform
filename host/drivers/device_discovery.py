@@ -10,7 +10,12 @@ from gs_usb.gs_usb import GsUsb
 from serial.tools import list_ports
 from usb.core import USBError
 
-from config.hardware import GsUsbDeviceConfig, UsbSerialDeviceConfig, UsbVidPid
+from config.hardware import (
+    GsUsbDeviceConfig,
+    HardwareConfig,
+    UsbSerialDeviceConfig,
+    UsbVidPid,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -61,6 +66,15 @@ class ResolvedGsUsbDevice:
     bus: int | None
     address: int | None
     product: str | None
+
+
+@dataclass(frozen=True)
+class ResolvedHardware:
+    """一次启动中三类硬件的完整解析结果。"""
+
+    stm32_motion: ResolvedSerialDevice
+    can_adapter: ResolvedGsUsbDevice
+    feetech: ResolvedSerialDevice
 
 
 def _optional_text(value: object) -> str | None:
@@ -324,6 +338,27 @@ def resolve_gs_usb_device(
     return matches[0]
 
 
+def resolve_hardware(config: HardwareConfig) -> ResolvedHardware:
+    """解析三类硬件但不打开、启动或控制任何设备。"""
+
+    if not isinstance(config, HardwareConfig):
+        raise TypeError("config must be HardwareConfig")
+    return ResolvedHardware(
+        stm32_motion=resolve_usb_serial_port(
+            "stm32_motion",
+            config.stm32_motion,
+        ),
+        can_adapter=resolve_gs_usb_device(
+            "can_adapter",
+            config.can_adapter,
+        ),
+        feetech=resolve_usb_serial_port(
+            "feetech",
+            config.feetech,
+        ),
+    )
+
+
 __all__ = [
     "AmbiguousDeviceError",
     "DeviceDiscoveryError",
@@ -331,10 +366,12 @@ __all__ = [
     "DeviceMetadataError",
     "DeviceNotFoundError",
     "ResolvedGsUsbDevice",
+    "ResolvedHardware",
     "ResolvedSerialDevice",
     "list_gs_usb_devices",
     "list_usb_serial_devices",
     "resolve_gs_usb_device",
+    "resolve_hardware",
     "resolve_usb_serial_device",
     "resolve_usb_serial_port",
 ]

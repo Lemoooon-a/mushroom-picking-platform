@@ -1,5 +1,11 @@
 """统一异步点到点运动控制；硬件相关控制器按需延迟导入。"""
 
+from motion.authorization import (
+    MotionAuthorization,
+    MotionAuthorizationError,
+    RotationMotionAuthorizationError,
+    RuntimeMode,
+)
 from motion.client_facades import FrontendMotionFacade, KinematicsMotionFacade
 from motion.client_interfaces import (
     FrontendMotionInterface,
@@ -34,6 +40,8 @@ __all__ = [
     "FrontendMotionInterface",
     "KinematicsMotionFacade",
     "KinematicsMotionInterface",
+    "MotionAuthorization",
+    "MotionAuthorizationError",
     "MotionCommandHandle",
     "MotionCommandResult",
     "MotionCommandStatus",
@@ -42,6 +50,8 @@ __all__ = [
     "MultiAxisCommandResult",
     "MultiAxisSubmissionError",
     "MultiAxisTarget",
+    "RotationMotionAuthorizationError",
+    "RuntimeMode",
     "UnifiedMotionController",
     "UnifiedMotionError",
 ]

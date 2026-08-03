@@ -42,6 +42,7 @@ logs/
 config/robot.yaml
 host/config/robot.yaml
 /host/config/hardware_local.py
+/host/config/motion_local.py
 .env
 
 # Recorded data

@@ -5,12 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock, sentinel
 
-from bootstrap import create_upper_motion_runtime
 from motion.client_facades import FrontendMotionFacade, KinematicsMotionFacade
-from motion.client_interfaces import (
-    FrontendMotionInterface,
-    KinematicsMotionInterface,
-)
 from motion.unified_protocol import AxisName
 
 
@@ -110,26 +105,6 @@ class KinematicsMotionFacadeTests(unittest.TestCase):
             timeout_s=10.0,
         )
         self.assertFalse(self.controller.submit_absolute.called)
-
-
-class UpperMotionRuntimeTests(unittest.TestCase):
-    def test_runtime_builds_two_views_over_exactly_one_controller(self) -> None:
-        controller = Mock()
-        runtime = create_upper_motion_runtime(controller)
-        self.assertIsInstance(runtime.frontend_motion, FrontendMotionInterface)
-        self.assertIsInstance(runtime.kinematics_motion, KinematicsMotionInterface)
-        self.assertIs(runtime.frontend_motion._controller, controller)
-        self.assertIs(runtime.kinematics_motion._controller, controller)
-        self.assertIs(runtime._controller, controller)
-        self.assertEqual(controller.method_calls, [])
-
-    def test_runtime_client_members_are_read_only(self) -> None:
-        runtime = create_upper_motion_runtime(Mock())
-        with self.assertRaises(AttributeError):
-            runtime.frontend_motion = Mock()  # type: ignore[misc]
-        with self.assertRaises(AttributeError):
-            runtime.kinematics_motion = Mock()  # type: ignore[misc]
-
 
 if __name__ == "__main__":
     unittest.main()

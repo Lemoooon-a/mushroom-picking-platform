@@ -388,6 +388,65 @@ This is coordinated point-to-point submission, not interpolated or strictly sync
 stop，timeout 不会自动 torque disable。所有真实运动仍要求显式硬件配置、已确认的默认
 速度/加速度、逐轴机械验证和现场安全措施；软件 stop 不是硬件急停。
 
+## Upper motion runtime and safety modes
+
+`create_upper_motion_runtime()` 是三类真实硬件的唯一公共组装入口。它加载调用方提供的
+`HardwareConfig` 与 `MotionRuntimeConfig`，调用一次 `resolve_hardware()`，并用解析得到的
+STM32/Feetech port 和 gs_usb device 创建 transport、bus、肩肘关节、Rotation、唯一的
+`UnifiedMotionController` 及两个 façade。构造会进行设备发现，但不会打开通信、初始化关节、
+使能、机械归零、torque enable 或提交运动。
+
+`runtime.open()` 才按 STM32 transport → CAN bus → Feetech bus 打开通信资源；任一步失败时，
+已打开资源按相反顺序回滚。`runtime.close()` 按 Feetech → CAN → STM32 关闭，即使某一资源
+关闭失败也会继续关闭其余资源，最后聚合报告错误。打开或关闭通信都不等价于 stop，也不会
+自动 torque disable。
+
+运行模式默认为 `READ_ONLY`：允许版本、状态、位置和故障读取，也允许肩肘使用只读
+`initialize()` 建立绝对位置解释，但拒绝 `submit_absolute()`、`submit_positions()` 和
+`home_reference()`。`MOTION` 必须由调用方显式选择，且只允许后续的显式运动调用继续执行，
+本身不会发送命令。Rotation 因没有经过验证的独立 stop，即使在 `MOTION` 下也默认拒绝；
+只有额外设置 `allow_unverified_rotation_motion=True` 才能进入现有位置提交逻辑。多轴目标包含
+Rotation 时同样执行该门禁，timeout 不会被描述为已停止，也不会以 torque disable 冒充 stop。
+
+到位容差、稳定窗口、轮询周期、timeout、默认速度和默认加速度统一来自被 Git 忽略的
+`config/motion_local.py`。先复制 `config/motion_local.example.py`，再替换其中明确标为
+`EXAMPLE / BENCH-TEST PLACEHOLDER`、`NOT PRODUCTION-CALIBRATED` 的数值。Rotation 的工程
+速度/加速度映射尚未验证，因此示例保持 `None`。同一时刻只允许一个进程拥有这些真实硬件；
+Web 后端、运动学执行器和台架工具都应复用同一个 runtime，不再各自扫描和组装后端。
+
+```python
+from bootstrap import create_upper_motion_runtime
+from config.hardware import load_local_hardware_config
+from config.motion_runtime import load_local_motion_config
+from motion import AxisName, RuntimeMode
+
+hardware_config = load_local_hardware_config()
+motion_config = load_local_motion_config()
+
+runtime = create_upper_motion_runtime(
+    hardware_config,
+    motion_config,
+    mode=RuntimeMode.READ_ONLY,
+)
+
+with runtime:
+    state = runtime.controller.get_state(AxisName.SHOULDER)
+```
+
+Entering the runtime context only opens communication resources.
+It does not enable actuators, home axes, or issue motion commands.
+
+默认三设备只读联合检查：
+
+```bash
+cd host
+.venv/bin/python scripts/test_upper_motion_runtime.py
+```
+
+`--execute` 只切换授权模式，脚本仍不发送运动；Rotation 风险接受还需同时给出
+`--allow-rotation-motion`。真实硬件的分阶段验证顺序见
+`docs/handoffs/UPPER_MOTION_RUNTIME_TEST_GUIDE.md`。
+
 ### Frontend and kinematics client boundaries
 
 `motion.FrontendMotionInterface` 和 `motion.KinematicsMotionInterface` 是建议冻结的同进程
@@ -397,14 +456,13 @@ stop，timeout 不会自动 torque disable。所有真实运动仍要求显式�
 ```python
 from bootstrap import create_upper_motion_runtime
 
-runtime = create_upper_motion_runtime(controller)
+runtime = create_upper_motion_runtime(hardware_config, motion_config)
 frontend_motion = runtime.frontend_motion
 kinematics_motion = runtime.kinematics_motion
 ```
 
-当前仓库没有完整硬件 runtime/factory；`bootstrap.py` 因此接收程序入口已构造的唯一
-controller，构造过程不打开硬件，不自动 enable/home，也不发送运动。硬件资源生命周期仍由
-创建 controller/backends 的程序入口负责。
+`bootstrap.py` 负责创建唯一 controller 和通信生命周期；前端与运动学 façade 始终共享它。
+应用入口创建一次 runtime 后注入各消费者，消费者不得自行重建硬件后端。
 
 当前统一 API 映射如下：
 
