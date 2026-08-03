@@ -56,10 +56,37 @@ cd host
 先归零，再用保守速度执行一个小距离目标，核对最终位置、到位容差和 timeout 行为。不要与
 其他轴联动。
 
+```bash
+# 默认只读预检
+.venv/bin/python scripts/test_upper_motion_home.py --axis slide
+
+# 确认现场安全后才执行一次真实机械归零
+.venv/bin/python scripts/test_upper_motion_home.py \
+  --axis slide \
+  --execute \
+  --confirm-home-motion
+```
+
 ### 4. Z 单轴归零和小距离运动
 
 重复 Slide 的检查，并额外确认负载不会因失能、断电或错误方向下落。先完成机械支撑和
 重力风险控制，再进行任何 Z 运动。
+
+```bash
+# 默认只读预检
+.venv/bin/python scripts/test_upper_motion_home.py --axis z
+
+# Slide 已独立验收、Z 负载已支撑后才执行
+.venv/bin/python scripts/test_upper_motion_home.py \
+  --axis z \
+  --execute \
+  --confirm-home-motion
+```
+
+该程序一次只接受一个轴；只有统一结果为 `ARRIVED` 且最终状态同时满足 `homed=True`、
+`position_valid=True` 才判定成功。执行前必须确认 `busy=False`，且不存在除
+`fault_code=2`（未归零导致的位置无效）之外的故障。异常或中断只会尝试软件 stop，不能
+替代硬件急停。
 
 ### 5. Shoulder 低速小角度
 

@@ -449,6 +449,28 @@ cd host
 `--allow-rotation-motion`。真实硬件的分阶段验证顺序见
 `docs/handoffs/UPPER_MOTION_RUNTIME_TEST_GUIDE.md`。
 
+Slide/Z 的统一接口单轴归零使用独立受控入口。默认命令只读取所选轴状态；真实归零必须同时
+提供两个显式开关，并且一次只能选择一个轴：
+
+```bash
+cd host
+
+# READ_ONLY：只查询 Slide，不使能或运动
+.venv/bin/python scripts/test_upper_motion_home.py --axis slide
+
+# MOTION：现场确认安全条件后，显式执行一次 Slide 机械归零
+.venv/bin/python scripts/test_upper_motion_home.py \
+  --axis slide \
+  --execute \
+  --confirm-home-motion
+```
+
+Z 使用 `--axis z`，默认 timeout 为 60 秒；Slide 默认 15 秒，也可用正数 `--timeout` 覆盖。
+程序通过 `controller.home_reference()` 调用统一接口，只有结果为 `ARRIVED`，且最终
+`homed=True`、`position_valid=True` 才返回成功。异常、`Ctrl+C` 或未验证结果会尝试软件
+stop；执行前还要求通信已连接、`busy=False`，且不存在除 `fault_code=2`（预期的未归零位置
+无效状态）之外的轴故障。Runtime context close 仍不等于 stop，软件 stop 也不是硬件急停。
+
 ### Frontend and kinematics client boundaries
 
 `motion.FrontendMotionInterface` 和 `motion.KinematicsMotionInterface` 是建议冻结的同进程
