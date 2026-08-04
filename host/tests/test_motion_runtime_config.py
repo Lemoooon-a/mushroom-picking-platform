@@ -12,10 +12,13 @@ from unittest.mock import Mock, patch
 from config.motion_runtime import (
     ArrivalConfig,
     AxisMotionProfile,
+    LinearAxisMotionLimits,
+    LinearAxisPositionLimits,
     MotionRuntimeConfig,
     MotionRuntimeConfigLoadError,
     load_local_motion_config,
 )
+from motion.unified_protocol import AxisName
 
 
 def arrival() -> ArrivalConfig:
@@ -24,7 +27,17 @@ def arrival() -> ArrivalConfig:
 
 def motion_config() -> MotionRuntimeConfig:
     profile = AxisMotionProfile(1.0, 2.0, arrival())
-    return MotionRuntimeConfig(profile, profile, profile, profile, profile)
+    return MotionRuntimeConfig(
+        profile,
+        profile,
+        profile,
+        profile,
+        profile,
+        LinearAxisPositionLimits(0.0, 800.0),
+        LinearAxisPositionLimits(0.0, 190.0),
+        LinearAxisMotionLimits(72.0, 180.0),
+        LinearAxisMotionLimits(10.0, 25.0),
+    )
 
 
 class ArrivalConfigTests(unittest.TestCase):
@@ -69,6 +82,93 @@ class AxisMotionProfileTests(unittest.TestCase):
         profile = AxisMotionProfile(None, None, arrival())
         self.assertIsNone(profile.default_velocity)
         self.assertIsNone(profile.default_acceleration)
+
+
+class LinearAxisPositionLimitsTests(unittest.TestCase):
+    def test_limits_must_be_finite_real_numbers_in_ascending_order(self) -> None:
+        for minimum, maximum, error in (
+            (0.0, 0.0, ValueError),
+            (1.0, 0.0, ValueError),
+            (math.nan, 1.0, ValueError),
+            (0.0, math.inf, ValueError),
+            (False, 1.0, TypeError),
+            (0.0, "1", TypeError),
+        ):
+            with self.subTest(minimum=minimum, maximum=maximum):
+                with self.assertRaises(error):
+                    LinearAxisPositionLimits(minimum, maximum)  # type: ignore[arg-type]
+
+    def test_motion_config_exposes_only_slide_and_z_limits(self) -> None:
+        config = motion_config()
+        self.assertEqual(
+            config.linear_position_limits(),
+            {
+                AxisName.SLIDE: (0.0, 800.0),
+                AxisName.Z: (0.0, 190.0),
+            },
+        )
+
+
+class LinearAxisMotionLimitsTests(unittest.TestCase):
+    def test_limits_must_be_positive_finite_real_numbers(self) -> None:
+        for velocity, acceleration, error in (
+            (0.0, 1.0, ValueError),
+            (-1.0, 1.0, ValueError),
+            (1.0, 0.0, ValueError),
+            (1.0, math.inf, ValueError),
+            (math.nan, 1.0, ValueError),
+            (False, 1.0, TypeError),
+            (None, 1.0, TypeError),
+            (1.0, "2", TypeError),
+        ):
+            with self.subTest(velocity=velocity, acceleration=acceleration):
+                with self.assertRaises(error):
+                    LinearAxisMotionLimits(  # type: ignore[arg-type]
+                        velocity,
+                        acceleration,
+                    )
+
+    def test_motion_config_exposes_linear_motion_limits(self) -> None:
+        self.assertEqual(
+            motion_config().linear_motion_limits(),
+            {
+                AxisName.SLIDE: (72.0, 180.0),
+                AxisName.Z: (10.0, 25.0),
+            },
+        )
+
+    def test_linear_defaults_may_equal_but_not_exceed_limits(self) -> None:
+        profile = AxisMotionProfile(10.0, 25.0, arrival())
+        valid = MotionRuntimeConfig(
+            profile,
+            profile,
+            profile,
+            profile,
+            profile,
+            LinearAxisPositionLimits(0.0, 800.0),
+            LinearAxisPositionLimits(0.0, 190.0),
+            LinearAxisMotionLimits(10.0, 25.0),
+            LinearAxisMotionLimits(10.0, 25.0),
+        )
+        self.assertEqual(valid.slide.default_velocity, 10.0)
+
+        for field_name, limits in (
+            ("default_velocity", LinearAxisMotionLimits(9.0, 25.0)),
+            ("default_acceleration", LinearAxisMotionLimits(10.0, 24.0)),
+        ):
+            with self.subTest(field_name=field_name):
+                with self.assertRaisesRegex(ValueError, field_name):
+                    MotionRuntimeConfig(
+                        profile,
+                        profile,
+                        profile,
+                        profile,
+                        profile,
+                        LinearAxisPositionLimits(0.0, 800.0),
+                        LinearAxisPositionLimits(0.0, 190.0),
+                        limits,
+                        LinearAxisMotionLimits(10.0, 25.0),
+                    )
 
 
 class MotionConfigLoadingTests(unittest.TestCase):

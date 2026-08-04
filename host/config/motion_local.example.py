@@ -5,19 +5,25 @@
 复制为 motion_local.py 后，必须用当前机构已经确认的参数替换。
 """
 
-from .motion_runtime import ArrivalConfig, AxisMotionProfile, MotionRuntimeConfig
+from .motion_runtime import (
+    ArrivalConfig,
+    AxisMotionProfile,
+    LinearAxisMotionLimits,
+    LinearAxisPositionLimits,
+    MotionRuntimeConfig,
+)
 
 
 MOTION = MotionRuntimeConfig(
     slide=AxisMotionProfile(
-        default_velocity=2.0,  # mm/s; EXAMPLE / BENCH-TEST PLACEHOLDER
-        default_acceleration=4.0,  # mm/s²; NOT PRODUCTION-CALIBRATED
-        arrival=ArrivalConfig(0.2, 0.2, 0.05, 10.0),
+        default_velocity=60.0,  # mm/s; current bench-tested operating default
+        default_acceleration=180.0,  # mm/s²; current bench-tested default
+        arrival=ArrivalConfig(0.2, 0.2, 0.05, 180.0),
     ),
     z=AxisMotionProfile(
-        default_velocity=1.0,  # mm/s; EXAMPLE / BENCH-TEST PLACEHOLDER
-        default_acceleration=3.0,  # mm/s²; NOT PRODUCTION-CALIBRATED
-        arrival=ArrivalConfig(0.2, 0.2, 0.05, 10.0),
+        default_velocity=8.0,  # mm/s; current bench-tested operating default
+        default_acceleration=25.0,  # mm/s²; current bench-tested default
+        arrival=ArrivalConfig(0.2, 0.2, 0.05, 180.0),
     ),
     shoulder=AxisMotionProfile(
         default_velocity=2.0,  # deg/s; EXAMPLE / BENCH-TEST PLACEHOLDER
@@ -34,4 +40,10 @@ MOTION = MotionRuntimeConfig(
         default_acceleration=None,  # physical deg/s² mapping is not verified
         arrival=ArrivalConfig(0.5, 0.2, 0.05, 10.0),
     ),
+    # 当前 STM32 firmware 的临时软限位；完成整机行程验收后在本机更新。
+    slide_position_limits=LinearAxisPositionLimits(0.0, 799.988),
+    z_position_limits=LinearAxisPositionLimits(0.0, 190.0),
+    # 与当前 STM32 firmware 保守硬上限同步；firmware 变化时必须一并复核。
+    slide_motion_limits=LinearAxisMotionLimits(72.0, 180.0),
+    z_motion_limits=LinearAxisMotionLimits(10.0, 25.0),
 )

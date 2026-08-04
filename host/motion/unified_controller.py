@@ -20,6 +20,7 @@ from drivers.feetech_protocol import (
     FeetechTimeoutError,
 )
 from drivers.stm32_motion import (
+    STM32AxisFault,
     STM32CommandError,
     STM32CommandSubmission,
     STM32MotionConfigurationError,
@@ -78,12 +79,11 @@ _INT32_MIN = -(2**31)
 _INT32_MAX = 2**31 - 1
 _UINT32_MAX = 2**32 - 1
 
-# These limits reproduce the current STM32 firmware's explicit, provisional
-# machine-coordinate soft limits.  Callers can override them through
-# ``axis_descriptors`` after a newer mechanically verified configuration exists.
-_CURRENT_STM32_LIMITS_MM = {
-    AxisName.SLIDE: (0.0, 799.988),
-    AxisName.Z: (0.0, 190.0),
+_STM32_AXIS_FAULT_NAMES = {
+    STM32AxisFault.STALL: "stm32_axis.stall",
+    STM32AxisFault.POSITION_INVALID: "stm32_axis.position_invalid",
+    STM32AxisFault.DRIVER_FAULT: "stm32_axis.driver_fault",
+    STM32AxisFault.HOMING_FAULT: "stm32_axis.homing_fault",
 }
 
 
@@ -139,6 +139,8 @@ class UnifiedMotionController:
         shoulder_joint: object | None,
         elbow_joint: object | None,
         rotation_axis: object | None,
+        linear_position_limits: Mapping[AxisName, tuple[float, float]],
+        linear_motion_limits: Mapping[AxisName, tuple[float, float]],
         arrival_configs: Mapping[AxisName, ArrivalConfig],
         axis_descriptors: Mapping[AxisName, AxisDescriptor] | None = None,
         default_motion_parameters: Mapping[
@@ -160,6 +162,12 @@ class UnifiedMotionController:
             AxisName.ROTATION: rotation_axis,
         }
         self._arrival_configs = self._validate_arrival_configs(arrival_configs)
+        self._linear_position_limits = self._validate_linear_position_limits(
+            linear_position_limits
+        )
+        self._linear_motion_limits = self._validate_linear_motion_limits(
+            linear_motion_limits
+        )
         self._descriptors = self._build_descriptors(axis_descriptors)
         self._default_motion_parameters = dict(default_motion_parameters or {})
         self.authorization = authorization or MotionAuthorization()
@@ -216,7 +224,10 @@ class UnifiedMotionController:
                     faulted=state.fault != 0,
                     fault_code=state.fault or None,
                     fault_message=(
-                        f"STM32 axis fault {state.fault}" if state.fault else None
+                        f"{_stm32_axis_fault_name(state.fault)} "
+                        f"(fault_code={state.fault})"
+                        if state.fault
+                        else None
                     ),
                 )
             if axis in _CAN_AXES:
@@ -297,14 +308,9 @@ class UnifiedMotionController:
 
     def submit_positions(self, target: MultiAxisTarget) -> MultiAxisCommandHandle:
         self.authorization.require_motion()
-        if not isinstance(target, MultiAxisTarget):
-            raise UnifiedMotionError(
-                MotionErrorCode.INVALID_REQUEST,
-                "target must be a MultiAxisTarget",
-            )
+        validated = self._validate_positions(target)
         for item in target.targets:
             self.authorization.require_axis_motion(item.axis)
-        validated = tuple(self._validate_target(item) for item in target.targets)
         group_id = uuid4().hex
         with self._lock:
             for item in validated:
@@ -327,6 +333,11 @@ class UnifiedMotionController:
                     result=result,
                 ) from exc
         return MultiAxisCommandHandle(group_id, tuple(submitted))
+
+    def validate_positions(self, target: MultiAxisTarget) -> None:
+        """Validate a complete group without sending control I/O."""
+
+        self._validate_positions(target)
 
     def get_command_result(
         self,
@@ -733,6 +744,17 @@ class UnifiedMotionController:
             raise self._submission_error(axis, exc) from exc
         return target
 
+    def _validate_positions(
+        self,
+        target: MultiAxisTarget,
+    ) -> tuple[AxisTarget, ...]:
+        if not isinstance(target, MultiAxisTarget):
+            raise UnifiedMotionError(
+                MotionErrorCode.INVALID_REQUEST,
+                "target must be a MultiAxisTarget",
+            )
+        return tuple(self._validate_target(item) for item in target.targets)
+
     def _resolve_motion_parameters(self, target: AxisTarget) -> tuple[float, float | None]:
         default_velocity, default_acceleration = self._default_motion_parameters.get(
             target.axis,
@@ -770,6 +792,25 @@ class UnifiedMotionController:
                 f"axis {target.axis.value} acceleration must be finite and positive",
                 axis=target.axis,
             )
+        if target.axis in _LINEAR_AXES:
+            maximum_velocity, maximum_acceleration = self._linear_motion_limits[
+                target.axis
+            ]
+            if velocity > maximum_velocity:
+                raise UnifiedMotionError(
+                    MotionErrorCode.SOFT_LIMIT,
+                    f"axis {target.axis.value} velocity {velocity} mm/s exceeds "
+                    f"Host limit {maximum_velocity} mm/s",
+                    axis=target.axis,
+                )
+            assert acceleration is not None
+            if acceleration > maximum_acceleration:
+                raise UnifiedMotionError(
+                    MotionErrorCode.SOFT_LIMIT,
+                    f"axis {target.axis.value} acceleration {acceleration} mm/s² "
+                    f"exceeds Host limit {maximum_acceleration} mm/s²",
+                    axis=target.axis,
+                )
         return velocity, acceleration
 
     def _refresh_stm32(self, record: _CommandRecord) -> MotionCommandResult:
@@ -784,16 +825,25 @@ class UnifiedMotionController:
         event = backend.poll_command(token)
         if event is None:
             state = self.get_state(record.handle.axis)
+            if self._is_expected_stm32_homing_transient(record, state):
+                status = (
+                    MotionCommandStatus.MOVING
+                    if state.busy is True
+                    else MotionCommandStatus.ACCEPTED
+                )
+                return self._result(
+                    record,
+                    status,
+                    final_position=state.current_position,
+                    message=(
+                        "reference homing remains in progress while the STM32 "
+                        "position reference is invalid"
+                    ),
+                )
             if state.faulted:
                 return self._finish(
                     record,
-                    self._result(
-                        record,
-                        MotionCommandStatus.FAULT,
-                        final_position=state.current_position,
-                        error_code=MotionErrorCode.DEVICE_FAULT,
-                        message=state.fault_message or "STM32 axis fault",
-                    ),
+                    self._stm32_axis_fault_result(record, state, phase="in progress"),
                 )
             status = (
                 MotionCommandStatus.MOVING
@@ -808,33 +858,7 @@ class UnifiedMotionController:
             )
         if event.kind == "DONE":
             state = self.get_state(record.handle.axis)
-            if state.faulted:
-                result = self._result(
-                    record,
-                    MotionCommandStatus.FAULT,
-                    final_position=state.current_position,
-                    error_code=MotionErrorCode.DEVICE_FAULT,
-                    message=state.fault_message or "STM32 axis fault after DONE",
-                )
-            elif not state.position_valid or state.busy is not False:
-                result = self._result(
-                    record,
-                    MotionCommandStatus.FAULT,
-                    final_position=state.current_position,
-                    error_code=MotionErrorCode.POSITION_INVALID,
-                    message="STM32 DONE was not confirmed by valid idle axis state",
-                )
-            else:
-                result = self._result(
-                    record,
-                    MotionCommandStatus.ARRIVED,
-                    final_position=state.current_position,
-                    message=(
-                        "reference homing completed and axis state is valid"
-                        if record.is_home
-                        else "STM32 DONE confirmed by valid idle axis state"
-                    ),
-                )
+            result = self._validate_stm32_done_state(record, state)
             return self._finish(record, result)
         if event.kind == "ABORT":
             return self._finish(
@@ -860,6 +884,103 @@ class UnifiedMotionController:
             MotionErrorCode.BACKEND_ERROR,
             f"unexpected STM32 terminal event {event.kind}",
             axis=record.handle.axis,
+        )
+
+    @staticmethod
+    def _is_expected_stm32_homing_transient(
+        record: _CommandRecord,
+        state: AxisState,
+    ) -> bool:
+        """Accept POSITION_INVALID only before a home terminal event arrives."""
+
+        return (
+            record.is_home
+            and state.fault_code == int(STM32AxisFault.POSITION_INVALID)
+            and state.homed is False
+            and state.position_valid is False
+        )
+
+    def _stm32_axis_fault_result(
+        self,
+        record: _CommandRecord,
+        state: AxisState,
+        *,
+        phase: str,
+    ) -> MotionCommandResult:
+        raw_code = state.fault_code
+        try:
+            fault = STM32AxisFault(raw_code)
+        except (TypeError, ValueError):
+            fault = None
+
+        name = _STM32_AXIS_FAULT_NAMES.get(fault, "stm32_axis.unknown")
+        error_code = (
+            MotionErrorCode.POSITION_INVALID
+            if fault is STM32AxisFault.POSITION_INVALID
+            else MotionErrorCode.DEVICE_FAULT
+        )
+        operation = "home_reference" if record.is_home else "move_absolute"
+        return self._result(
+            record,
+            MotionCommandStatus.FAULT,
+            final_position=state.current_position,
+            error_code=error_code,
+            message=(
+                f"{name}: STM32 axis {record.handle.axis.value} reported "
+                f"fault_code={raw_code!r} while {operation} was {phase}"
+            ),
+        )
+
+    def _validate_stm32_done_state(
+        self,
+        record: _CommandRecord,
+        state: AxisState,
+    ) -> MotionCommandResult:
+        if state.faulted:
+            return self._stm32_axis_fault_result(record, state, phase="completing")
+        if record.is_home and state.homed is not True:
+            return self._result(
+                record,
+                MotionCommandStatus.FAULT,
+                final_position=state.current_position,
+                error_code=MotionErrorCode.POSITION_INVALID,
+                message=(
+                    f"STM32 axis {record.handle.axis.value} reported DONE, "
+                    "but homed is not true"
+                ),
+            )
+        if not state.position_valid:
+            return self._result(
+                record,
+                MotionCommandStatus.FAULT,
+                final_position=state.current_position,
+                error_code=MotionErrorCode.POSITION_INVALID,
+                message=(
+                    f"STM32 axis {record.handle.axis.value} reported DONE, "
+                    "but position remains invalid"
+                ),
+            )
+        if state.busy is not False:
+            return self._result(
+                record,
+                MotionCommandStatus.FAULT,
+                final_position=state.current_position,
+                error_code=MotionErrorCode.BACKEND_ERROR,
+                message=(
+                    f"STM32 axis {record.handle.axis.value} reported DONE, "
+                    "but the axis is still busy"
+                ),
+            )
+        return self._result(
+            record,
+            MotionCommandStatus.ARRIVED,
+            final_position=state.current_position,
+            message=(
+                "reference homing completed and final axis state is homed, valid, "
+                "idle, and fault-free"
+                if record.is_home
+                else "STM32 DONE confirmed by valid idle axis state"
+            ),
         )
 
     def _refresh_position_axis(self, record: _CommandRecord) -> MotionCommandResult:
@@ -1136,6 +1257,55 @@ class UnifiedMotionController:
         return float(timeout)
 
     @staticmethod
+    def _validate_linear_position_limits(
+        limits: Mapping[AxisName, tuple[float, float]],
+    ) -> dict[AxisName, tuple[float, float]]:
+        result = dict(limits)
+        if set(result) != set(_LINEAR_AXES):
+            raise ValueError("linear_position_limits must contain slide and z")
+        validated: dict[AxisName, tuple[float, float]] = {}
+        for axis, values in result.items():
+            if not isinstance(values, tuple) or len(values) != 2:
+                raise TypeError(
+                    f"linear_position_limits[{axis.value}] must be a two-item tuple"
+                )
+            minimum, maximum = values
+            for value in values:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise TypeError("linear position limits must be real numbers")
+                if not math.isfinite(value):
+                    raise ValueError("linear position limits must be finite")
+            if minimum >= maximum:
+                raise ValueError(
+                    f"linear position minimum must be below maximum for {axis.value}"
+                )
+            validated[axis] = (float(minimum), float(maximum))
+        return validated
+
+    @staticmethod
+    def _validate_linear_motion_limits(
+        limits: Mapping[AxisName, tuple[float, float]],
+    ) -> dict[AxisName, tuple[float, float]]:
+        result = dict(limits)
+        if set(result) != set(_LINEAR_AXES):
+            raise ValueError("linear_motion_limits must contain slide and z")
+        validated: dict[AxisName, tuple[float, float]] = {}
+        for axis, values in result.items():
+            if not isinstance(values, tuple) or len(values) != 2:
+                raise TypeError(
+                    f"linear_motion_limits[{axis.value}] must be a two-item tuple"
+                )
+            for value in values:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise TypeError("linear motion limits must be real numbers")
+                if not math.isfinite(value) or value <= 0:
+                    raise ValueError(
+                        "linear motion limits must be finite and greater than zero"
+                    )
+            validated[axis] = (float(values[0]), float(values[1]))
+        return validated
+
+    @staticmethod
     def _validate_arrival_configs(
         configs: Mapping[AxisName, ArrivalConfig],
     ) -> dict[AxisName, ArrivalConfig]:
@@ -1178,7 +1348,7 @@ class UnifiedMotionController:
                 "mm",
                 "mm/s",
                 "mm/s²",
-                *_CURRENT_STM32_LIMITS_MM[AxisName.SLIDE],
+                *self._linear_position_limits[AxisName.SLIDE],
                 linear_capabilities,
             ),
             AxisName.Z: AxisDescriptor(
@@ -1188,7 +1358,7 @@ class UnifiedMotionController:
                 "mm",
                 "mm/s",
                 "mm/s²",
-                *_CURRENT_STM32_LIMITS_MM[AxisName.Z],
+                *self._linear_position_limits[AxisName.Z],
                 linear_capabilities,
             ),
             AxisName.SHOULDER: AxisDescriptor(
@@ -1330,6 +1500,14 @@ def _millimetres_to_micrometres(
 
 def _micrometres_to_millimetres(value: int) -> float:
     return value / 1000.0
+
+
+def _stm32_axis_fault_name(raw_code: int) -> str:
+    try:
+        fault = STM32AxisFault(raw_code)
+    except ValueError:
+        return "stm32_axis.unknown"
+    return _STM32_AXIS_FAULT_NAMES.get(fault, "stm32_axis.unknown")
 
 
 __all__ = [

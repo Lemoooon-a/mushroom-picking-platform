@@ -170,7 +170,27 @@ home_reference(axis)
 ```text
 homed = True
 position_valid = True
+busy = False
+fault_code = 0
 ```
+
+STM32 轴状态故障码必须结合当前命令操作解释，不能脱离命令上下文统一处理。对于正在执行的
+`home_reference(slide)` 或 `home_reference(z)`，在尚未收到 `DONE`、`ABORT` 或 `FAULT`
+终态事件时，`POSITION_INVALID` 可以是与操作相关的暂态，但仅限同时满足：
+
+```text
+fault_code = 2
+homed = False
+position_valid = False
+```
+
+这表示 reference homing（机械归零）尚未建立可信机器位置，不代表归零已经成功，也不允许
+仅凭 `busy=False` 判定完成。普通绝对或相对位置运动仍将 `fault_code=2` 视为故障；该特例
+不适用于其他轴或其他操作。
+
+收到 `DONE` 后，控制器必须重新读取最终状态。只有 `homed=True`、
+`position_valid=True`、`busy=False`、`fault_code=0` 全部成立时，归零才返回 `ARRIVED`；
+`DONE` 后的位置无效不再属于暂态。工作零点的定义和用途不受此状态解释影响。
 
 以下轴不提供机械归零：
 
@@ -656,6 +676,8 @@ move_absolute(
 - 旋转轴单位为 deg；
 - 直线轴单位为 mm；
 - 必须检查逻辑软限位；
+- 必须在任何控制 I/O 前检查解析后的默认或显式速度、加速度上限；
+- 多轴目标必须先完成整组校验，任一轴超限时不得提交其他轴；
 - 不得绕过现有 joint/axis 层直接写电机原始位置；
 - 不得自动使能；
 - 不得自动机械归零；
@@ -1086,6 +1108,19 @@ class AxisMotionConfig:
     default_velocity: float | None
     default_acceleration: float | None
 ```
+
+Slide/Z 还必须通过纯数据配置提供：
+
+```python
+@dataclass(frozen=True)
+class LinearAxisMotionLimits:
+    maximum_velocity_mm_s: float
+    maximum_acceleration_mm_s2: float
+```
+
+默认值不得超过对应上限。统一控制器应提供无控制 I/O 的整组预校验，并由正式提交入口复用；
+速度或加速度超限统一报告 `soft_limit`。当前 Host 数值同步保守的 STM32 firmware 上限：Slide
+`72 mm/s`、`180 mm/s²`，Z `10 mm/s`、`25 mm/s²`，但 firmware 仍是独立最终保护。
 
 旋转轴底层配置还负责：
 

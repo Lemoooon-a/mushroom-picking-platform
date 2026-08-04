@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import IntEnum
 import math
 import time
 from typing import Protocol
@@ -15,6 +16,16 @@ from typing import Protocol
 PROTOCOL_VERSION = "1"
 MAX_LINE_LENGTH = 96
 AXIS_CODES = {"z": "Z", "slide": "S", "Z": "Z", "S": "S"}
+
+
+class STM32AxisFault(IntEnum):
+    """Stable ``QS`` axis-status fault values from machine protocol v1."""
+
+    NONE = 0
+    STALL = 1
+    POSITION_INVALID = 2
+    DRIVER_FAULT = 3
+    HOMING_FAULT = 4
 
 
 class STM32MotionError(Exception):

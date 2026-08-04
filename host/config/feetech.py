@@ -77,8 +77,8 @@ END_EFFECTOR_ROTATION_CONFIG = SM45BL_C001_PROFILE.make_rotation_config(
     servo_id=1,
     zero_raw=2130,
     direction_sign=1,
-    min_position_rad=math.radians(-45.0),
-    max_position_rad=math.radians(45.0),
+    min_position_rad=math.radians(-150.0),
+    max_position_rad=math.radians(150.0),
     max_speed_raw=500,
 )
 END_EFFECTOR_ROTATION_DEFAULT_SPEED_RAW = 500

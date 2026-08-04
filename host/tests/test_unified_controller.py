@@ -5,10 +5,12 @@ from __future__ import annotations
 import math
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from config.feetech import END_EFFECTOR_ROTATION_CONFIG
 from config.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from drivers.stm32_motion import AxisStatus, STM32CommandSubmission, STM32Message
+from drivers.stm32_motion import STM32MotionTimeoutError
 from motion.authorization import MotionAuthorization, RuntimeMode
 from motion.unified_controller import (
     MultiAxisSubmissionError,
@@ -19,6 +21,7 @@ from motion.unified_protocol import (
     ArrivalConfig,
     AxisName,
     AxisTarget,
+    MotionCommandHandle,
     MotionCommandStatus,
     MotionErrorCode,
     MultiAxisTarget,
@@ -184,6 +187,20 @@ def arrival_configs(stable_time_s: float = 0.1) -> dict[AxisName, ArrivalConfig]
     }
 
 
+def linear_position_limits() -> dict[AxisName, tuple[float, float]]:
+    return {
+        AxisName.SLIDE: (0.0, 799.988),
+        AxisName.Z: (0.0, 190.0),
+    }
+
+
+def linear_motion_limits() -> dict[AxisName, tuple[float, float]]:
+    return {
+        AxisName.SLIDE: (72.0, 180.0),
+        AxisName.Z: (10.0, 25.0),
+    }
+
+
 def motion_authorization() -> MotionAuthorization:
     return MotionAuthorization(
         mode=RuntimeMode.MOTION,
@@ -203,6 +220,8 @@ class ControllerTestCase(unittest.TestCase):
             shoulder_joint=self.shoulder,
             elbow_joint=self.elbow,
             rotation_axis=self.rotation,
+            linear_position_limits=linear_position_limits(),
+            linear_motion_limits=linear_motion_limits(),
             arrival_configs=arrival_configs(),
             default_motion_parameters={
                 AxisName.SLIDE: (2.0, 4.0),
@@ -215,6 +234,16 @@ class ControllerTestCase(unittest.TestCase):
             sleep=self.clock.advance,
         )
 
+    def submit_home_without_wait(self, axis: AxisName) -> MotionCommandHandle:
+        with patch.object(
+            self.controller,
+            "wait",
+            side_effect=lambda handle, **_kwargs: handle,
+        ):
+            handle = self.controller.home_reference(axis)
+        self.assertIsInstance(handle, MotionCommandHandle)
+        return handle  # type: ignore[return-value]
+
 
 class DescriptorAndDispatchTests(ControllerTestCase):
     def test_lists_five_axes_with_public_units(self) -> None:
@@ -223,6 +252,50 @@ class DescriptorAndDispatchTests(ControllerTestCase):
         self.assertEqual(descriptors[0].position_unit, "mm")
         self.assertEqual(descriptors[2].position_unit, "deg")
         self.assertFalse(descriptors[-1].capabilities.stop)
+
+    def test_linear_position_limits_are_required_valid_constructor_data(self) -> None:
+        invalid_limits = (
+            {},
+            {AxisName.SLIDE: (0.0, 1.0)},
+            {AxisName.SLIDE: (0.0, 1.0), AxisName.Z: (0.0, 1.0, 2.0)},
+            {AxisName.SLIDE: (0.0, 1.0), AxisName.Z: (1.0, 1.0)},
+            {AxisName.SLIDE: (0.0, 1.0), AxisName.Z: (0.0, math.inf)},
+        )
+        for limits in invalid_limits:
+            with self.subTest(limits=limits):
+                with self.assertRaises((TypeError, ValueError)):
+                    UnifiedMotionController(
+                        stm32_client=self.stm32,
+                        shoulder_joint=self.shoulder,
+                        elbow_joint=self.elbow,
+                        rotation_axis=self.rotation,
+                        linear_position_limits=limits,  # type: ignore[arg-type]
+                        linear_motion_limits=linear_motion_limits(),
+                        arrival_configs=arrival_configs(),
+                        authorization=motion_authorization(),
+                    )
+
+    def test_linear_motion_limits_are_required_valid_constructor_data(self) -> None:
+        invalid_limits = (
+            {},
+            {AxisName.SLIDE: (72.0, 180.0)},
+            {AxisName.SLIDE: (72.0, 180.0), AxisName.Z: (10.0,)},
+            {AxisName.SLIDE: (0.0, 180.0), AxisName.Z: (10.0, 25.0)},
+            {AxisName.SLIDE: (72.0, 180.0), AxisName.Z: (10.0, math.inf)},
+        )
+        for limits in invalid_limits:
+            with self.subTest(limits=limits):
+                with self.assertRaises((TypeError, ValueError)):
+                    UnifiedMotionController(
+                        stm32_client=self.stm32,
+                        shoulder_joint=self.shoulder,
+                        elbow_joint=self.elbow,
+                        rotation_axis=self.rotation,
+                        linear_position_limits=linear_position_limits(),
+                        linear_motion_limits=limits,  # type: ignore[arg-type]
+                        arrival_configs=arrival_configs(),
+                        authorization=motion_authorization(),
+                    )
 
     def test_get_axis_states_preserves_requested_order(self) -> None:
         states = self.controller.get_axis_states(
@@ -248,6 +321,8 @@ class DescriptorAndDispatchTests(ControllerTestCase):
             shoulder_joint=self.shoulder,
             elbow_joint=self.elbow,
             rotation_axis=self.rotation,
+            linear_position_limits=linear_position_limits(),
+            linear_motion_limits=linear_motion_limits(),
             arrival_configs=arrival_configs(),
             default_motion_parameters={AxisName.Z: (1.0, 2.0)},
             authorization=motion_authorization(),
@@ -256,6 +331,49 @@ class DescriptorAndDispatchTests(ControllerTestCase):
         )
         z_controller.submit_absolute(AxisTarget(AxisName.Z, 1.0))
         self.assertEqual(self.stm32.submissions[-1][1], 1000)
+
+    def test_linear_motion_limits_accept_equal_and_reject_excess_without_io(self) -> None:
+        self.controller.submit_absolute(
+            AxisTarget(AxisName.SLIDE, 1.0, 72.0, 180.0)
+        )
+        self.assertEqual(self.stm32.submissions[-1][2:], (72000, 180000))
+
+        for axis, velocity, acceleration, expected in (
+            (AxisName.SLIDE, 72.001, 180.0, "velocity"),
+            (AxisName.SLIDE, 72.0, 180.001, "acceleration"),
+            (AxisName.Z, 10.001, 25.0, "velocity"),
+            (AxisName.Z, 10.0, 25.001, "acceleration"),
+        ):
+            before = len(self.stm32.submissions)
+            with self.subTest(axis=axis.value, expected=expected):
+                with self.assertRaises(UnifiedMotionError) as failure:
+                    self.controller.submit_absolute(
+                        AxisTarget(axis, 1.0, velocity, acceleration)
+                    )
+                self.assertEqual(
+                    failure.exception.error_code,
+                    MotionErrorCode.SOFT_LIMIT,
+                )
+                self.assertIn(expected, str(failure.exception))
+                self.assertIn(axis.value, str(failure.exception))
+                self.assertEqual(len(self.stm32.submissions), before)
+
+    def test_default_linear_motion_limits_are_enforced_without_io(self) -> None:
+        controller = UnifiedMotionController(
+            stm32_client=self.stm32,
+            shoulder_joint=self.shoulder,
+            elbow_joint=self.elbow,
+            rotation_axis=self.rotation,
+            linear_position_limits=linear_position_limits(),
+            linear_motion_limits=linear_motion_limits(),
+            arrival_configs=arrival_configs(),
+            default_motion_parameters={AxisName.Z: (10.001, 25.0)},
+            authorization=motion_authorization(),
+        )
+        with self.assertRaises(UnifiedMotionError) as failure:
+            controller.submit_absolute(AxisTarget(AxisName.Z, 1.0))
+        self.assertEqual(failure.exception.error_code, MotionErrorCode.SOFT_LIMIT)
+        self.assertEqual(self.stm32.submissions, [])
 
     def test_shoulder_elbow_and_rotation_convert_degrees_to_radians(self) -> None:
         self.controller.submit_absolute(AxisTarget(AxisName.SHOULDER, 12.345, 5.5))
@@ -275,6 +393,8 @@ class DescriptorAndDispatchTests(ControllerTestCase):
             shoulder_joint=self.shoulder,
             elbow_joint=self.elbow,
             rotation_axis=self.rotation,
+            linear_position_limits=linear_position_limits(),
+            linear_motion_limits=linear_motion_limits(),
             arrival_configs=arrival_configs(),
             default_motion_parameters={AxisName.SLIDE: (1.0, 1.0)},
             authorization=motion_authorization(),
@@ -285,8 +405,13 @@ class DescriptorAndDispatchTests(ControllerTestCase):
         with self.assertRaises(UnifiedMotionError) as unknown:
             self.controller.describe_axis("bogus")  # type: ignore[arg-type]
         self.assertEqual(unknown.exception.error_code, MotionErrorCode.UNKNOWN_AXIS)
+        rotation_limit = self.controller.describe_axis(
+            AxisName.ROTATION
+        ).maximum_position
         with self.assertRaises(UnifiedMotionError) as limit:
-            self.controller.submit_absolute(AxisTarget(AxisName.ROTATION, 46.0))
+            self.controller.submit_absolute(
+                AxisTarget(AxisName.ROTATION, rotation_limit + 1.0)
+            )
         self.assertEqual(limit.exception.error_code, MotionErrorCode.SOFT_LIMIT)
 
     def test_unsupported_parameters_are_never_silently_ignored(self) -> None:
@@ -320,6 +445,8 @@ class DescriptorAndDispatchTests(ControllerTestCase):
             shoulder_joint=self.shoulder,
             elbow_joint=self.elbow,
             rotation_axis=self.rotation,
+            linear_position_limits=linear_position_limits(),
+            linear_motion_limits=linear_motion_limits(),
             arrival_configs=arrival_configs(),
             authorization=motion_authorization(),
         )
@@ -454,6 +581,8 @@ class ArrivalAndTimeoutTests(ControllerTestCase):
                     shoulder_joint=self.shoulder,
                     elbow_joint=self.elbow,
                     rotation_axis=self.rotation,
+                    linear_position_limits=linear_position_limits(),
+                    linear_motion_limits=linear_motion_limits(),
                     arrival_configs=arrival_configs(),
                     default_motion_parameters={AxisName.SLIDE: (1.0, 2.0)},
                     authorization=motion_authorization(),
@@ -472,7 +601,339 @@ class ArrivalAndTimeoutTests(ControllerTestCase):
         self.assertEqual(result.status, MotionCommandStatus.ARRIVED)
 
 
+class STM32HomingStateTests(ControllerTestCase):
+    def test_slide_and_z_position_invalid_are_expected_home_transients(self) -> None:
+        for axis in (AxisName.SLIDE, AxisName.Z):
+            with self.subTest(axis=axis.value):
+                self.stm32.states.append(
+                    axis_status(
+                        axis.value,
+                        position_um=0,
+                        busy=True,
+                        homed=False,
+                        valid=False,
+                        fault=2,
+                    )
+                )
+                handle = self.submit_home_without_wait(axis)
+                result = self.controller.get_command_result(handle)
+                self.assertEqual(result.status, MotionCommandStatus.MOVING)
+                self.assertTrue(result.accepted)
+                self.assertIsNone(result.completed)
+        self.assertEqual(self.stm32.stop_calls, [])
+
+    def test_repeated_position_invalid_home_polls_do_not_resubmit_or_stop(self) -> None:
+        self.stm32.states = [
+            axis_status(
+                "slide",
+                position_um=0,
+                busy=busy,
+                homed=False,
+                valid=False,
+                fault=2,
+            )
+            for busy in (True, True, False)
+        ]
+        handle = self.submit_home_without_wait(AxisName.SLIDE)
+        statuses = tuple(
+            self.controller.get_command_result(handle).status for _ in range(3)
+        )
+        self.assertEqual(
+            statuses,
+            (
+                MotionCommandStatus.MOVING,
+                MotionCommandStatus.MOVING,
+                MotionCommandStatus.ACCEPTED,
+            ),
+        )
+        self.assertEqual(self.stm32.home_calls, ["slide"])
+        self.assertEqual(self.stm32.stop_calls, [])
+
+    def test_position_invalid_transients_then_done_reaches_arrived(self) -> None:
+        self.stm32.events = [
+            None,
+            None,
+            STM32Message("!", 0, "DONE", ("S", "0")),
+        ]
+        self.stm32.states = [
+            axis_status(
+                "slide",
+                position_um=0,
+                busy=True,
+                homed=False,
+                valid=False,
+                fault=2,
+            ),
+            axis_status(
+                "slide",
+                position_um=0,
+                busy=True,
+                homed=False,
+                valid=False,
+                fault=2,
+            ),
+            axis_status("slide", position_um=0, busy=False),
+        ]
+        handle = self.submit_home_without_wait(AxisName.SLIDE)
+        self.assertEqual(
+            self.controller.get_command_result(handle).status,
+            MotionCommandStatus.MOVING,
+        )
+        self.assertEqual(
+            self.controller.get_command_result(handle).status,
+            MotionCommandStatus.MOVING,
+        )
+        result = self.controller.get_command_result(handle)
+        self.assertEqual(result.status, MotionCommandStatus.ARRIVED)
+        self.assertTrue(result.completed)
+
+    def test_abort_and_fault_events_take_priority_after_transient(self) -> None:
+        for kind, expected in (
+            ("ABORT", MotionCommandStatus.ABORTED),
+            ("FAULT", MotionCommandStatus.FAULT),
+        ):
+            with self.subTest(kind=kind):
+                self.stm32.events = [
+                    None,
+                    STM32Message("!", self.stm32.sequence, kind, ("Z",)),
+                ]
+                self.stm32.states = [
+                    axis_status(
+                        "z",
+                        position_um=0,
+                        busy=True,
+                        homed=False,
+                        valid=False,
+                        fault=2,
+                    )
+                ]
+                handle = self.submit_home_without_wait(AxisName.Z)
+                self.assertEqual(
+                    self.controller.get_command_result(handle).status,
+                    MotionCommandStatus.MOVING,
+                )
+                self.assertEqual(
+                    self.controller.get_command_result(handle).status,
+                    expected,
+                )
+
+    def test_real_and_unknown_home_faults_fail_with_stable_semantics(self) -> None:
+        for fault, name in (
+            (1, "stm32_axis.stall"),
+            (3, "stm32_axis.driver_fault"),
+            (4, "stm32_axis.homing_fault"),
+            (9, "stm32_axis.unknown"),
+        ):
+            with self.subTest(fault=fault):
+                self.stm32.states = [
+                    axis_status(
+                        "slide",
+                        position_um=0,
+                        busy=True,
+                        homed=False,
+                        valid=False,
+                        fault=fault,
+                    )
+                ]
+                handle = self.submit_home_without_wait(AxisName.SLIDE)
+                result = self.controller.get_command_result(handle)
+                self.assertEqual(result.status, MotionCommandStatus.FAULT)
+                self.assertEqual(result.error_code, MotionErrorCode.DEVICE_FAULT)
+                self.assertIn(name, result.message)
+                self.assertIn(str(fault), result.message)
+
+    def test_position_invalid_is_transient_only_with_exact_home_state(self) -> None:
+        for homed, valid in ((True, False), (False, True), (True, True)):
+            with self.subTest(homed=homed, valid=valid):
+                self.stm32.states = [
+                    axis_status(
+                        "z",
+                        position_um=0,
+                        busy=True,
+                        homed=homed,
+                        valid=valid,
+                        fault=2,
+                    )
+                ]
+                handle = self.submit_home_without_wait(AxisName.Z)
+                result = self.controller.get_command_result(handle)
+                self.assertEqual(result.status, MotionCommandStatus.FAULT)
+                self.assertEqual(result.error_code, MotionErrorCode.POSITION_INVALID)
+
+    def test_done_requires_all_home_postconditions(self) -> None:
+        cases = (
+            (
+                axis_status("slide", position_um=0, busy=False, homed=False),
+                MotionErrorCode.POSITION_INVALID,
+                "homed is not true",
+            ),
+            (
+                axis_status("slide", position_um=0, busy=False, valid=False),
+                MotionErrorCode.POSITION_INVALID,
+                "position remains invalid",
+            ),
+            (
+                axis_status("slide", position_um=0, busy=True),
+                MotionErrorCode.BACKEND_ERROR,
+                "still busy",
+            ),
+            (
+                axis_status(
+                    "slide",
+                    position_um=0,
+                    busy=False,
+                    homed=False,
+                    valid=False,
+                    fault=2,
+                ),
+                MotionErrorCode.POSITION_INVALID,
+                "stm32_axis.position_invalid",
+            ),
+        )
+        for state, error_code, message in cases:
+            with self.subTest(error_code=error_code, message=message):
+                self.stm32.events = [
+                    STM32Message("!", self.stm32.sequence, "DONE", ("S", "0"))
+                ]
+                self.stm32.states = [state]
+                handle = self.submit_home_without_wait(AxisName.SLIDE)
+                result = self.controller.get_command_result(handle)
+                self.assertEqual(result.status, MotionCommandStatus.FAULT)
+                self.assertEqual(result.error_code, error_code)
+                self.assertIn(message, result.message)
+
+    def test_done_real_faults_remain_device_faults(self) -> None:
+        for fault, name in (
+            (1, "stm32_axis.stall"),
+            (3, "stm32_axis.driver_fault"),
+            (4, "stm32_axis.homing_fault"),
+        ):
+            with self.subTest(fault=fault):
+                self.stm32.events = [
+                    STM32Message("!", self.stm32.sequence, "DONE", ("Z", "0"))
+                ]
+                self.stm32.states = [
+                    axis_status("z", position_um=0, busy=False, fault=fault)
+                ]
+                handle = self.submit_home_without_wait(AxisName.Z)
+                result = self.controller.get_command_result(handle)
+                self.assertEqual(result.status, MotionCommandStatus.FAULT)
+                self.assertEqual(result.error_code, MotionErrorCode.DEVICE_FAULT)
+                self.assertIn(name, result.message)
+
+    def test_done_state_query_failure_is_communication_error(self) -> None:
+        self.stm32.events = [STM32Message("!", 0, "DONE", ("Z", "0"))]
+        handle = self.submit_home_without_wait(AxisName.Z)
+        with patch.object(
+            self.stm32,
+            "query_axis",
+            side_effect=STM32MotionTimeoutError("query timed out"),
+        ):
+            result = self.controller.get_command_result(handle)
+        self.assertEqual(result.status, MotionCommandStatus.COMMUNICATION_ERROR)
+        self.assertEqual(result.error_code, MotionErrorCode.COMMUNICATION_ERROR)
+
+    def test_position_invalid_remains_fault_for_absolute_move(self) -> None:
+        self.stm32.states = [
+            axis_status(
+                "slide",
+                position_um=0,
+                busy=True,
+                homed=False,
+                valid=False,
+                fault=2,
+            )
+        ]
+        handle = self.controller.submit_absolute(AxisTarget(AxisName.SLIDE, 1.0))
+        result = self.controller.get_command_result(handle)
+        self.assertEqual(result.status, MotionCommandStatus.FAULT)
+        self.assertEqual(result.error_code, MotionErrorCode.POSITION_INVALID)
+        self.assertIn("move_absolute", result.message)
+
+    def test_other_faults_remain_device_faults_for_absolute_move(self) -> None:
+        for fault, name in (
+            (1, "stm32_axis.stall"),
+            (3, "stm32_axis.driver_fault"),
+            (4, "stm32_axis.homing_fault"),
+            (9, "stm32_axis.unknown"),
+        ):
+            with self.subTest(fault=fault):
+                self.stm32.states = [
+                    axis_status(
+                        "slide",
+                        position_um=0,
+                        busy=True,
+                        homed=False,
+                        valid=False,
+                        fault=fault,
+                    )
+                ]
+                handle = self.controller.submit_absolute(
+                    AxisTarget(AxisName.SLIDE, 1.0)
+                )
+                result = self.controller.get_command_result(handle)
+                self.assertEqual(result.status, MotionCommandStatus.FAULT)
+                self.assertEqual(result.error_code, MotionErrorCode.DEVICE_FAULT)
+                self.assertIn(name, result.message)
+
+    def test_home_position_invalid_timeout_stops_once(self) -> None:
+        self.stm32.states = [
+            axis_status(
+                "z",
+                position_um=0,
+                busy=True,
+                homed=False,
+                valid=False,
+                fault=2,
+            )
+        ] * 20
+        result = self.controller.home_reference(AxisName.Z, timeout_s=0.03)
+        self.assertEqual(result.status, MotionCommandStatus.TIMEOUT)
+        self.assertEqual(self.stm32.stop_calls, ["z"])
+        self.assertIn("best-effort software stop", result.message)
+        self.assertIn("not an emergency stop", result.message)
+
+
 class MultiAxisTests(ControllerTestCase):
+    def test_group_z_overspeed_is_rejected_before_any_backend_write(self) -> None:
+        target = MultiAxisTarget(
+            (
+                AxisTarget(AxisName.SLIDE, 2.0, 60.0, 180.0),
+                AxisTarget(AxisName.Z, 2.0, 10.001, 25.0),
+                AxisTarget(AxisName.SHOULDER, 2.0, 10.0),
+                AxisTarget(AxisName.ELBOW, -2.0, 10.0),
+                AxisTarget(AxisName.ROTATION, 2.0),
+            )
+        )
+
+        with self.assertRaises(UnifiedMotionError) as failure:
+            self.controller.submit_positions(target)
+
+        self.assertEqual(failure.exception.error_code, MotionErrorCode.SOFT_LIMIT)
+        self.assertEqual(failure.exception.axis, AxisName.Z)
+        self.assertEqual(self.stm32.submissions, [])
+        self.assertEqual(self.shoulder.commands, [])
+        self.assertEqual(self.elbow.commands, [])
+        self.assertEqual(self.rotation.commands, [])
+
+    def test_public_group_validation_has_no_control_io(self) -> None:
+        target = MultiAxisTarget(
+            (
+                AxisTarget(AxisName.SLIDE, 2.0, 60.0, 180.0),
+                AxisTarget(AxisName.Z, 2.0, 8.0, 25.0),
+                AxisTarget(AxisName.SHOULDER, 2.0, 10.0),
+                AxisTarget(AxisName.ELBOW, -2.0, 10.0),
+                AxisTarget(AxisName.ROTATION, 2.0),
+            )
+        )
+
+        self.controller.validate_positions(target)
+
+        self.assertEqual(self.stm32.submissions, [])
+        self.assertEqual(self.shoulder.commands, [])
+        self.assertEqual(self.elbow.commands, [])
+        self.assertEqual(self.rotation.commands, [])
+
     def test_two_axis_submission_preserves_input_order(self) -> None:
         handle = self.controller.submit_positions(
             MultiAxisTarget(
@@ -547,6 +1008,8 @@ class MultiAxisTests(ControllerTestCase):
             shoulder_joint=self.shoulder,
             elbow_joint=self.elbow,
             rotation_axis=self.rotation,
+            linear_position_limits=linear_position_limits(),
+            linear_motion_limits=linear_motion_limits(),
             arrival_configs=arrival_configs(stable_time_s=0.0),
             default_motion_parameters={
                 AxisName.SHOULDER: (2.0, None),

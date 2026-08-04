@@ -7,6 +7,7 @@ import unittest
 
 from drivers.stm32_motion import (
     PROTOCOL_VERSION,
+    STM32AxisFault,
     STM32CommandError,
     STM32CommandEventError,
     STM32MotionClient,
@@ -33,6 +34,12 @@ class FakeTransport:
 
 
 class ParserTests(unittest.TestCase):
+    def test_axis_fault_values_match_machine_protocol_v1(self) -> None:
+        self.assertEqual(
+            tuple(int(value) for value in STM32AxisFault),
+            (0, 1, 2, 3, 4),
+        )
+
     def test_logs_are_ignored_and_machine_lines_parsed(self) -> None:
         self.assertIsNone(parse_machine_line("I: debug"))
         message = parse_machine_line("!12 DONE Z -35000")

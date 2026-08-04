@@ -262,6 +262,13 @@ firmware/stm32_motion_controller/App/README.md
 客户端提供 Slide/Z 的查询、相对/绝对运动、归零、停止、禁用、使能、清错和全停，
 以及吸盘查询、吸附、释放和停止。构造客户端不会连接硬件，代码也没有默认串口。
 
+统一控制器会结合活动命令解释 STM32 的轴状态故障。执行 Slide/Z reference home
+（机械归零）且尚未收到 `DONE`、`ABORT` 或 `FAULT` 时，如果同时为 `fault_code=2`
+（`POSITION_INVALID`）、`homed=False`、`position_valid=False`，这是尚未建立位置参考的
+预期暂态，不能提前判为终态设备故障。普通位置运动中的 `fault_code=2` 仍然是故障。
+归零收到 `DONE` 后会重新查询状态，只有 `homed=True`、`position_valid=True`、
+`busy=False`、`fault_code=0` 全部成立才返回 `ARRIVED`。
+
 ## 按 VID/PID 发现本机硬件
 
 本机硬件配置采用 `config/hardware.py` 中的 frozen dataclass（冻结数据类）。首次使用时
@@ -354,8 +361,10 @@ can_bus = CanMotorBus(
 提供统一的异步绝对点到点接口。直线轴公开单位为 mm、mm/s、mm/s²，旋转轴公开单位为
 deg、deg/s、deg/s²；底层的 µm、rad、电机角和 raw count 不进入运动学或前端边界。
 
-运动学只需生成 `MultiAxisTarget`。`submit_positions()` 先完整验证目标，再按输入顺序
-背靠背下发并立即返回 group handle；它不等待机械到位。`wait_group()` 轮询所有参与轴，
+运动学只需生成 `MultiAxisTarget`。`validate_positions()` 可以在不发送控制 I/O 的情况下验证
+整组位置、速度、加速度、能力和 Host 限位；`submit_positions()` 复用同一预校验，只有全部
+目标合法才按输入顺序背靠背下发并立即返回 group handle。因此后序轴超限不会造成前序轴已经
+运动的部分提交。它不等待机械到位。`wait_group()` 轮询所有参与轴，
 使用各轴显式注入的 `ArrivalConfig` 判断到位、稳定窗口和 deadline。命令
 `accepted=True` 只代表后端接受，不代表 `arrived` 或 `completed=True`。
 
@@ -378,8 +387,10 @@ result = controller.wait_group(handle, timeout_s=10.0)
 
 若目标省略 velocity/acceleration，构造控制器时必须通过
 `default_motion_parameters` 注入已经确认的工程单位默认值；核心层不会从示例或未经验证
-的机械参数猜测默认运动 profile。Slide/Z 描述符当前复现已锁定 STM32 固件中的临时保守
-machine soft limits，最终机械验收后应通过 `axis_descriptors` 注入更新值。
+的机械参数猜测默认运动 profile。Slide/Z 描述符的位置范围必须由
+`MotionRuntimeConfig.linear_position_limits()` 显式注入；速度和加速度上限由
+`linear_motion_limits()` 注入。当前 Host 上限为 Slide `72 mm/s`、`180 mm/s²`，Z
+`10 mm/s`、`25 mm/s²`；超限返回 `soft_limit`，STM32 firmware 仍独立执行最终硬保护。
 
 This is coordinated point-to-point submission, not interpolated or strictly synchronized motion.
 
@@ -410,8 +421,13 @@ STM32/Feetech port 和 gs_usb device 创建 transport、bus、肩肘关节、Rot
 只有额外设置 `allow_unverified_rotation_motion=True` 才能进入现有位置提交逻辑。多轴目标包含
 Rotation 时同样执行该门禁，timeout 不会被描述为已停止，也不会以 torque disable 冒充 stop。
 
-到位容差、稳定窗口、轮询周期、timeout、默认速度和默认加速度统一来自被 Git 忽略的
-`config/motion_local.py`。先复制 `config/motion_local.example.py`，再替换其中明确标为
+到位容差、稳定窗口、轮询周期、timeout、默认速度、默认加速度以及 Slide/Z 的 Host 位置、
+速度和加速度上限统一来自被 Git 忽略的 `config/motion_local.py`。当前本机线性范围同步 STM32
+firmware 的临时软限位：Slide `0..799.988 mm`、Z `0..190 mm`；固件仍独立执行同一底层保护。
+当前实测运行默认值为 Slide `60 mm/s`、`180 mm/s²`，Z `8 mm/s`、`25 mm/s²`；它们
+不等于允许上限。完成整机有效行程验收后，应同时更新 firmware 与本地配置，避免 Host 和
+下位机范围不一致。
+先复制 `config/motion_local.example.py`，再替换其中明确标为
 `EXAMPLE / BENCH-TEST PLACEHOLDER`、`NOT PRODUCTION-CALIBRATED` 的数值。Rotation 的工程
 速度/加速度映射尚未验证，因此示例保持 `None`。同一时刻只允许一个进程拥有这些真实硬件；
 Web 后端、运动学执行器和台架工具都应复用同一个 runtime，不再各自扫描和组装后端。
@@ -470,6 +486,62 @@ Z 使用 `--axis z`，默认 timeout 为 60 秒；Slide 默认 15 秒，也可�
 `homed=True`、`position_valid=True` 才返回成功。异常、`Ctrl+C` 或未验证结果会尝试软件
 stop；执行前还要求通信已连接、`busy=False`，且不存在除 `fault_code=2`（预期的未归零位置
 无效状态）之外的轴故障。Runtime context close 仍不等于 stop，软件 stop 也不是硬件急停。
+
+### Guarded five-axis point-to-point test
+
+`scripts/test_upper_motion_five_axis.py` 通过同一个 `UpperMotionRuntime` 和
+`UnifiedMotionController.submit_positions()` 提交 Slide、Z、Shoulder、Elbow、Rotation
+五轴目标。它是按固定轴顺序快速提交的 coordinated point-to-point motion（协调点到点运动），
+不是轨迹插补、严格同步或同时到达规划，也不验证轴间路径无碰撞。
+
+五个目标、timeout 和本次调用允许的最大线性/旋转位移都必须显式给出。各轴速度及 Slide/Z
+加速度可以显式覆盖；省略时使用 `motion_local.py` 默认值。默认不运动，只打开
+Runtime、对 Shoulder/Elbow 执行只读绝对位置初始化，并检查五轴连接、空闲、位置有效、故障、
+Slide/Z 归零、Shoulder/Elbow enabled、运动参数上限、目标软限位和目标位移：
+
+```bash
+cd host
+.venv/bin/python scripts/test_upper_motion_five_axis.py --help
+```
+
+实际命令格式如下；尖括号内容必须替换为经过当前机构姿态和碰撞空间确认的数值，不能直接复制
+执行：
+
+```bash
+.venv/bin/python scripts/test_upper_motion_five_axis.py \
+  --slide-mm <safe-slide-target> \
+  --z-mm <safe-z-target> \
+  --shoulder-deg <safe-shoulder-target> \
+  --elbow-deg <safe-elbow-target> \
+  --rotation-deg <safe-rotation-target> \
+  --slide-speed-mm-s <optional-positive-speed> \
+  --slide-accel-mm-s2 <optional-positive-acceleration> \
+  --z-speed-mm-s <optional-positive-speed> \
+  --z-accel-mm-s2 <optional-positive-acceleration> \
+  --shoulder-speed-deg-s <optional-positive-speed> \
+  --elbow-speed-deg-s <optional-positive-speed> \
+  --timeout <positive-seconds> \
+  --max-linear-delta-mm <verified-per-axis-delta> \
+  --max-rotary-delta-deg <verified-per-axis-delta>
+```
+
+先用上述默认 READ_ONLY 模式检查打印出的当前值、目标、delta、最终采用的运动参数、参数来源
+和上限。Rotation 只显示 `speed_raw`，不会把未经验证的映射伪装成 deg/s。真实五轴提交还必须
+在同一命令追加全部授权：
+
+```text
+--execute
+--confirm-five-axis-motion
+--confirm-emergency-stop-ready
+--accept-nonstrict-synchronization
+--accept-unverified-rotation-stop
+--enable-rotation-torque
+```
+
+执行模式会先把 Rotation goal 预置为当前角度，再显式 torque enable，然后才提交五轴目标。
+脚本结束后不会自动 torque disable；Rotation 当前没有经过验证的独立 software stop，发生异常时
+必须准备使用物理急停。其余四轴在等待被异常中断时会各尝试一次 best-effort software stop；
+group failure/timeout 则复用统一控制器自身的 stop 策略，不重复发送 stop。
 
 ### Frontend and kinematics client boundaries
 

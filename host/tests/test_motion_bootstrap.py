@@ -24,7 +24,12 @@ from config.hardware import (
     UsbVidPid,
 )
 from config.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
-from config.motion_runtime import AxisMotionProfile, MotionRuntimeConfig
+from config.motion_runtime import (
+    AxisMotionProfile,
+    LinearAxisMotionLimits,
+    LinearAxisPositionLimits,
+    MotionRuntimeConfig,
+)
 from drivers.device_discovery import (
     ResolvedGsUsbDevice,
     ResolvedHardware,
@@ -74,6 +79,10 @@ def motion_config() -> MotionRuntimeConfig:
         shoulder=profile(2.0, None),
         elbow=profile(2.0, None),
         rotation=profile(None, None),
+        slide_position_limits=LinearAxisPositionLimits(0.0, 700.0),
+        z_position_limits=LinearAxisPositionLimits(0.0, 180.0),
+        slide_motion_limits=LinearAxisMotionLimits(72.0, 180.0),
+        z_motion_limits=LinearAxisMotionLimits(10.0, 25.0),
     )
 
 
@@ -147,6 +156,20 @@ class BootstrapAssemblyTests(unittest.TestCase):
             runtime.controller._backends[AxisName.ROTATION],
             runtime.rotation_axis,
         )
+        self.assertEqual(
+            (
+                runtime.controller.describe_axis(AxisName.SLIDE).minimum_position,
+                runtime.controller.describe_axis(AxisName.SLIDE).maximum_position,
+            ),
+            (0.0, 700.0),
+        )
+        self.assertEqual(
+            (
+                runtime.controller.describe_axis(AxisName.Z).minimum_position,
+                runtime.controller.describe_axis(AxisName.Z).maximum_position,
+            ),
+            (0.0, 180.0),
+        )
         self.assertIs(runtime.frontend_motion._controller, runtime.controller)
         self.assertIs(runtime.kinematics_motion._controller, runtime.controller)
 
@@ -205,6 +228,14 @@ class BootstrapAssemblyTests(unittest.TestCase):
         self.assertEqual(
             runtime.controller._default_motion_parameters,
             motion.default_motion_parameters(),
+        )
+        self.assertEqual(
+            runtime.controller._linear_position_limits,
+            motion.linear_position_limits(),
+        )
+        self.assertEqual(
+            runtime.controller._linear_motion_limits,
+            motion.linear_motion_limits(),
         )
 
 
@@ -361,6 +392,8 @@ class MotionAuthorizationTests(unittest.TestCase):
             shoulder_joint=None,
             elbow_joint=None,
             rotation_axis=rotation,
+            linear_position_limits=motion_config().linear_position_limits(),
+            linear_motion_limits=motion_config().linear_motion_limits(),
             arrival_configs=motion_config().arrival_configs(),
             default_motion_parameters=motion_config().default_motion_parameters(),
             authorization=authorization,

@@ -237,6 +237,8 @@ def create_upper_motion_runtime(
         shoulder_joint=shoulder_joint,
         elbow_joint=elbow_joint,
         rotation_axis=rotation_axis,
+        linear_position_limits=motion_config.linear_position_limits(),
+        linear_motion_limits=motion_config.linear_motion_limits(),
         arrival_configs=motion_config.arrival_configs(),
         default_motion_parameters=motion_config.default_motion_parameters(),
         authorization=authorization,
