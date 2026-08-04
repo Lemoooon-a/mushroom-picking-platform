@@ -436,8 +436,11 @@ base_point = frame_chain.transform_camera_point_to_base(
 )
 ```
 
-仓库当前没有完整五轴 FK、正式连杆尺寸或冻结的 Tool 轴定义，因此标定脚本要求显式提供
-`--fk-provider module:attribute`，不会拿 Planar 2R 示例尺寸或 startup position 猜算。
+`kinematics/five_axis.py` 已提供参数化完整五轴 FK。真实连杆尺寸、Slide/Z 方向、平面安装
+变换和 `rotation_output_T_tool` 必须写入被 Git 忽略的
+`config/five_axis_geometry.local.json`，并显式设置 `geometry_confirmed=true`；脚本默认加载该
+文件，不会拿 Planar 2R 示例尺寸或 startup position 猜算。高级调用仍可用
+`--fk-provider module:attribute` 替换默认模型。
 三个工具均默认预览/只读，不自动 home、move、stop、enable 或 torque enable：
 
 ```bash

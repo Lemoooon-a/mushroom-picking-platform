@@ -49,10 +49,12 @@ from kinematics.frame_chain import (  # noqa: E402
     RobotAxisState,
     SlideZeroKinematics,
 )
+from kinematics.five_axis import FiveAxisKinematics  # noqa: E402
 from motion.authorization import RuntimeMode  # noqa: E402
 
 
 DEFAULT_LOCAL_PATH = HOST_ROOT / "config" / "frame_transforms.local.json"
+DEFAULT_FK_PROVIDER = "kinematics.five_axis:load_local_five_axis_kinematics"
 
 
 def capture_and_calibrate(
@@ -108,6 +110,8 @@ def save_calibration_result(
     force: bool,
     notes: str | None,
     git_commit: str | None,
+    fk_provider: str | None = None,
+    fk_geometry: dict[str, object] | None = None,
 ) -> None:
     """保留已有 Tool–Camera 外参；无效结果仅允许显式 force。"""
 
@@ -126,6 +130,8 @@ def save_calibration_result(
             "base_slide_calibration_method": "single_known_base_tcp_pose",
             "validated": False,
             "git_commit": git_commit,
+            "fk_provider": fk_provider,
+            "fk_geometry": fk_geometry,
             "captured_axis_positions": _axis_state_dict(axis_state),
             "reference_base_T_tool": _transform_dict(base_T_tool_reference),
             "computed_base_T_slide_zero": _transform_dict(result.base_T_slide_zero),
@@ -166,10 +172,10 @@ def _build_parser() -> argparse.ArgumentParser:
         parser.add_argument(f"--tcp-{name}-mm" if name != "yaw" else "--tcp-yaw-deg", type=float, required=True)
     parser.add_argument(
         "--fk-provider",
-        required=True,
+        default=DEFAULT_FK_PROVIDER,
         help=(
             "module:attribute implementing the confirmed complete "
-            "SlideZeroKinematics Protocol"
+            "SlideZeroKinematics Protocol (default: %(default)s)"
         ),
     )
     parser.add_argument("--expected-slide-yaw-deg", type=float, default=0.0)
@@ -235,6 +241,8 @@ def main(
                 force=args.force,
                 notes=args.notes,
                 git_commit=_git_commit(),
+                fk_provider=args.fk_provider,
+                fk_geometry=_five_axis_geometry_dict(kinematics),
             )
             print(f"Saved local frame transforms: {args.output}")
         else:
@@ -300,6 +308,28 @@ def _transform_dict(transform: RigidTransform) -> dict[str, list[float]]:
     return {
         "translation_mm": [float(value) for value in transform.translation_mm],
         "rotation_rpy_deg": [float(value) for value in transform.rpy_deg],
+    }
+
+
+def _five_axis_geometry_dict(
+    kinematics: SlideZeroKinematics,
+) -> dict[str, object] | None:
+    if not isinstance(kinematics, FiveAxisKinematics):
+        return None
+    geometry = kinematics.geometry
+    return {
+        "link_lengths_mm": [
+            geometry.link1_length_mm,
+            geometry.link2_length_mm,
+        ],
+        "slide_direction_xyz": list(geometry.slide_direction_xyz),
+        "z_direction_xyz": list(geometry.z_direction_xyz),
+        "slide_zero_T_planar_origin_at_zero": _transform_dict(
+            geometry.slide_zero_T_planar_origin_at_zero
+        ),
+        "rotation_output_T_tool": _transform_dict(
+            geometry.rotation_output_T_tool
+        ),
     }
 
 

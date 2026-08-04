@@ -14,15 +14,9 @@
 人员安全，然后停止所有轴。脚本打开通信、对肩/肘执行现有只读绝对位置初始化、连续读取状态，
 最后可靠关闭 Runtime。
 
-## 2. 当前必须先补齐的 FK provider
+## 2. 配置内置五轴 FK
 
-仓库当前缺少正式五轴 FK、真实连杆长度和已冻结的 Tool 轴方向，因此脚本要求显式：
-
-```bash
---fk-provider your_module:SLIDE_ZERO_KINEMATICS
-```
-
-该对象必须实现纯运动学 Protocol：
+仓库提供 `host/kinematics/five_axis.py`。它实现纯运动学 Protocol：
 
 ```python
 class SlideZeroKinematics(Protocol):
@@ -33,9 +27,33 @@ class SlideZeroKinematics(Protocol):
         ...  # returns slide_zero_T_tool
 ```
 
-provider 不得查询硬件或读取 startup position。请先确认 Tool 原点/轴方向、实际连杆参数、
-Slide/Z 方向和 Rotation 几何，再实现并审查 provider。当前 Planar 2R 只给出肩肘 XY 点，
-不足以安全代替完整五轴 `slide_zero_T_tool`。
+该 provider 不查询硬件或读取 startup position。首次使用先复制本机配置：
+
+```bash
+cd /Users/sd/Projects/mushroom-picking-platform/host
+cp config/five_axis_geometry.example.json \
+  config/five_axis_geometry.local.json
+```
+
+必须测量并填写：
+
+- `link_lengths_mm`：肩轴到肘轴、肘轴到 Rotation 输出轴的中心距；
+- `slide_direction_xyz`：Slide 逻辑正方向在 Slide-zero 中的单位向量；当前设计预期为
+  `[0, 1, 0]`，仍需机械确认；
+- `z_direction_xyz`：Z 逻辑正方向的单位向量；
+- `slide_zero_T_planar_origin_at_zero`：Slide/Z 均为 0 时，肩关节平面原点在 Slide-zero 中的
+  固定平移和 RPY；
+- `rotation_output_T_tool`：将 Tool/TCP 转到 Rotation 输出 frame 的完整固定变换。
+
+所有值确认后才把：
+
+```json
+"geometry_confirmed": true
+```
+
+内置模型的平面坐标为 x 向前、y 向左、z 向上；肩角相对平面 `+x`，肘角相对 link1；
+Rotation output 的 yaw 为 `shoulder + elbow + rotation`。如实际机构不满足这个串联关系，
+不要设置确认标志，应先修正模型。`--fk-provider` 仍保留用于显式替换其他经审查模型，默认无需填写。
 
 ## 3. 标定前机械与状态条件
 
@@ -81,8 +99,7 @@ roll/pitch 超限会使 `valid=false`，默认禁止保存。轴方向相反时�
   --tcp-x-mm 0 \
   --tcp-y-mm 0 \
   --tcp-z-mm 200 \
-  --tcp-yaw-deg 0 \
-  --fk-provider your_module:SLIDE_ZERO_KINEMATICS
+  --tcp-yaw-deg 0
 ```
 
 常用可选参数：
@@ -120,8 +137,8 @@ host/config/frame_transforms.local.json
 完成外部备份后才可添加 `--force`。无效标定同样只有 `--force` 才允许保存，并会在 metadata
 保留 `valid=false` 和 warnings。更新 Base 变换时保留已有 `tool_T_camera`。
 
-metadata 包含 UTC 时间、Git commit、五轴位置、Base TCP 参考、正逆固定变换、残差、对齐
-检查、操作者 notes。首次单点结果固定记录：
+metadata 包含 UTC 时间、Git commit、FK provider、使用的完整五轴几何快照、五轴位置、
+Base TCP 参考、正逆固定变换、残差、对齐检查和操作者 notes。首次单点结果固定记录：
 
 ```json
 "validated": false
@@ -139,7 +156,6 @@ metadata 包含 UTC 时间、Git commit、五轴位置、Base TCP 参考、正�
   --tcp-y-mm ... \
   --tcp-z-mm ... \
   --tcp-yaw-deg ... \
-  --fk-provider your_module:SLIDE_ZERO_KINEMATICS \
   --max-position-error-mm 2 \
   --max-yaw-error-deg 2
 ```

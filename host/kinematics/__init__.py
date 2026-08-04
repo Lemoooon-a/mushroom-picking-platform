@@ -14,10 +14,20 @@ from .frame_chain import (
     RobotFrameChain,
     SlideZeroKinematics,
 )
+from .five_axis import (
+    FiveAxisGeometry,
+    FiveAxisGeometryError,
+    FiveAxisKinematics,
+    load_five_axis_geometry,
+    load_local_five_axis_kinematics,
+)
 
 
 __all__ = [
     "FrameChainError",
+    "FiveAxisGeometry",
+    "FiveAxisGeometryError",
+    "FiveAxisKinematics",
     "JointAngles",
     "KinematicsError",
     "MissingToolCameraTransformError",
@@ -27,4 +37,6 @@ __all__ = [
     "RobotFrameChain",
     "SlideZeroKinematics",
     "UnreachableTargetError",
+    "load_five_axis_geometry",
+    "load_local_five_axis_kinematics",
 ]

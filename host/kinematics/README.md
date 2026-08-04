@@ -24,3 +24,25 @@ solutions = kinematics.inverse(x=point.x, y=point.y)
 
 逆运动学返回全部主值数学解，不应用当前肩、肘软件限位。调用层应根据
 `JointConfig.min_position_rad` 和 `JointConfig.max_position_rad` 过滤结果。
+
+## 参数化五轴正运动学
+
+`five_axis.FiveAxisKinematics` 在上述 Planar 2R 外组合 Slide、Z、Rotation 和 TCP 固定偏移，
+返回 `slide_zero_T_tool`：
+
+```text
+Slide/Z translation
+  @ slide_zero_T_planar_origin_at_zero
+  @ planar_origin_T_rotation_output(shoulder, elbow, rotation)
+  @ rotation_output_T_tool
+```
+
+当前机器几何从被 Git 忽略的 `config/five_axis_geometry.local.json` 加载。模板
+`config/five_axis_geometry.example.json` 故意把未知尺寸设为 `null` 且保持
+`geometry_confirmed=false`，避免示例数值进入真实标定。
+
+默认标定 provider 为：
+
+```text
+kinematics.five_axis:load_local_five_axis_kinematics
+```

@@ -20,10 +20,14 @@ Base (B)
   因此随 Rotation 转动。
 - **Camera**：刚性安装在 Rotation 输出侧，通过固定六自由度外参关联 Tool。
 
-> TODO：仓库当前没有 URDF（Unified Robot Description Format，统一机器人描述格式）、
-> 正式五轴几何模型、实际连杆长度或已冻结的 Tool x/y/z 轴机械定义。实现不会猜测这些参数。
-> 在提供真实 FK provider 前，机械负责人必须确认 Tool 右手轴方向、Rotation 零角语义、
-> TCP 相对 Rotation 输出的固定几何以及完整五轴链。
+仓库现在提供参数化五轴 FK，但仍没有 URDF（Unified Robot Description Format，统一机器人
+描述格式）或当前机器的实际连杆长度。`five_axis_geometry.local.json` 必须由机械负责人填写并
+确认 Tool 右手轴方向、Rotation 零角语义、TCP 相对 Rotation 输出的固定几何，然后显式设置
+`geometry_confirmed=true`；实现不会猜测这些参数。
+
+内置五轴模型把 Rotation output frame 定义为：原点在第二连杆末端，Shoulder/Elbow/Rotation
+均为 0 时，其 x/y/z 与平面运动学 frame 一致；运行时绕局部 `+z` 旋转
+`shoulder + elbow + rotation`。Tool frame 通过配置的 `rotation_output_T_tool` 接到该输出。
 
 ## 2. 变换记号和组合方向
 

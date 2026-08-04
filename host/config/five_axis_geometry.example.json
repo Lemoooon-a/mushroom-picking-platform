@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "geometry_confirmed": false,
+  "link_lengths_mm": [null, null],
+  "slide_direction_xyz": [0.0, 1.0, 0.0],
+  "z_direction_xyz": [0.0, 0.0, 1.0],
+  "slide_zero_T_planar_origin_at_zero": {
+    "translation_mm": [0.0, 0.0, 0.0],
+    "rotation_rpy_deg": [0.0, 0.0, 0.0]
+  },
+  "rotation_output_T_tool": {
+    "translation_mm": [null, null, null],
+    "rotation_rpy_deg": [null, null, null]
+  },
+  "metadata": {
+    "notes": "Template only. Measure every null value, review all frame directions, then set geometry_confirmed to true."
+  }
+}

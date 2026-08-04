@@ -44,6 +44,7 @@ from motion.authorization import RuntimeMode  # noqa: E402
 
 
 DEFAULT_LOCAL_PATH = HOST_ROOT / "config" / "frame_transforms.local.json"
+DEFAULT_FK_PROVIDER = "kinematics.five_axis:load_local_five_axis_kinematics"
 
 
 def capture_and_verify(
@@ -91,7 +92,7 @@ def _build_parser() -> argparse.ArgumentParser:
     for name in ("x", "y", "z"):
         parser.add_argument(f"--tcp-{name}-mm", type=float, required=True)
     parser.add_argument("--tcp-yaw-deg", type=float, required=True)
-    parser.add_argument("--fk-provider", required=True)
+    parser.add_argument("--fk-provider", default=DEFAULT_FK_PROVIDER)
     parser.add_argument("--config", type=Path, default=DEFAULT_LOCAL_PATH)
     parser.add_argument("--max-position-error-mm", type=float, default=2.0)
     parser.add_argument("--max-yaw-error-deg", type=float, default=2.0)
@@ -153,6 +154,7 @@ def main(
                 {
                     "validated": True,
                     "base_slide_validated_at": datetime.now(timezone.utc).isoformat(),
+                    "validation_fk_provider": args.fk_provider,
                     "validation_axis_positions": {
                         name: getattr(axis_state, name)
                         for name in axis_state.__dataclass_fields__
