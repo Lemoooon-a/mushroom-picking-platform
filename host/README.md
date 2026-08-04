@@ -183,10 +183,12 @@ Planar 2R 的 FK/IK 数学继续位于 `kinematics/planar_2r.py`，算法测试�
 
 ## STM32 正式 Host 客户端
 
-`drivers/stm32_motion.py` 将固件子模块的 ASCII machine protocol v1 整理为根项目
+`drivers/stm32_motion.py` 将固件子模块的 ASCII machine protocol v2 整理为根项目
 正式客户端。`STM32SerialTransport` 只有显式 `open()` 才打开串口；
 `STM32MotionClient` 负责 sequence、同步响应、异步 `DONE/ABORT/FAULT`、日志过滤、
-状态解析和 timeout。协议版本和最大行长通过离线测试与以下固件真值锁定：
+状态解析和 timeout。v2 使用 `hardware_ready` 表示 MCU 侧通用 STEP/DIR/ENABLE 资源
+可用；轴 fault 为 `NONE/LIMIT/POSITION_INVALID/HARDWARE_OR_CONFIG/HOMING`，不再暴露
+StallGuard 或特定驱动芯片状态。协议版本和最大行长通过离线测试与以下固件真值锁定：
 
 ```text
 firmware/stm32_motion_controller/App/Inc/app_protocol.h
@@ -194,7 +196,18 @@ firmware/stm32_motion_controller/App/README.md
 ```
 
 客户端提供 Slide/Z 的查询、相对/绝对运动、归零、停止、禁用、使能、清错和全停，
-以及吸盘查询、吸附、释放和停止。构造客户端不会连接硬件，代码也没有默认串口。
+以及吸盘查询、吸附、释放和停止。整数 API 使用 µm、µm/s 和 µm/s²；附加的
+`move_relative_mm()`/`move_absolute_mm()` 在发送前进行对称单位换算和整数范围检查。
+构造客户端不会连接硬件，代码也没有默认串口。
+
+只读串口冒烟检查默认依次发送 `VR`、`QS Z`、`QS S`、`QH` 和 `SQ`：
+
+```bash
+python scripts/stm32_protocol_smoke.py /dev/ttyACM0
+```
+
+该脚本默认不会归零或运动；`--home`/`--position-mm` 只有同时显式提供
+`--allow-motion` 时才可使用。
 
 统一控制器会结合活动命令解释 STM32 的轴状态故障。执行 Slide/Z reference home
 （机械归零）且尚未收到 `DONE`、`ABORT` 或 `FAULT` 时，如果同时为 `fault_code=2`

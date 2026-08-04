@@ -719,9 +719,9 @@ class STM32HomingStateTests(ControllerTestCase):
 
     def test_real_and_unknown_home_faults_fail_with_stable_semantics(self) -> None:
         for fault, name in (
-            (1, "stm32_axis.stall"),
-            (3, "stm32_axis.driver_fault"),
-            (4, "stm32_axis.homing_fault"),
+            (1, "stm32_axis.limit"),
+            (3, "stm32_axis.hardware_or_config"),
+            (4, "stm32_axis.homing"),
             (9, "stm32_axis.unknown"),
         ):
             with self.subTest(fault=fault):
@@ -804,9 +804,9 @@ class STM32HomingStateTests(ControllerTestCase):
 
     def test_done_real_faults_remain_device_faults(self) -> None:
         for fault, name in (
-            (1, "stm32_axis.stall"),
-            (3, "stm32_axis.driver_fault"),
-            (4, "stm32_axis.homing_fault"),
+            (1, "stm32_axis.limit"),
+            (3, "stm32_axis.hardware_or_config"),
+            (4, "stm32_axis.homing"),
         ):
             with self.subTest(fault=fault):
                 self.stm32.events = [
@@ -852,9 +852,9 @@ class STM32HomingStateTests(ControllerTestCase):
 
     def test_other_faults_remain_device_faults_for_absolute_move(self) -> None:
         for fault, name in (
-            (1, "stm32_axis.stall"),
-            (3, "stm32_axis.driver_fault"),
-            (4, "stm32_axis.homing_fault"),
+            (1, "stm32_axis.limit"),
+            (3, "stm32_axis.hardware_or_config"),
+            (4, "stm32_axis.homing"),
             (9, "stm32_axis.unknown"),
         ):
             with self.subTest(fault=fault):

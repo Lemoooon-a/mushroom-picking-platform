@@ -80,10 +80,10 @@ _INT32_MAX = 2**31 - 1
 _UINT32_MAX = 2**32 - 1
 
 _STM32_AXIS_FAULT_NAMES = {
-    STM32AxisFault.STALL: "stm32_axis.stall",
+    STM32AxisFault.LIMIT: "stm32_axis.limit",
     STM32AxisFault.POSITION_INVALID: "stm32_axis.position_invalid",
-    STM32AxisFault.DRIVER_FAULT: "stm32_axis.driver_fault",
-    STM32AxisFault.HOMING_FAULT: "stm32_axis.homing_fault",
+    STM32AxisFault.HARDWARE_OR_CONFIG: "stm32_axis.hardware_or_config",
+    STM32AxisFault.HOMING: "stm32_axis.homing",
 }
 
 
