@@ -32,6 +32,9 @@ cd host
 
 .venv/bin/python scripts/manual_motion.py inspect
 .venv/bin/python scripts/manual_motion.py state --axis shoulder
+.venv/bin/python scripts/manual_motion.py plan-base \
+  --tcp-x-mm 510 --tcp-y-mm 0 --tcp-z-mm 65 --tcp-yaw-deg 0 \
+  --allow-unvalidated-frame-transform
 .venv/bin/python scripts/manual_motion.py move \
   --axis shoulder --position 20 --velocity 2
 .venv/bin/python scripts/manual_motion.py move-group \
@@ -40,13 +43,31 @@ cd host
 .venv/bin/python scripts/manual_motion.py stop --axis elbow
 ```
 
-`inspect` 和 `state` 是只读操作。`move`、`move-group`、`home` 和 `stop` 默认只预览；真实动作
+`inspect`、`state` 和 `plan-base` 是只读操作。`move`、`move-group`、`home` 和 `stop` 默认只预览；真实动作
 必须显式授权。`move-group` 只包含用户指定轴，稳定顺序为
 `slide, z, shoulder, elbow, rotation`，不会自动补当前位置。这是背靠背点到点提交，不是轨迹
 插补、严格同步，也不保证同时起步或到达。
 
 正常轴动作只通过 controller。两个 backend 例外集中在共享 helper：Shoulder/Elbow 的进程内
 只读位置初始化，以及 Rotation 明确确认后的当前位置预装与 torque enable。
+
+### 2.1 Base TCP 五轴目标预览
+
+`plan-base` 读取当前五轴逻辑状态，把 Base 根的 TCP `x/y/z/yaw` 目标转换到 Slide-zero，生成并
+筛选五轴逆运动学候选，调用统一 controller 的只读 `validate_positions()`，最后打印选中解、分支、
+评分、FK 残差、软限位余量和完整 `MultiAxisTarget`。不提供 `--execute`，不会 submit、wait、home、
+stop 或 torque enable。
+
+不提供 `--slide-mm` 时采用“当前 Slide 优先、否则最近离散候选”策略；提供时只在指定 Slide 上
+求解。当前 `base_T_slide_zero` 尚为 provisional，因此必须显式提供：
+
+```text
+--allow-unvalidated-frame-transform
+```
+
+该参数只允许本次只读预览，不写回标定文件，也不表示标定已经验证。若目标无解，CLI 会保留已
+打印的 Slide-zero 目标，并报告失败阶段和候选统计，不生成伪造目标。真实 Base 目标执行将在完成
+独立姿态验证后作为单独任务增加。
 
 ## 3. STM32 Maintenance
 
@@ -146,6 +167,7 @@ manual_motion.py move-group
 
 ## 11. Current Limitations
 
-当前不提供轨迹插补、连续速度、严格同步、同时起步/到达、碰撞检测、自动 enable、自动 home、
-startup position、完整初始化状态机、自动标定运动、Rotation 独立 stop 或统一模糊的 disable-all。
+当前不提供 Base 目标真实执行、轨迹插补、连续速度、严格同步、同时起步/到达、碰撞检测、自动
+enable、自动 home、startup position、完整初始化状态机、自动标定运动、Rotation 独立 stop 或
+统一模糊的 disable-all。
 离线测试和编译结果不构成真实硬件验收。

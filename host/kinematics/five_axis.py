@@ -100,10 +100,10 @@ class FiveAxisKinematics:
             slide_zero_T_linear_offset
             @ self.geometry.slide_zero_T_planar_origin_at_zero
         )
-        output_yaw_deg = (
-            axis_state.shoulder_deg
-            + axis_state.elbow_deg
-            + axis_state.rotation_deg
+        output_yaw_deg = rotation_output_yaw_deg(
+            axis_state.shoulder_deg,
+            axis_state.elbow_deg,
+            axis_state.rotation_deg,
         )
         planar_origin_T_rotation_output = RigidTransform.from_xyz_yaw_deg(
             x_mm=planar_point.x,
@@ -116,6 +116,40 @@ class FiveAxisKinematics:
             @ planar_origin_T_rotation_output
             @ self.geometry.rotation_output_T_tool
         )
+
+
+def rotation_output_yaw_deg(
+    shoulder_deg: float,
+    elbow_deg: float,
+    rotation_deg: float,
+) -> float:
+    """返回 Rotation 输出 frame 相对平面原点的 yaw。
+
+    FK 与 IK 共用这一逻辑角组合，避免在 Base-frame 求解器中维护第二套
+    Rotation 安装约定。
+    """
+
+    return sum(
+        _require_finite(name, value)
+        for name, value in (
+            ("shoulder_deg", shoulder_deg),
+            ("elbow_deg", elbow_deg),
+            ("rotation_deg", rotation_deg),
+        )
+    )
+
+
+def rotation_deg_for_output_yaw(
+    output_yaw_deg: float,
+    shoulder_deg: float,
+    elbow_deg: float,
+) -> float:
+    """按与 FK 相同的安装约定反解未归一化 Rotation 逻辑角。"""
+
+    output = _require_finite("output_yaw_deg", output_yaw_deg)
+    shoulder = _require_finite("shoulder_deg", shoulder_deg)
+    elbow = _require_finite("elbow_deg", elbow_deg)
+    return output - shoulder - elbow
 
 
 def load_five_axis_geometry(path: Path) -> FiveAxisGeometry:
@@ -240,11 +274,18 @@ def _validate_unit_direction(name: str, value: object) -> None:
 
 
 def _require_positive(name: str, value: object) -> float:
+    converted = _require_finite(name, value)
+    if converted <= 0:
+        raise FiveAxisGeometryError(f"{name} must be finite and greater than zero")
+    return converted
+
+
+def _require_finite(name: str, value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{name} must be a finite real number")
     converted = float(value)
-    if not math.isfinite(converted) or converted <= 0:
-        raise FiveAxisGeometryError(f"{name} must be finite and greater than zero")
+    if not math.isfinite(converted):
+        raise FiveAxisGeometryError(f"{name} must be finite")
     return converted
 
 
@@ -255,4 +296,6 @@ __all__ = [
     "FiveAxisKinematics",
     "load_five_axis_geometry",
     "load_local_five_axis_kinematics",
+    "rotation_deg_for_output_yaw",
+    "rotation_output_yaw_deg",
 ]

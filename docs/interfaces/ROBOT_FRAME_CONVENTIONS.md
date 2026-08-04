@@ -20,8 +20,9 @@ Base (B)
   因此随 Rotation 转动。
 - **Camera**：刚性安装在 Rotation 输出侧，通过固定六自由度外参关联 Tool。
 
-仓库现在提供参数化五轴 FK，但仍没有 URDF（Unified Robot Description Format，统一机器人
-描述格式）或当前机器的实际连杆长度。`five_axis_geometry.local.json` 必须由机械负责人填写并
+仓库现在提供参数化五轴 FK 和 Base 根目标的完整五轴候选解算，但仍没有
+URDF（Unified Robot Description Format，统一机器人描述格式）。当前机器的实际连杆长度继续
+由本机几何配置提供。`five_axis_geometry.local.json` 必须由机械负责人填写并
 确认 Tool 右手轴方向、Rotation 零角语义、TCP 相对 Rotation 输出的固定几何，然后显式设置
 `geometry_confirmed=true`；实现不会猜测这些参数。
 
@@ -119,8 +120,26 @@ target_slide_zero_T_tool
   = slide_zero_T_base @ target_base_T_tool
 ```
 
-`RobotFrameChain.transform_base_target_to_slide_zero()` 提供该薄包装。仓库当前只有 Planar 2R
-的 XY IK，没有完整五轴 IK，因此本轮不虚构全机构逆解。
+`RobotFrameChain.transform_base_target_to_slide_zero()` 提供该薄包装；
+`BaseFrameFiveAxisSolver` 在输入边界做同一变换，然后在 Slide-zero 根下生成 Slide 离散候选、
+复用 Planar 2R 的两支 IK、反解 Z 和 Rotation、检查五轴软限位，并用完整 FK 重建筛选。
+
+完整目标链为：
+
+```text
+base_T_tool_target
+  -> slide_zero_T_base @ base_T_tool_target
+  -> five-axis IK in Slide-zero
+  -> MultiAxisTarget
+```
+
+`FiveAxisKinematics` 的内部根始终是 Slide-zero；外部笛卡尔目标根始终是 Base。
+`MultiAxisTarget` 不表达笛卡尔 frame，因为它只包含完成 IK 后的执行器空间逻辑目标：
+Slide/Z 使用 mm，Shoulder/Elbow/Rotation 使用 deg。不得向它加入 Base offset、frame ID 或
+startup position。
+
+当前 Base–Slide-zero 变换若仍标记为 `validated=false`，求解器默认拒绝使用。只读调试必须显式
+允许 provisional transform；这不改变配置中的验证状态，也不表示变换已经通过独立姿态验证。
 
 ## 6. startup position 隔离
 
@@ -137,6 +156,10 @@ raw count 转换继续由现有关节/驱动层负责。
 
 ## 7. Rotation 职责边界
 
-Frame chain 只计算当前位姿。若未来需要保持 Tool 或 Camera 在 Base 中的指定 yaw，应由
-运动学层根据 shoulder、elbow、rotation 求解目标逻辑角；该逻辑不进入统一控制器、驱动或
-Base–Slide-zero 标定。
+Frame chain 只计算当前位姿。Tool 在 Base 中的目标 yaw 由运动学层按与 FK 相同的共享公式，
+根据 shoulder、elbow 反解 Rotation 逻辑角；周期等价角在 Rotation 软限位内按当前位置选择。
+该逻辑不进入统一控制器、驱动或 Base–Slide-zero 标定。
+
+五轴目标可能同时存在多个 Slide、肘正/肘负和 Rotation 周期候选。当前求解器只是按确定性规则
+选择一组优选解，不声称数学唯一，也不提供碰撞检测或路径最优保证。详细算法和限制见
+[`BASE_FRAME_FIVE_AXIS_KINEMATICS.md`](BASE_FRAME_FIVE_AXIS_KINEMATICS.md)。

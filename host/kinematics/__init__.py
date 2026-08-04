@@ -20,14 +20,30 @@ from .five_axis import (
     FiveAxisKinematics,
     load_five_axis_geometry,
     load_local_five_axis_kinematics,
+    rotation_deg_for_output_yaw,
+    rotation_output_yaw_deg,
+)
+from .base_frame_solver import (
+    BaseFrameFiveAxisSolver,
+    BaseFrameSolverConfig,
+    BaseFrameSolverError,
+    FiveAxisNoSolutionError,
+    FiveAxisSolution,
+    SolverWeights,
+    UnvalidatedBaseTransformError,
 )
 
 
 __all__ = [
+    "BaseFrameFiveAxisSolver",
+    "BaseFrameSolverConfig",
+    "BaseFrameSolverError",
     "FrameChainError",
     "FiveAxisGeometry",
     "FiveAxisGeometryError",
     "FiveAxisKinematics",
+    "FiveAxisNoSolutionError",
+    "FiveAxisSolution",
     "JointAngles",
     "KinematicsError",
     "MissingToolCameraTransformError",
@@ -36,7 +52,11 @@ __all__ = [
     "RobotAxisState",
     "RobotFrameChain",
     "SlideZeroKinematics",
+    "SolverWeights",
+    "UnvalidatedBaseTransformError",
     "UnreachableTargetError",
     "load_five_axis_geometry",
     "load_local_five_axis_kinematics",
+    "rotation_deg_for_output_yaw",
+    "rotation_output_yaw_deg",
 ]
