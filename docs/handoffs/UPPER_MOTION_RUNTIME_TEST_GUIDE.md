@@ -43,7 +43,7 @@ cd host
 cd host
 .venv/bin/python scripts/list_hardware_devices.py --list-all
 .venv/bin/python scripts/list_hardware_devices.py --resolve
-.venv/bin/python scripts/test_upper_motion_runtime.py
+.venv/bin/python scripts/diagnostics/inspect_upper_motion.py
 ```
 
 最后一个命令默认创建 `READ_ONLY` runtime，只打开通信并读取 STM32 版本/状态、肩肘绝对
@@ -58,10 +58,10 @@ cd host
 
 ```bash
 # 默认只读预检
-.venv/bin/python scripts/test_upper_motion_home.py --axis slide
+.venv/bin/python scripts/debug_motion/home_linear_axis.py --axis slide
 
 # 确认现场安全后才执行一次真实机械归零
-.venv/bin/python scripts/test_upper_motion_home.py \
+.venv/bin/python scripts/debug_motion/home_linear_axis.py \
   --axis slide \
   --execute \
   --confirm-home-motion
@@ -74,24 +74,31 @@ cd host
 
 ```bash
 # 默认只读预检
-.venv/bin/python scripts/test_upper_motion_home.py --axis z
+.venv/bin/python scripts/debug_motion/home_linear_axis.py --axis z
 
 # Slide 已独立验收、Z 负载已支撑后才执行
-.venv/bin/python scripts/test_upper_motion_home.py \
+.venv/bin/python scripts/debug_motion/home_linear_axis.py \
   --axis z \
   --execute \
   --confirm-home-motion
 ```
 
 该程序一次只接受一个轴；只有统一结果为 `ARRIVED` 且最终状态同时满足 `homed=True`、
-`position_valid=True` 才判定成功。执行前必须确认 `busy=False`，且不存在除
-`fault_code=2`（未归零导致的位置无效）之外的故障。异常或中断只会尝试软件 stop，不能
-替代硬件急停。
+`position_valid=True`、`busy=False`、`faulted=False` 才判定成功。执行前必须确认
+`busy=False`，且不存在除 `fault_code=2`（未归零导致的位置无效）之外的故障。controller
+已经返回 terminal timeout/fault/abort 时 CLI 不重复 stop；提交可能已发生但尚无 terminal
+result 的异常或中断，CLI 才最多尝试一次软件 stop。该 stop 不能替代硬件急停或 disable。
 
 ### 5. Shoulder 低速小角度
 
 先在只读模式取得至少三次稳定的 `0x94` 绝对位置样本，确认逻辑零点、方向、当前角度和
 软限位，再显式进入 `MOTION`，以低速执行小角度目标。记录命令前后状态和软件 stop 结果。
+
+```bash
+.venv/bin/python scripts/debug_motion/debug_axis_motion.py state --axis shoulder
+.venv/bin/python scripts/debug_motion/debug_axis_motion.py move \
+  --axis shoulder --position <safe-target-deg> --velocity <safe-speed-deg-s>
+```
 
 ### 6. Elbow 低速小角度
 
@@ -106,6 +113,11 @@ cd host
 
 只在两关节分别通过单轴验收后进行低速、小角度联合点到点。先验证运动学目标在两轴软限位
 内，并观察连杆扫掠范围。不得把“命令已接受”当作“机械已到位”。
+
+```bash
+.venv/bin/python scripts/debug_motion/debug_multi_axis_motion.py \
+  --shoulder <safe-target-deg> --elbow <safe-target-deg>
+```
 
 ### 9. 四轴联合点到点
 
@@ -122,8 +134,9 @@ RuntimeMode.MOTION
 allow_unverified_rotation_motion=True
 ```
 
-`scripts/test_upper_motion_runtime.py --execute --allow-rotation-motion` 只展示授权模式，仍不会发送
-运动。真实 Rotation 目标必须来自另一个明确、受控的调用入口。不得用 torque disable、关闭
+先用 `scripts/debug_motion/debug_axis_motion.py state --axis rotation` 只读检查。真实 Rotation
+目标必须使用同一入口的 `move`，并同时提供普通运动确认、`--allow-rotation-motion`、
+`--confirm-rotation-no-stop` 和独立的 `--enable-rotation-torque`。不得用 torque disable、关闭
 串口或 timeout 冒充 stop。
 
 ### 11. 确认 Rotation 故障降级策略

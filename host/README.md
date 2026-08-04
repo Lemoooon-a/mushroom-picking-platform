@@ -507,16 +507,28 @@ with runtime:
 Entering the runtime context only opens communication resources.
 It does not enable actuators, home axes, or issue motion commands.
 
-默认三设备只读联合检查：
+长期人工调试入口：
+
+| Purpose | New command |
+| --- | --- |
+| Read all upper-motion state | `scripts/diagnostics/inspect_upper_motion.py` |
+| Read/control one axis | `scripts/debug_motion/debug_axis_motion.py` |
+| Control an axis subset | `scripts/debug_motion/debug_multi_axis_motion.py` |
+| Home Slide/Z | `scripts/debug_motion/home_linear_axis.py` |
+
+完整安全语义与示例见 `docs/handoffs/UPPER_MOTION_DEBUG_CLI_GUIDE.md`。旧的
+`scripts/test_upper_motion_runtime.py`、`scripts/test_upper_motion_home.py` 和
+`scripts/test_upper_motion_five_axis.py` 仍保留兼容，但运行时会显示弃用提示。
+
+默认五轴只读联合检查：
 
 ```bash
 cd host
-.venv/bin/python scripts/test_upper_motion_runtime.py
+.venv/bin/python scripts/diagnostics/inspect_upper_motion.py
 ```
 
-`--execute` 只切换授权模式，脚本仍不发送运动；Rotation 风险接受还需同时给出
-`--allow-rotation-motion`。真实硬件的分阶段验证顺序见
-`docs/handoffs/UPPER_MOTION_RUNTIME_TEST_GUIDE.md`。
+新诊断入口没有 `--execute`，只读取 STM32 version、五轴 descriptor/capability 和逻辑状态。
+真实硬件的分阶段验证顺序见 `docs/handoffs/UPPER_MOTION_RUNTIME_TEST_GUIDE.md`。
 
 Slide/Z 的统一接口单轴归零使用独立受控入口。默认命令只读取所选轴状态；真实归零必须同时
 提供两个显式开关，并且一次只能选择一个轴：
@@ -525,10 +537,10 @@ Slide/Z 的统一接口单轴归零使用独立受控入口。默认命令只读
 cd host
 
 # READ_ONLY：只查询 Slide，不使能或运动
-.venv/bin/python scripts/test_upper_motion_home.py --axis slide
+.venv/bin/python scripts/debug_motion/home_linear_axis.py --axis slide
 
 # MOTION：现场确认安全条件后，显式执行一次 Slide 机械归零
-.venv/bin/python scripts/test_upper_motion_home.py \
+.venv/bin/python scripts/debug_motion/home_linear_axis.py \
   --axis slide \
   --execute \
   --confirm-home-motion
@@ -536,62 +548,67 @@ cd host
 
 Z 使用 `--axis z`，默认 timeout 为 60 秒；Slide 默认 15 秒，也可用正数 `--timeout` 覆盖。
 程序通过 `controller.home_reference()` 调用统一接口，只有结果为 `ARRIVED`，且最终
-`homed=True`、`position_valid=True` 才返回成功。异常、`Ctrl+C` 或未验证结果会尝试软件
-stop；执行前还要求通信已连接、`busy=False`，且不存在除 `fault_code=2`（预期的未归零位置
-无效状态）之外的轴故障。Runtime context close 仍不等于 stop，软件 stop 也不是硬件急停。
+`homed=True`、`position_valid=True`、`busy=False`、`faulted=False` 才返回成功。controller
+返回 terminal timeout/fault/abort 后 CLI 不重复 stop；仅在提交可能已发生但尚无 terminal result
+的异常或 `Ctrl+C` 中最多尝试一次软件 stop。执行前还要求通信已连接、`busy=False`，且不存在
+除 `fault_code=2`（预期的未归零位置无效状态）之外的轴故障。Runtime context close 仍不等于
+stop，软件 stop 也不是 disable、断电或硬件急停。
 
-### Guarded five-axis point-to-point test
+### Guarded axis-subset point-to-point test
 
-`scripts/test_upper_motion_five_axis.py` 通过同一个 `UpperMotionRuntime` 和
-`UnifiedMotionController.submit_positions()` 提交 Slide、Z、Shoulder、Elbow、Rotation
-五轴目标。它是按固定轴顺序快速提交的 coordinated point-to-point motion（协调点到点运动），
-不是轨迹插补、严格同步或同时到达规划，也不验证轴间路径无碰撞。
+`scripts/debug_motion/debug_multi_axis_motion.py` 通过同一个 `UpperMotionRuntime` 和
+`UnifiedMotionController.submit_positions()` 提交用户显式指定的任意轴子集。它采用稳定轴顺序
+`slide, z, shoulder, elbow, rotation`，不会给未指定轴补当前位置或保持目标。该入口是协调
+点到点运动（Coordinated Point-to-Point Motion），不是轨迹插补、严格同步或同时到达规划，
+也不验证轴间路径无碰撞。
 
-五个目标、timeout 和本次调用允许的最大线性/旋转位移都必须显式给出。各轴速度及 Slide/Z
-加速度可以显式覆盖；省略时使用 `motion_local.py` 默认值。默认不运动，只打开
-Runtime、对 Shoulder/Elbow 执行只读绝对位置初始化，并检查五轴连接、空闲、位置有效、故障、
-Slide/Z 归零、Shoulder/Elbow enabled、运动参数上限、目标软限位和目标位移：
+至少一个轴目标必须显式给出；timeout 和本次调用允许的最大线性/旋转位移可按需要覆盖。各轴
+速度与加速度可显式提供，是否支持仍由 descriptor 和统一 controller 校验。默认不运动，只打开
+Runtime、对参与的 Shoulder/Elbow 执行只读绝对位置初始化，并检查参与轴连接、空闲、位置有效、
+故障、Slide/Z 归零、Shoulder/Elbow enabled、目标软限位和目标位移：
 
 ```bash
 cd host
-.venv/bin/python scripts/test_upper_motion_five_axis.py --help
+.venv/bin/python scripts/debug_motion/debug_multi_axis_motion.py --help
 ```
 
 实际命令格式如下；尖括号内容必须替换为经过当前机构姿态和碰撞空间确认的数值，不能直接复制
 执行：
 
 ```bash
-.venv/bin/python scripts/test_upper_motion_five_axis.py \
-  --slide-mm <safe-slide-target> \
-  --z-mm <safe-z-target> \
-  --shoulder-deg <safe-shoulder-target> \
-  --elbow-deg <safe-elbow-target> \
-  --rotation-deg <safe-rotation-target> \
-  --slide-speed-mm-s <optional-positive-speed> \
-  --slide-accel-mm-s2 <optional-positive-acceleration> \
-  --z-speed-mm-s <optional-positive-speed> \
-  --z-accel-mm-s2 <optional-positive-acceleration> \
-  --shoulder-speed-deg-s <optional-positive-speed> \
-  --elbow-speed-deg-s <optional-positive-speed> \
+.venv/bin/python scripts/debug_motion/debug_multi_axis_motion.py \
+  --slide <safe-slide-target> \
+  --z <safe-z-target> \
+  --shoulder <safe-shoulder-target> \
+  --elbow <safe-elbow-target> \
+  --slide-velocity <optional-positive-speed> \
+  --slide-acceleration <optional-positive-acceleration> \
+  --z-velocity <optional-positive-speed> \
+  --z-acceleration <optional-positive-acceleration> \
+  --shoulder-velocity <optional-positive-speed> \
+  --elbow-velocity <optional-positive-speed> \
   --timeout <positive-seconds> \
   --max-linear-delta-mm <verified-per-axis-delta> \
   --max-rotary-delta-deg <verified-per-axis-delta>
 ```
 
-先用上述默认 READ_ONLY 模式检查打印出的当前值、目标、delta、最终采用的运动参数、参数来源
-和上限。Rotation 只显示 `speed_raw`，不会把未经验证的映射伪装成 deg/s。真实五轴提交还必须
-在同一命令追加全部授权：
+先用上述默认 READ_ONLY 模式检查打印出的当前值、目标、delta、运动参数和上限。真实提交必须
+追加普通双确认：
 
 ```text
 --execute
---confirm-five-axis-motion
---confirm-emergency-stop-ready
---accept-nonstrict-synchronization
---accept-unverified-rotation-stop
+--confirm-motion
+```
+
+目标包含 Rotation 时还必须追加：
+
+```text
+--allow-rotation-motion
+--confirm-rotation-no-stop
 --enable-rotation-torque
 ```
 
-执行模式会先把 Rotation goal 预置为当前角度，再显式 torque enable，然后才提交五轴目标。
+执行模式会先把 Rotation goal 预置为当前角度，再显式 torque enable，然后才提交轴子集目标。
 脚本结束后不会自动 torque disable；Rotation 当前没有经过验证的独立 software stop，发生异常时
 必须准备使用物理急停。其余四轴在等待被异常中断时会各尝试一次 best-effort software stop；
 group failure/timeout 则复用统一控制器自身的 stop 策略，不重复发送 stop。

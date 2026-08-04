@@ -208,7 +208,7 @@ class RunHomeTestTests(unittest.TestCase):
                 runtime.controller.home_reference.assert_not_called()
                 runtime.controller.stop.assert_not_called()
 
-    def test_non_arrived_result_attempts_stop_and_fails(self) -> None:
+    def test_non_arrived_terminal_result_is_not_stopped_twice(self) -> None:
         runtime = fake_runtime(AxisName.SLIDE)
         runtime.controller.get_state.side_effect = [
             axis_state(AxisName.SLIDE, homed=False, position_valid=False),
@@ -225,7 +225,7 @@ class RunHomeTestTests(unittest.TestCase):
                 emit=lambda _line: None,
             )
         )
-        runtime.controller.stop.assert_called_once_with(AxisName.SLIDE)
+        runtime.controller.stop.assert_not_called()
 
     def test_arrived_without_valid_final_state_is_not_success(self) -> None:
         runtime = fake_runtime(AxisName.Z)
@@ -244,7 +244,7 @@ class RunHomeTestTests(unittest.TestCase):
                 emit=lambda _line: None,
             )
         )
-        runtime.controller.stop.assert_called_once_with(AxisName.Z)
+        runtime.controller.stop.assert_not_called()
 
     def test_home_exception_attempts_stop_and_preserves_error(self) -> None:
         runtime = fake_runtime(AxisName.SLIDE)
@@ -294,14 +294,10 @@ class RunHomeTestTests(unittest.TestCase):
 
 
 class HomeScriptMainTests(unittest.TestCase):
-    @patch("scripts.test_upper_motion_home.run_home_test", return_value=True)
-    @patch("scripts.test_upper_motion_home.create_upper_motion_runtime")
-    @patch("scripts.test_upper_motion_home.load_local_motion_config")
-    @patch("scripts.test_upper_motion_home.load_local_hardware_config")
+    @patch("scripts.debug_motion.home_linear_axis.run_home_test", return_value=True)
+    @patch("scripts.debug_motion.home_linear_axis.create_configured_runtime")
     def test_default_is_read_only_slide_preflight(
         self,
-        load_hardware: Mock,
-        load_motion: Mock,
         create_runtime: Mock,
         run_test: Mock,
     ) -> None:
@@ -309,7 +305,7 @@ class HomeScriptMainTests(unittest.TestCase):
         create_runtime.return_value = runtime
         with redirect_stdout(io.StringIO()):
             self.assertEqual(main(["--axis", "slide"]), 0)
-        self.assertIs(create_runtime.call_args.kwargs["mode"], RuntimeMode.READ_ONLY)
+        create_runtime.assert_called_once_with(RuntimeMode.READ_ONLY)
         run_test.assert_called_once_with(
             runtime,
             AxisName.SLIDE,
@@ -317,14 +313,10 @@ class HomeScriptMainTests(unittest.TestCase):
             timeout_s=15.0,
         )
 
-    @patch("scripts.test_upper_motion_home.run_home_test", return_value=True)
-    @patch("scripts.test_upper_motion_home.create_upper_motion_runtime")
-    @patch("scripts.test_upper_motion_home.load_local_motion_config")
-    @patch("scripts.test_upper_motion_home.load_local_hardware_config")
+    @patch("scripts.debug_motion.home_linear_axis.run_home_test", return_value=True)
+    @patch("scripts.debug_motion.home_linear_axis.create_configured_runtime")
     def test_execute_z_requires_both_flags_and_uses_motion_mode(
         self,
-        load_hardware: Mock,
-        load_motion: Mock,
         create_runtime: Mock,
         run_test: Mock,
     ) -> None:
@@ -344,7 +336,7 @@ class HomeScriptMainTests(unittest.TestCase):
                 ),
                 0,
             )
-        self.assertIs(create_runtime.call_args.kwargs["mode"], RuntimeMode.MOTION)
+        create_runtime.assert_called_once_with(RuntimeMode.MOTION)
         run_test.assert_called_once_with(
             runtime,
             AxisName.Z,
@@ -352,10 +344,10 @@ class HomeScriptMainTests(unittest.TestCase):
             timeout_s=45.0,
         )
 
-    @patch("scripts.test_upper_motion_home.load_local_hardware_config")
+    @patch("scripts.debug_motion.home_linear_axis.create_configured_runtime")
     def test_one_motion_flag_is_rejected_before_config_or_hardware(
         self,
-        load_hardware: Mock,
+        create_runtime: Mock,
     ) -> None:
         for flag in ("--execute", "--confirm-home-motion"):
             with self.subTest(flag=flag):
@@ -363,16 +355,12 @@ class HomeScriptMainTests(unittest.TestCase):
                     with self.assertRaises(SystemExit) as failure:
                         main(["--axis", "slide", flag])
                 self.assertEqual(failure.exception.code, 2)
-        load_hardware.assert_not_called()
+        create_runtime.assert_not_called()
 
-    @patch("scripts.test_upper_motion_home.run_home_test", return_value=False)
-    @patch("scripts.test_upper_motion_home.create_upper_motion_runtime")
-    @patch("scripts.test_upper_motion_home.load_local_motion_config")
-    @patch("scripts.test_upper_motion_home.load_local_hardware_config")
+    @patch("scripts.debug_motion.home_linear_axis.run_home_test", return_value=False)
+    @patch("scripts.debug_motion.home_linear_axis.create_configured_runtime")
     def test_unverified_home_returns_failure_exit_code(
         self,
-        _load_hardware: Mock,
-        _load_motion: Mock,
         create_runtime: Mock,
         _run_test: Mock,
     ) -> None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
 import io
 from pathlib import Path
@@ -483,6 +483,7 @@ class ReadOnlySmokeTests(unittest.TestCase):
                 position_unit="mm" if axis in (AxisName.SLIDE, AxisName.Z) else "deg",
                 faulted=False,
                 fault_code=None,
+                fault_message=None,
             )
             for axis in AxisName
         )
@@ -506,26 +507,17 @@ class ReadOnlySmokeTests(unittest.TestCase):
         ):
             forbidden.assert_not_called()
 
-    @patch("scripts.test_upper_motion_runtime.run_read_only_smoke")
-    @patch("scripts.test_upper_motion_runtime.create_upper_motion_runtime")
-    @patch("scripts.test_upper_motion_runtime.load_local_motion_config")
-    @patch("scripts.test_upper_motion_runtime.load_local_hardware_config")
+    @patch("scripts.diagnostics.inspect_upper_motion.run_read_only_inspection")
+    @patch("scripts.diagnostics.inspect_upper_motion.create_configured_runtime")
     def test_smoke_main_defaults_to_read_only(
         self,
-        load_hardware: Mock,
-        load_motion: Mock,
         create_runtime: Mock,
         run_smoke: Mock,
     ) -> None:
-        load_hardware.return_value = hardware_config()
-        load_motion.return_value = motion_config()
         create_runtime.return_value = Mock()
-        with redirect_stdout(io.StringIO()):
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.assertEqual(smoke_main([]), 0)
-        self.assertIs(create_runtime.call_args.kwargs["mode"], RuntimeMode.READ_ONLY)
-        self.assertFalse(
-            create_runtime.call_args.kwargs["allow_unverified_rotation_motion"]
-        )
+        create_runtime.assert_called_once_with(RuntimeMode.READ_ONLY)
         run_smoke.assert_called_once_with(create_runtime.return_value)
 
     def test_smoke_closes_when_a_read_fails(self) -> None:

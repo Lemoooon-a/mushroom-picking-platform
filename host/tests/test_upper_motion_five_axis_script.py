@@ -156,6 +156,7 @@ def fake_runtime() -> MagicMock:
     def descriptor(axis: AxisName) -> object:
         linear = axis in (AxisName.SLIDE, AxisName.Z)
         return SimpleNamespace(
+            name=axis,
             kind=AxisKind.LINEAR if linear else AxisKind.ROTARY,
             minimum_position=0.0 if linear else -180.0,
             maximum_position=100.0 if linear else 180.0,
@@ -163,8 +164,13 @@ def fake_runtime() -> MagicMock:
             velocity_unit="mm/s" if linear else "deg/s",
             acceleration_unit="mm/s²" if linear else "deg/s²",
             capabilities=SimpleNamespace(
+                query_state=True,
+                move_absolute=True,
+                stop=axis is not AxisName.ROTATION,
+                reference_home=linear,
                 configurable_velocity=axis is not AxisName.ROTATION,
                 configurable_acceleration=linear,
+                arrival_confirmation=True,
             ),
         )
 
@@ -207,9 +213,8 @@ class RunFiveAxisTestTests(unittest.TestCase):
         self.assertIn("READ_ONLY", "\n".join(output))
         rendered = "\n".join(output)
         self.assertIn("axis=slide", rendered)
-        self.assertIn("velocity=1.000000 mm/s source=default", rendered)
-        self.assertIn("limit=72.000000 mm/s", rendered)
-        self.assertIn("speed_raw=100", rendered)
+        self.assertIn("axis=rotation", rendered)
+        self.assertIn("only explicitly listed axes participate", rendered)
 
     def test_preflight_rejects_unhealthy_axis_before_any_control_write(self) -> None:
         runtime = fake_runtime()
@@ -225,6 +230,8 @@ class RunFiveAxisTestTests(unittest.TestCase):
                 timeout_s=10.0,
                 max_linear_delta_mm=5.0,
                 max_rotary_delta_deg=10.0,
+                confirm_rotation_no_stop=True,
+                confirm_rotation_torque_enable=True,
                 emit=lambda _line: None,
             )
         )
@@ -254,14 +261,14 @@ class RunFiveAxisTestTests(unittest.TestCase):
         )
         runtime.controller.submit_positions.assert_not_called()
 
-    def test_preflight_requires_local_defaults_before_rotation_torque_enable(self) -> None:
+    def test_rotation_confirmation_precedes_torque_enable(self) -> None:
         runtime = fake_runtime()
         runtime.motion_config.profiles.return_value[AxisName.SLIDE] = SimpleNamespace(
             default_velocity=None,
             default_acceleration=1.0,
         )
 
-        self.assertFalse(
+        with self.assertRaises(ValueError):
             run_five_axis_test(
                 runtime,
                 target(),
@@ -271,7 +278,6 @@ class RunFiveAxisTestTests(unittest.TestCase):
                 max_rotary_delta_deg=10.0,
                 emit=lambda _line: None,
             )
-        )
         runtime.rotation_axis.enable_torque.assert_not_called()
         runtime.controller.submit_positions.assert_not_called()
 
@@ -291,6 +297,8 @@ class RunFiveAxisTestTests(unittest.TestCase):
                 timeout_s=10.0,
                 max_linear_delta_mm=5.0,
                 max_rotary_delta_deg=10.0,
+                confirm_rotation_no_stop=True,
+                confirm_rotation_torque_enable=True,
                 emit=lambda _line: None,
             )
         )
@@ -312,6 +320,8 @@ class RunFiveAxisTestTests(unittest.TestCase):
                 timeout_s=10.0,
                 max_linear_delta_mm=5.0,
                 max_rotary_delta_deg=10.0,
+                confirm_rotation_no_stop=True,
+                confirm_rotation_torque_enable=True,
                 emit=lambda _line: None,
             )
         )
@@ -342,6 +352,8 @@ class RunFiveAxisTestTests(unittest.TestCase):
                 timeout_s=10.0,
                 max_linear_delta_mm=5.0,
                 max_rotary_delta_deg=10.0,
+                confirm_rotation_no_stop=True,
+                confirm_rotation_torque_enable=True,
                 emit=lambda _line: None,
             )
         )
@@ -359,6 +371,8 @@ class RunFiveAxisTestTests(unittest.TestCase):
                 timeout_s=10.0,
                 max_linear_delta_mm=5.0,
                 max_rotary_delta_deg=10.0,
+                confirm_rotation_no_stop=True,
+                confirm_rotation_torque_enable=True,
                 emit=lambda _line: None,
             )
 
@@ -372,10 +386,11 @@ class RunFiveAxisTestTests(unittest.TestCase):
             ),
         )
 
-    def test_invalid_target_or_limits_fail_before_runtime_open(self) -> None:
+    def test_axis_subsets_and_order_are_supported_but_invalid_limits_fail_early(self) -> None:
         runtime = fake_runtime()
         incomplete = MultiAxisTarget((AxisTarget(AxisName.SLIDE, 1.0),))
-        with self.assertRaises(ValueError):
+        runtime.controller.get_axis_states.return_value = (states()[0],)
+        self.assertTrue(
             run_five_axis_test(
                 runtime,
                 incomplete,
@@ -384,26 +399,20 @@ class RunFiveAxisTestTests(unittest.TestCase):
                 max_linear_delta_mm=5.0,
                 max_rotary_delta_deg=10.0,
             )
-        reversed_target = MultiAxisTarget(tuple(reversed(target().targets)))
+        )
+        runtime.controller.get_axis_states.assert_called_once_with((AxisName.SLIDE,))
+
+        unopened_runtime = fake_runtime()
         with self.assertRaises(ValueError):
             run_five_axis_test(
-                runtime,
-                reversed_target,
-                execute=False,
-                timeout_s=10.0,
-                max_linear_delta_mm=5.0,
-                max_rotary_delta_deg=10.0,
-            )
-        with self.assertRaises(ValueError):
-            run_five_axis_test(
-                runtime,
+                unopened_runtime,
                 target(),
                 execute=False,
                 timeout_s=0.0,
                 max_linear_delta_mm=5.0,
                 max_rotary_delta_deg=10.0,
             )
-        runtime.__enter__.assert_not_called()
+        unopened_runtime.__enter__.assert_not_called()
 
 
 class FiveAxisScriptMainTests(unittest.TestCase):
@@ -427,35 +436,25 @@ class FiveAxisScriptMainTests(unittest.TestCase):
             "10",
         ]
 
-    @patch("scripts.test_upper_motion_five_axis.run_five_axis_test", return_value=True)
-    @patch("scripts.test_upper_motion_five_axis.create_upper_motion_runtime")
-    @patch("scripts.test_upper_motion_five_axis.load_local_motion_config")
-    @patch("scripts.test_upper_motion_five_axis.load_local_hardware_config")
+    @patch("scripts.debug_motion.debug_multi_axis_motion.run_multi_axis_test", return_value=True)
+    @patch("scripts.debug_motion.debug_multi_axis_motion.create_configured_runtime")
     def test_read_only_main_uses_read_only_runtime(
         self,
-        hardware: MagicMock,
-        motion: MagicMock,
         create: MagicMock,
         run: MagicMock,
     ) -> None:
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.assertEqual(main(self.base_args), 0)
         create.assert_called_once_with(
-            hardware.return_value,
-            motion.return_value,
-            mode=RuntimeMode.READ_ONLY,
+            RuntimeMode.READ_ONLY,
             allow_unverified_rotation_motion=False,
         )
         self.assertFalse(run.call_args.kwargs["execute"])
 
-    @patch("scripts.test_upper_motion_five_axis.run_five_axis_test", return_value=True)
-    @patch("scripts.test_upper_motion_five_axis.create_upper_motion_runtime")
-    @patch("scripts.test_upper_motion_five_axis.load_local_motion_config")
-    @patch("scripts.test_upper_motion_five_axis.load_local_hardware_config")
+    @patch("scripts.debug_motion.debug_multi_axis_motion.run_multi_axis_test", return_value=True)
+    @patch("scripts.debug_motion.debug_multi_axis_motion.create_configured_runtime")
     def test_execute_requires_all_confirmations_and_authorizes_rotation(
         self,
-        hardware: MagicMock,
-        motion: MagicMock,
         create: MagicMock,
         run: MagicMock,
     ) -> None:
@@ -470,21 +469,15 @@ class FiveAxisScriptMainTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.assertEqual(main(args), 0)
         create.assert_called_once_with(
-            hardware.return_value,
-            motion.return_value,
-            mode=RuntimeMode.MOTION,
+            RuntimeMode.MOTION,
             allow_unverified_rotation_motion=True,
         )
         self.assertTrue(run.call_args.kwargs["execute"])
 
-    @patch("scripts.test_upper_motion_five_axis.run_five_axis_test", return_value=True)
-    @patch("scripts.test_upper_motion_five_axis.create_upper_motion_runtime")
-    @patch("scripts.test_upper_motion_five_axis.load_local_motion_config")
-    @patch("scripts.test_upper_motion_five_axis.load_local_hardware_config")
+    @patch("scripts.debug_motion.debug_multi_axis_motion.run_multi_axis_test", return_value=True)
+    @patch("scripts.debug_motion.debug_multi_axis_motion.create_configured_runtime")
     def test_explicit_motion_parameters_are_forwarded_in_axis_targets(
         self,
-        _hardware: MagicMock,
-        _motion: MagicMock,
         _create: MagicMock,
         run: MagicMock,
     ) -> None:
@@ -517,7 +510,7 @@ class FiveAxisScriptMainTests(unittest.TestCase):
             ),
         )
 
-    @patch("scripts.test_upper_motion_five_axis.create_upper_motion_runtime")
+    @patch("scripts.debug_motion.debug_multi_axis_motion.create_configured_runtime")
     def test_execute_missing_confirmation_fails_before_runtime_creation(
         self,
         create: MagicMock,
