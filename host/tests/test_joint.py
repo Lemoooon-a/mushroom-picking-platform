@@ -2,13 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import redirect_stdout
-import io
 import math
 import unittest
-from unittest.mock import MagicMock, patch
-
-import can
 
 from config.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from drivers.mg4010_protocol import MotorFault, MotorSingleTurnPosition, MotorStatus
@@ -22,12 +17,11 @@ from robot.joint import (
     JointMotorFaultError,
     JointMotorMovingError,
     JointPositionOutOfRangeError,
-    JointState,
     joint_position_to_output_abs_deg,
+    joint_velocity_to_motor_speed_deg_s,
     resolve_output_angle_to_joint_position,
     wrap_360,
 )
-from scripts import test_joint_position as joint_cli
 
 
 def make_config(**overrides: object) -> JointConfig:
@@ -232,7 +226,7 @@ class ConfiguredJointTests(unittest.TestCase):
         )
 
     def test_calibrated_velocity_limit_conversion(self) -> None:
-        converted = joint_cli.joint_velocity_to_motor_speed_deg_s(
+        converted = joint_velocity_to_motor_speed_deg_s(
             0.5, SHOULDER_JOINT_CONFIG
         )
         self.assertAlmostEqual(converted, math.degrees(0.5) * 36.0)
@@ -470,146 +464,6 @@ class CommandTests(unittest.TestCase):
         target, speed = driver.commands[0]
         self.assertAlmostEqual(target, 1036.0)
         self.assertAlmostEqual(speed, 72.0)
-
-
-class JointCliSafetyTests(unittest.TestCase):
-    def common_args(self) -> list[str]:
-        return [
-            "--motor-id",
-            "1",
-            "--target-rad",
-            "0.1",
-            "--velocity-rad-s",
-            "0.05",
-            "--encoder-zero-output-deg",
-            "350",
-            "--direction-sign",
-            "1",
-            "--min-position-rad",
-            str(math.radians(-20)),
-            "--max-position-rad",
-            str(math.radians(40)),
-        ]
-
-    def test_explicit_dry_run_never_opens_bus_even_if_motion_flag_is_present(self) -> None:
-        args = self.common_args() + [
-            "--dry-run",
-            "--enable-motion",
-            "--current-circle-angle-raw",
-            "1260000",
-            "--current-multi-turn-deg",
-            "100",
-        ]
-        with (
-            patch.object(joint_cli, "CanMotorBus") as bus_class,
-            redirect_stdout(io.StringIO()),
-        ):
-            self.assertEqual(joint_cli.main(args), 0)
-        bus_class.assert_not_called()
-
-    def test_named_config_dry_run_uses_configured_motor(self) -> None:
-        args = [
-            "--joint",
-            "elbow",
-            "--target-rad",
-            "0",
-            "--velocity-rad-s",
-            str(math.radians(1)),
-            "--dry-run",
-            "--current-circle-angle-raw",
-            "324000",
-            "--current-multi-turn-deg",
-            "0",
-        ]
-        output = io.StringIO()
-        with (
-            patch.object(joint_cli, "CanMotorBus") as bus_class,
-            redirect_stdout(output),
-        ):
-            self.assertEqual(joint_cli.main(args), 0)
-        bus_class.assert_not_called()
-        self.assertIn("CAN motor ID                 : 2", output.getvalue())
-
-    def test_without_enable_motion_live_mode_never_calls_command_position(self) -> None:
-        fake_bus = MagicMock()
-        fake_bus.__enter__.return_value = object()
-        fake_joint = MagicMock()
-        fake_joint.get_state.return_value = JointState(
-            timestamp_monotonic=1.0,
-            circle_angle_raw=1_260_000,
-            motor_cycle_deg=12_600.0,
-            output_abs_deg=350.0,
-            position_rad=0.0,
-            motor_multi_turn_deg=100.0,
-            motor_speed_deg_s=0.0,
-            velocity_rad_s=0.0,
-            temperature_c=30,
-            motor_state=0,
-            error_state=0,
-            position_valid=True,
-            moving=False,
-        )
-        with (
-            patch.object(joint_cli, "CanMotorBus", return_value=fake_bus),
-            patch.object(joint_cli, "MG4010Driver"),
-            patch.object(joint_cli, "CanRotaryJoint", return_value=fake_joint),
-            redirect_stdout(io.StringIO()),
-        ):
-            self.assertEqual(joint_cli.main(self.common_args()), 0)
-        fake_joint.command_position.assert_not_called()
-
-    def test_disable_stops_only_selected_joint_without_initialization(self) -> None:
-        fake_bus = MagicMock()
-        fake_bus.__enter__.return_value = object()
-        fake_joint = MagicMock()
-        output = io.StringIO()
-        with (
-            patch.object(joint_cli, "CanMotorBus", return_value=fake_bus),
-            patch.object(joint_cli, "MG4010Driver"),
-            patch.object(joint_cli, "CanRotaryJoint", return_value=fake_joint),
-            redirect_stdout(output),
-        ):
-            self.assertEqual(
-                joint_cli.main(["--joint", "shoulder", "--disable"]),
-                0,
-            )
-        fake_joint.stop.assert_called_once_with()
-        fake_joint.initialize.assert_not_called()
-        fake_joint.get_state.assert_not_called()
-        fake_joint.command_position.assert_not_called()
-        self.assertIn("CAN motor ID 1 with 0x81", output.getvalue())
-
-    def test_disable_rejects_position_options_before_opening_bus(self) -> None:
-        args = [
-            "--joint",
-            "elbow",
-            "--disable",
-            "--target-rad",
-            "0.1",
-            "--velocity-rad-s",
-            "0.05",
-        ]
-        with (
-            patch.object(joint_cli, "CanMotorBus") as bus_class,
-            redirect_stdout(io.StringIO()),
-            self.assertLogs(joint_cli.LOGGER, level="ERROR"),
-        ):
-            self.assertEqual(joint_cli.main(args), 2)
-        bus_class.assert_not_called()
-
-    def test_motion_callback_prints_final_actual_a4_frame(self) -> None:
-        message = can.Message(
-            arbitration_id=0x141,
-            data=bytes.fromhex("A4 00 48 00 1B 82 02 00"),
-            is_extended_id=False,
-        )
-        output = io.StringIO()
-        with redirect_stdout(output):
-            joint_cli._motion_frame_printer(False)("TX", message)
-        self.assertIn(
-            "FINAL-MOTION-TX 0x141 [8] A4 00 48 00 1B 82 02 00",
-            output.getvalue(),
-        )
 
 
 if __name__ == "__main__":

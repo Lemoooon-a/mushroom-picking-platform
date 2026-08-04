@@ -32,6 +32,10 @@
 - 上述已有修改未 stash、未丢弃；本轮在 `host/README.md` 和
   `host/robot/__init__.py` 上做了必要的增量编辑。
 
+以上文件名记录的是 2026-08-03 当时的历史工作树事实；相关人工脚本随后已由
+`host/scripts/manual_motion.py` 和 `host/scripts/maintenance/` 三个 backend 入口替代并删除，
+不再作为当前推荐命令。
+
 ### STM32 submodule
 
 - path：`firmware/stm32_motion_controller`；
@@ -201,14 +205,14 @@ machine position；成功归零后 `homed` 和 `valid` 才成立，`DI`、`SA` �
   - `SM45BL_C001_PROFILE` 固化型号、协议、RS-485、115200、4096 counts 和寄存器表；
   - `END_EFFECTOR_ROTATION_CONFIG` 固化 ID 1、`zero_raw=2130`、`direction_sign=+1`、
     `±45°` 调试限位和 500 raw 调试速度上限；逻辑正方向记录为 `+X`；
-- `host/scripts/test_feetech_rotation.py`
-  - 默认 dry-run，支持 `--ping`、`--read-raw-position` 和位置帧预览；
-  - 支持 `--position-deg`、`--limit-deg` 和 degree min/max，默认采用项目配置；
-  - 位置/速度/限位在打开串口和 enable torque 之前完成验证；
-  - 真实访问必须显式 `--execute --port`，baud 默认取 profile 的 115200；
-  - 真实运动如需上 torque，还必须显式 `--enable-torque`。
+- `host/scripts/maintenance/feetech_rotation.py`
+  - 通过 runtime 复用正式 Feetech 配置、VID/PID 设备发现、bus 和 Rotation axis；
+  - 提供 ping/state/feedback/move/torque/register maintenance 子命令；
+  - write 默认 preview，真实动作使用操作专属确认；
+  - torque disable 明确提示自由转动或失去保持力风险；
+  - 不提供虚构的 Rotation stop。
 
-没有端口扫描，没有硬编码设备路径。串口在上下文退出或
+端口来自 hardware local config 和集中设备发现，没有硬编码设备路径。串口在上下文退出或
 异常时关闭。2026-08-03 已通过 `/dev/cu.usbmodem5B790798091`、115200 baud 对 ID 1 完成
 实机 ping，并从 `0x38` 连续读取三次 `position_raw=2047`；完整 feedback 字段、写回包、
 torque 行为仍未完整验证。用户随后完成受控小角度方向和零点确认，最终项目配置为
@@ -254,7 +258,7 @@ torque 行为仍未完整验证。用户随后完成受控小角度方向和零�
 .venv/bin/python -m py_compile \
   drivers/feetech_protocol.py drivers/stm32_motion.py \
   robot/feetech_rotation.py motion/capabilities.py \
-  scripts/test_feetech_rotation.py
+  scripts/manual_motion.py scripts/maintenance/feetech_rotation.py
 git diff --check
 ```
 

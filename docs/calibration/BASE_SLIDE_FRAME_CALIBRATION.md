@@ -63,17 +63,26 @@ Rotation output 的 yaw 为 `shoulder + elbow + rotation`。如实际机构不�
 cd host
 
 # 默认只读预检；真实归零需另加 --execute --confirm-home-motion
-.venv/bin/python scripts/debug_motion/home_linear_axis.py --axis slide
-.venv/bin/python scripts/debug_motion/home_linear_axis.py --axis z
+.venv/bin/python scripts/manual_motion.py home --axis slide
+.venv/bin/python scripts/manual_motion.py home --axis z
 
 # 默认只预览目标；真实移动需另加 --execute --confirm-motion
-.venv/bin/python scripts/debug_motion/debug_multi_axis_motion.py \
+.venv/bin/python scripts/manual_motion.py move-group \
   --shoulder <safe-shoulder-target> \
   --elbow <safe-elbow-target>
 ```
 
 完成移动并停止所有轴后再采集标定数据。运动授权不会授权标定文件写入，标定脚本也不会反向
 触发运动。
+
+若标定后明确需要让 Rotation 失去保持力，只能使用：
+
+```bash
+.venv/bin/python scripts/maintenance/feetech_rotation.py torque-disable \
+  --execute --confirm-free-motion-risk
+```
+
+Torque disable 可能使机构自由转动或下坠，不等于 `manual_motion.py stop`。
 
 1. Slide 和 Z 已完成机械归零；
 2. Slide/Z 逻辑位置接近 0，默认容差均为 `±0.5 mm`；

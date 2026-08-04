@@ -1,7 +1,7 @@
 # 蘑菇采摘平台当前进度
 
-> 更新时间：2026-08-03
-> 证据范围：当前源码/配置、Git 状态、253 项 Host 离线测试、已验收 STM32 tag 及仓库内
+> 更新时间：2026-08-04
+> 证据范围：当前源码/配置、Git 状态、Host 离线测试、已验收 STM32 tag 及仓库内
 > 历史构建/硬件记录。编译和离线测试不视为硬件验收。上层运动专项详见
 > [UPPER_MOTION_CONTROL_HANDOFF.md](UPPER_MOTION_CONTROL_HANDOFF.md)。
 
@@ -14,6 +14,8 @@
 - Feetech 已确认为 `SM-45BL-C001`、RS-485、自动方向 USB 转换板、115200 baud 和 ID 1；
   已完成 ping/raw read、正方向和零点确认，并把当前调试参数固化为项目配置；
 - Host 已形成 `UnifiedMotionController`，并通过共享 façade 向前端和运动学提供窄接口；
+- Host 人工入口已收敛为一个 `scripts/manual_motion.py` 统一 CLI 和 STM32、MG4010、Feetech
+  三个 backend maintenance CLI；设备枚举与标定入口继续独立；
 - 最大缺口转为五轴统一层的真实硬件验证、vacuum 协调、坐标变换和采摘状态机；
 - 下一里程碑应是先固化当前未提交基线，再逐轴低速验证统一点到点生命周期，不是直接做整机采摘。
 
@@ -40,20 +42,21 @@
 ### 根仓库
 
 - path：项目根目录；branch：`main`；upstream：`origin/main`；
-- 本轮提交前基线 HEAD：`894c041`，`feat(host): resolve hardware devices by USB VID and PID`；
+- 本轮清理前基线 HEAD：`47bdef5`，`refactor(host): organize upper motion debug interfaces`；
 - 当前版本已将 STM32 Host 异步提交、统一 controller/protocol、frontend/kinematics façade、
   bootstrap、fake examples、tests 和成员交接文档纳入同一可复现提交；最终 hash 以
   `git log -1 --oneline` 为准；
 - `feetech_arm.zip` 保持原文件且被 Git 忽略；
-- 当前 253 tests 只证明离线软件行为，不证明五轴真实硬件联调。
+- 当前 399 tests 中 398 条通过；唯一失败是用户当前 STM32 子模块 protocol version `"2"`
+  与 Host 常量 `"1"` 的既有差异。离线结果不证明五轴真实硬件联调。
 
 ### STM32 submodule
 
 - path：`firmware/stm32_motion_controller`；branch：`main`；
-- HEAD：`cb075675e32cd5c5e9e5d1d43ddaa5e539fdc8d4`；
-- tag：`stm32-motion-v0.1.0`；remote：GitHub SSH remote；
-- root 通过 `.gitmodules` 和 gitlink 正式跟踪，当前锁定验收 commit；
-- 工作树 clean，本轮未改变 submodule 或 gitlink。
+- 当前工作树 HEAD：`2efcdcd2a6c6cda42de2a4fdd782fa1ae451fb3f`；
+- root 通过 `.gitmodules` 和 gitlink 正式跟踪，但当前显示 `+`，说明用户已有 submodule
+  checkout 与 root 记录的 gitlink 不同；
+- 本轮未改变 submodule 文件、HEAD 或 root gitlink。
 
 未提交文件的逐项归属见上层专项交接第 2 节和最终 `git status --short`。
 
@@ -78,6 +81,18 @@ FeetechRotationAxis ─────┘              future planner/task workflow
 - 统一运动与客户端边界：`host/motion/unified_*`、`client_*`、`host/bootstrap.py`；
 - capability 声明：`host/motion/capabilities.py`；
 - 未完成集成层：vacuum 协调、坐标系、`host/tasks/` 采摘流程。
+
+当前人工控制入口：
+
+| 用途 | 入口 |
+| --- | --- |
+| 五轴统一状态/人工运动 | `host/scripts/manual_motion.py` |
+| STM32/Slide/Z/Vacuum 维护 | `host/scripts/maintenance/stm32_motion.py` |
+| Shoulder/Elbow/MG4010 维护 | `host/scripts/maintenance/mg4010_joint.py` |
+| Rotation/Feetech 维护 | `host/scripts/maintenance/feetech_rotation.py` |
+
+日常人工控制只使用统一 CLI；maintenance 只用于 backend protocol、原始状态、寄存器和 power
+语义。所有写命令默认预览并要求操作专属确认。
 
 ## 5. STM32 固件进度
 
@@ -158,7 +173,8 @@ façade 共享同一 controller，bootstrap 构造不执行硬件 I/O。Vacuum �
 .venv/bin/python -m unittest discover -s tests -q
 ```
 
-exit 0，`Ran 253 tests`，全部通过，0 failures，0 skips；硬件未参与。
+exit 1，`Ran 399 tests`；398 通过，唯一失败为既有 Host/STM32 protocol version 差异；
+硬件未参与，本轮没有新增失败。
 
 ### 9.3 Mathematical Tests
 
@@ -187,7 +203,7 @@ Feetech 已完成受控小角度方向确认，用户确认 `direction_sign=+1`�
 - 固件协议与 debug log 共用 USART1，正式运行需控制日志量；
 - Feetech 与 STM32 Python transport 均有有限 timeout、无无限重试；
 - MG4010 transport 有配置化 timeout/retry，并以共享锁串行化同一 CAN 总线事务；
-- 本轮 Host 测试 253 项约 0.21 s；
+- 本轮 Host 测试 399 项约 0.48 s；
 - 本轮没有重新采集 STM32 FLASH/RAM 或真实串口/CAN 吞吐量。
 
 ## 11. 安全默认行为
@@ -195,9 +211,9 @@ Feetech 已完成受控小角度方向确认，用户确认 `direction_sign=+1`�
 - STM32 上电不运动、不自动 home，轴默认 disabled；pump/valve 默认 off；
 - STM32 Host client 构造不打开串口，也不发送命令；
 - MG4010 driver/joint 不自动 enable、clear fault、home 或发送位置；
-- MG4010 CLI 不加显式 motion flag 时为预览，`0x81` 仅软件停止；
-- Feetech import/构造不打开串口，CLI 默认 dry-run；真实访问要求 `--execute`、显式 port/
-  baud，enable torque 还需额外显式参数；
+- MG4010 maintenance 不加显式 motion flag 时为预览，`0x81` 仅称 software stop；
+- Feetech import/构造不打开串口，write 默认 preview；真实 write 需要 `--execute` 和操作专属
+  确认，port/baud 来自 local config 与设备发现；
 - `UpperMotionRuntime` 构造只创建共享 façade，不 open/close 硬件，不自动 enable/home/move；
 - 通信失败抛出异常；MG4010 A4 结果未知时尽力发 `0x81`；Feetech 不无限重试；
 - STM32 `DI/SA` 和相关异常会使开环位置 invalid；突然断电后必须重新确认位置/归零；
@@ -241,7 +257,7 @@ Feetech 已完成受控小角度方向确认，用户确认 `direction_sign=+1`�
 
 | Priority | Goal | 影响文件 | 证据/硬件 | 验收标准 | 安全要求 |
 | --- | --- | --- | --- | --- | --- |
-| P0 | 复核 root 可复现基线 | 当前 Host/docs 提交 | 无硬件 | clean checkout 安装后 253 tests pass | 不覆盖后续用户修改 |
+| P0 | 对齐 Host/STM32 protocol version 并复核基线 | Host protocol constant、用户当前 submodule | 无硬件 | 399 tests 全部通过 | 不覆盖或回退用户 submodule 修改 |
 | P1 | Feetech 只读识别 | driver、calibration docs | 铭牌、接线、官方手册、适配器 | ping/read 重复成功，错误/断线明确失败 | 不 enable torque |
 | P1 | Feetech 低速标定 | config、calibration docs | 空载/安全机械区域 | zero/direction/limits 可复测 | 小角度、低速、可断电 |
 | P2 | 统一五轴接口台架验证 | `host/motion/`、bootstrap、tests | 逐轴真实硬件 | 各轴 arrival/deadline/fault/stop 与逻辑单位可复测 | 单轴低速、人工急停就绪 |
@@ -254,11 +270,11 @@ Feetech 已完成受控小角度方向确认，用户确认 `direction_sign=+1`�
 - active task：评审已提交的统一五轴 controller 及前端/运动学共享接口，随后进行逐轴低速验证；
 - read first：本文件、两份 `docs/handoffs/*_MOTION_INTERFACE_HANDOFF.md`、`host/README.md`、
   `host/motion/unified_*`、`host/motion/client_*` 及对应 tests；
-- run first：`git status --short`、`git submodule status`、Host 253 tests；
+- run first：`git status --short`、`git submodule status`、Host 399 tests；
 - confirmed hardware config：Feetech C001/RS-485/115200/4096 counts、ID 1、
   `zero_raw=2130`、`direction_sign=+1`/`+X`，shoulder/elbow 当前代码配置与 STM32 验收 tag；
 - must not guess：Feetech 最终 limits/负载速度、真实 link lengths、最终 travel、vacuum success；
 - commit scope：统一运动 controller/protocol、STM32 Host 异步依赖、client façade、bootstrap、
-  tests、examples 和交接文档；STM32 submodule clean；
+  tests、examples 和交接文档；STM32 submodule 的 `+2efcdcd` 状态为用户已有且未纳入清理提交；
 - next milestone：从干净检出复核离线基线，再逐轴验证统一 arrival/timeout/fault/stop，之后接入
   vacuum/坐标变换；严格同步和轨迹插补仍不在当前实现范围。

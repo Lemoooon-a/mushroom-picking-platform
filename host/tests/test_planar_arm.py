@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from contextlib import redirect_stdout
-import io
 import math
-from types import SimpleNamespace
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from config.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from kinematics import Planar2RKinematics
@@ -18,7 +15,6 @@ from robot import (
     joint_limited_solutions,
     select_joint_target,
 )
-from scripts import test_planar_2r_motion as arm_cli
 
 
 class PlanarArmPlanningTests(unittest.TestCase):
@@ -117,79 +113,6 @@ class PlanarArmCommandTests(unittest.TestCase):
             )
         shoulder.stop.assert_called_once_with()
         elbow.stop.assert_called_once_with()
-
-
-class PlanarArmCliTests(unittest.TestCase):
-    def test_preview_is_fully_offline(self) -> None:
-        args = [
-            "--link1-length",
-            "1",
-            "--link2-length",
-            "1",
-            "--x",
-            "1",
-            "--y",
-            "1",
-            "--velocity-rad-s",
-            "0.1",
-        ]
-        output = io.StringIO()
-        with (
-            patch.object(arm_cli, "CanMotorBus") as bus_class,
-            redirect_stdout(output),
-        ):
-            self.assertEqual(arm_cli.main(args), 0)
-        bus_class.assert_not_called()
-        self.assertIn("OFFLINE PREVIEW", output.getvalue())
-
-    def test_live_mode_initializes_and_commands_both_joints(self) -> None:
-        args = [
-            "--link1-length",
-            "1",
-            "--link2-length",
-            "1",
-            "--x",
-            "1",
-            "--y",
-            "1",
-            "--velocity-rad-s",
-            "0.1",
-            "--enable-motion",
-        ]
-        fake_bus = MagicMock()
-        fake_bus.__enter__.return_value = object()
-        shoulder = MagicMock()
-        shoulder.config = SHOULDER_JOINT_CONFIG
-        shoulder.initialize.return_value = SimpleNamespace(position_rad=0.0)
-        elbow = MagicMock()
-        elbow.config = ELBOW_JOINT_CONFIG
-        elbow.initialize.return_value = SimpleNamespace(position_rad=0.0)
-        with (
-            patch.object(arm_cli, "CanMotorBus", return_value=fake_bus),
-            patch.object(arm_cli, "MG4010Driver"),
-            patch.object(
-                arm_cli,
-                "CanRotaryJoint",
-                side_effect=(shoulder, elbow),
-            ),
-            redirect_stdout(io.StringIO()),
-        ):
-            self.assertEqual(arm_cli.main(args), 0)
-        shoulder.initialize.assert_called_once_with()
-        elbow.initialize.assert_called_once_with()
-        shoulder.command_position.assert_called_once()
-        elbow.command_position.assert_called_once()
-
-    def test_motion_printer_always_shows_final_a4(self) -> None:
-        message = arm_cli.can.Message(
-            arbitration_id=0x141,
-            data=bytes.fromhex("A4 00 48 00 1B 82 02 00"),
-            is_extended_id=False,
-        )
-        output = io.StringIO()
-        with redirect_stdout(output):
-            arm_cli._motion_frame_printer(False)("TX", message)
-        self.assertIn("FINAL-CONTROL-TX 0x141", output.getvalue())
 
 
 if __name__ == "__main__":

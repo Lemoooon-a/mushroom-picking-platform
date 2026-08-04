@@ -50,8 +50,8 @@ from motion.unified_protocol import (
     MotionErrorCode,
     MultiAxisTarget,
 )
-from scripts.test_upper_motion_runtime import main as smoke_main
-from scripts.test_upper_motion_runtime import run_read_only_smoke
+from scripts.manual_motion import main as smoke_main
+from scripts.manual_motion import run_inspect as run_read_only_smoke
 
 
 def hardware_config() -> HardwareConfig:
@@ -507,8 +507,8 @@ class ReadOnlySmokeTests(unittest.TestCase):
         ):
             forbidden.assert_not_called()
 
-    @patch("scripts.diagnostics.inspect_upper_motion.run_read_only_inspection")
-    @patch("scripts.diagnostics.inspect_upper_motion.create_configured_runtime")
+    @patch("scripts.manual_motion.run_inspect")
+    @patch("scripts.manual_motion.create_configured_runtime")
     def test_smoke_main_defaults_to_read_only(
         self,
         create_runtime: Mock,
@@ -516,8 +516,11 @@ class ReadOnlySmokeTests(unittest.TestCase):
     ) -> None:
         create_runtime.return_value = Mock()
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            self.assertEqual(smoke_main([]), 0)
-        create_runtime.assert_called_once_with(RuntimeMode.READ_ONLY)
+            self.assertEqual(smoke_main(["inspect"]), 0)
+        create_runtime.assert_called_once_with(
+            RuntimeMode.READ_ONLY,
+            allow_unverified_rotation_motion=False,
+        )
         run_smoke.assert_called_once_with(create_runtime.return_value)
 
     def test_smoke_closes_when_a_read_fails(self) -> None:

@@ -143,109 +143,43 @@ output_abs_deg = wrap_360(
 
 ## 命令示例
 
-只读查询；实机固件若回复在请求 ID 上，必须显式开启兼容：
+MG4010 backend 只读和维护统一使用正式配置、设备发现和共享 runtime：
 
 ```bash
 cd host
-python scripts/read_motor_basic_params.py \
-  --motor-id 1 \
-  --allow-same-id-response
+python scripts/maintenance/mg4010_joint.py basic-parameters --joint shoulder
+python scripts/maintenance/mg4010_joint.py initialize --joint shoulder
+python scripts/maintenance/mg4010_joint.py state --joint shoulder
 ```
 
-完全离线 dry-run；示例数字仅演示接口，不是肩关节或肘关节标定值：
+单关节 move 默认只预览；真实动作必须显式双确认：
 
 ```bash
-python scripts/test_joint_position.py \
-  --motor-id 1 \
-  --target-rad 0.10 \
-  --velocity-rad-s 0.05 \
-  --gear-ratio 36 \
-  --encoder-zero-output-deg 350 \
-  --direction-sign 1 \
-  --min-position-rad -0.35 \
-  --max-position-rad 0.70 \
-  --current-circle-angle-raw 1260000 \
-  --current-multi-turn-deg -3562.5 \
-  --dry-run
+python scripts/maintenance/mg4010_joint.py move \
+  --joint shoulder --position-deg 5 --velocity-deg-s 2
+
+python scripts/maintenance/mg4010_joint.py move \
+  --joint shoulder --position-deg 5 --velocity-deg-s 2 \
+  --execute --confirm-motion
 ```
 
-显式允许运动的形式如下。执行前必须用真实标定值替换示例，并确认机械区域安全；
-仅阅读文档或运行自动测试不会执行该命令：
+MG4010 `0x81` 只能称为 software stop，不是 disable、torque disable、断电或硬件急停：
 
 ```bash
-python scripts/test_joint_position.py \
-  --motor-id 1 \
-  --target-rad 0.10 \
-  --velocity-rad-s 0.05 \
-  --gear-ratio 36 \
-  --encoder-zero-output-deg YOUR_CALIBRATED_ZERO \
-  --direction-sign YOUR_CALIBRATED_DIRECTION \
-  --min-position-rad YOUR_CALIBRATED_MIN \
-  --max-position-rad YOUR_CALIBRATED_MAX \
-  --allow-same-id-response \
-  --enable-motion
+python scripts/maintenance/mg4010_joint.py software-stop \
+  --joint shoulder --execute --confirm-software-stop
 ```
 
-上机配置也可以直接按名称选择。当前 `shoulder` 为 ID 1、`elbow` 为 ID 2，
-两者均使用 36:1 减速比。肩关节以 OA=100 度为逻辑零点，逻辑范围为
+当前 `shoulder` 为 ID 1、`elbow` 为 ID 2，两者均使用 36:1 减速比。肩关节以
+OA=100 度为逻辑零点，逻辑范围为
 -60 到 +70 度；肘关节以 OA=158 度为逻辑零点并反向，逻辑范围为
--152 到 +152 度。两者当前最大逻辑关节速度都是每秒 50 度：
+-152 到 +152 度。两者当前最大逻辑关节速度都是每秒 50 度。机械安装或编码器对应关系变化
+后必须重新标定零点、方向和限位。
 
-```bash
-python scripts/test_joint_position.py \
-  --joint shoulder \
-  --target-rad 0.10 \
-  --velocity-rad-s 0.05 \
-  --allow-same-id-response
-```
+## 肩肘联合控制
 
-不加 `--enable-motion` 时只生成在线预览。机械安装或编码器对应关系变化后，
-必须重新标定零点、方向和限位。
-
-单独失能某个关节时，使用 `--disable` 发送 `0x81` 电机关闭命令：
-
-```bash
-python scripts/test_joint_position.py \
-  --joint shoulder \
-  --disable \
-  --allow-same-id-response \
-  --raw
-```
-
-`--disable` 不需要 `--enable-motion`，且不能与目标位置、速度或
-`--dry-run` 同时使用。该命令只失能 `--joint` 选中的电机，不替代硬件急停。
-
-`0x81` 是软件停止，不替代切断动力或使能的独立硬件急停。角度正方向、A4 速度
-换算和同 ID 应答兼容来自当前 MG4010E-i36 协议解释及实测，换电机型号或固件后
-仍需重新验证。
-
-## 肩肘双关节 XY 测试
-
-`scripts/test_planar_2r_motion.py` 将末端 XY 目标转换为肩肘逻辑角，
-并使用当前标定软限位筛选解。不加 `--enable-motion` 时完全离线，
-不打开 CAN。下面的 300/250 只是演示尺寸，上机前必须替换为实际
-`L1/L2`；连杆长度和 `x/y` 必须使用同一单位：
-
-```bash
-python scripts/test_planar_2r_motion.py \
-  --link1-length 300 \
-  --link2-length 250 \
-  --x 511.948 \
-  --y 177.094 \
-  --elbow-branch positive \
-  --velocity-rad-s 0.1745329252
-```
-
-确认预览中的肩肘角、软限位和机械空间后，在同一条命令末尾加上：
-
-```bash
-  --allow-same-id-response \
-  --raw \
-  --enable-motion
-```
-
-肩和肘共享一个 `CanMotorBus`，两条 `0xA4` 依次快速发送。
-这可用于空载联动测试，但不是严格同步轨迹，也不保证两关节同时到位。
+Planar 2R 的 FK/IK 数学继续位于 `kinematics/planar_2r.py`，算法测试继续位于 `tests/`。人工
+肩肘联合动作统一使用 `scripts/manual_motion.py move-group`，不再维护第二套直接 CAN 实机入口。
 
 ## STM32 正式 Host 客户端
 
@@ -507,27 +441,30 @@ with runtime:
 Entering the runtime context only opens communication resources.
 It does not enable actuators, home axes, or issue motion commands.
 
-长期人工调试入口：
+长期人工控制和后端维护入口：
 
-| Purpose | New command |
+| Need | Command |
 | --- | --- |
-| Read all upper-motion state | `scripts/diagnostics/inspect_upper_motion.py` |
-| Read/control one axis | `scripts/debug_motion/debug_axis_motion.py` |
-| Control an axis subset | `scripts/debug_motion/debug_multi_axis_motion.py` |
-| Home Slide/Z | `scripts/debug_motion/home_linear_axis.py` |
+| 五轴统一状态和人工运动 | `scripts/manual_motion.py` |
+| STM32/Slide/Z/Vacuum 维护 | `scripts/maintenance/stm32_motion.py` |
+| Shoulder/Elbow/MG4010 维护 | `scripts/maintenance/mg4010_joint.py` |
+| Rotation/Feetech 维护 | `scripts/maintenance/feetech_rotation.py` |
+| USB 设备枚举 | `scripts/list_hardware_devices.py` |
+| Base–Slide 标定 | `scripts/calibrate_base_slide_frame.py` |
+| Tool–Camera 录入 | `scripts/set_tool_camera_transform.py` |
 
-完整安全语义与示例见 `docs/handoffs/UPPER_MOTION_DEBUG_CLI_GUIDE.md`。旧的
-`scripts/test_upper_motion_runtime.py`、`scripts/test_upper_motion_home.py` 和
-`scripts/test_upper_motion_five_axis.py` 仍保留兼容，但运行时会显示弃用提示。
+日常人工控制优先使用 `manual_motion.py`。只有排查特定 backend protocol、原始状态或 power
+语义时才使用 maintenance 脚本。完整安全语义见
+`docs/handoffs/UPPER_MOTION_DEBUG_CLI_GUIDE.md`。
 
 默认五轴只读联合检查：
 
 ```bash
 cd host
-.venv/bin/python scripts/diagnostics/inspect_upper_motion.py
+.venv/bin/python scripts/manual_motion.py inspect
 ```
 
-新诊断入口没有 `--execute`，只读取 STM32 version、五轴 descriptor/capability 和逻辑状态。
+`inspect` 没有 `--execute`，只读取 STM32 version、五轴 descriptor/capability 和逻辑状态。
 真实硬件的分阶段验证顺序见 `docs/handoffs/UPPER_MOTION_RUNTIME_TEST_GUIDE.md`。
 
 Slide/Z 的统一接口单轴归零使用独立受控入口。默认命令只读取所选轴状态；真实归零必须同时
@@ -537,11 +474,10 @@ Slide/Z 的统一接口单轴归零使用独立受控入口。默认命令只读
 cd host
 
 # READ_ONLY：只查询 Slide，不使能或运动
-.venv/bin/python scripts/debug_motion/home_linear_axis.py --axis slide
+.venv/bin/python scripts/manual_motion.py home --axis slide
 
 # MOTION：现场确认安全条件后，显式执行一次 Slide 机械归零
-.venv/bin/python scripts/debug_motion/home_linear_axis.py \
-  --axis slide \
+.venv/bin/python scripts/manual_motion.py home --axis slide \
   --execute \
   --confirm-home-motion
 ```
@@ -556,7 +492,7 @@ stop，软件 stop 也不是 disable、断电或硬件急停。
 
 ### Guarded axis-subset point-to-point test
 
-`scripts/debug_motion/debug_multi_axis_motion.py` 通过同一个 `UpperMotionRuntime` 和
+`scripts/manual_motion.py move-group` 通过同一个 `UpperMotionRuntime` 和
 `UnifiedMotionController.submit_positions()` 提交用户显式指定的任意轴子集。它采用稳定轴顺序
 `slide, z, shoulder, elbow, rotation`，不会给未指定轴补当前位置或保持目标。该入口是协调
 点到点运动（Coordinated Point-to-Point Motion），不是轨迹插补、严格同步或同时到达规划，
@@ -569,14 +505,14 @@ Runtime、对参与的 Shoulder/Elbow 执行只读绝对位置初始化，并检
 
 ```bash
 cd host
-.venv/bin/python scripts/debug_motion/debug_multi_axis_motion.py --help
+.venv/bin/python scripts/manual_motion.py move-group --help
 ```
 
 实际命令格式如下；尖括号内容必须替换为经过当前机构姿态和碰撞空间确认的数值，不能直接复制
 执行：
 
 ```bash
-.venv/bin/python scripts/debug_motion/debug_multi_axis_motion.py \
+.venv/bin/python scripts/manual_motion.py move-group \
   --slide <safe-slide-target> \
   --z <safe-z-target> \
   --shoulder <safe-shoulder-target> \
@@ -669,49 +605,31 @@ cd host
 `config/feetech.py` 包含两层配置：`SM45BL_C001_PROFILE` 固化型号、飞特自定义串口协议、
 RS-485 半双工、USB 转换板自动收发切换、115200 baud、12-bit/4096 counts 磁编码器和
 C001 寄存器表；`END_EFFECTOR_ROTATION_CONFIG` 固化当前项目安装参数：ID 1、
-`zero_raw=2130`、`direction_sign=+1`（逻辑正方向为 `+X`）、`-45°..+45°` 调试限位和
+`zero_raw=2130`、`direction_sign=+1`（逻辑正方向为 `+X`）、`-150°..+150°` 当前限位和
 `max_speed_raw=500`。默认位置命令速度同为 500 raw。限位和速度是当前调试配置，仍需
-随最终机构负载完成机械验收。设备 port 不固化，真实访问必须在运行时显式传入；写指令
-status packet 行为也仍需实机复验。
+随最终机构负载完成机械验收。设备 port 不固化，由 hardware local config 和 VID/PID 设备发现
+解析；写指令 status packet 行为也仍需实机复验。
 
-人工工具默认完全离线。以下命令只生成 C001 ping 和读位置帧，不打开串口：
+Feetech backend 维护入口复用正式配置和 runtime 的设备发现，不再接受本机 port 参数：
 
 ```bash
 cd host
-.venv/bin/python scripts/test_feetech_rotation.py --ping
-.venv/bin/python scripts/test_feetech_rotation.py --read-raw-position
+.venv/bin/python scripts/maintenance/feetech_rotation.py ping
+.venv/bin/python scripts/maintenance/feetech_rotation.py state
+.venv/bin/python scripts/maintenance/feetech_rotation.py feedback
 ```
 
-只读实机检查需要显式提供 `--execute` 和 port；baudrate 默认取 profile 的 115200：
+位置命令默认预览，真实执行还需确认 Rotation 无可靠独立 stop：
 
 ```bash
-.venv/bin/python scripts/test_feetech_rotation.py \
-  --ping \
-  --execute --port /dev/cu.YOUR_USB_RS485
-
-.venv/bin/python scripts/test_feetech_rotation.py \
-  --read-raw-position \
-  --execute --port /dev/cu.YOUR_USB_RS485
+.venv/bin/python scripts/maintenance/feetech_rotation.py move --position-deg 5
+.venv/bin/python scripts/maintenance/feetech_rotation.py move \
+  --position-deg 5 --execute --confirm-motion --confirm-rotation-no-stop \
+  --enable-torque
 ```
 
-CLI 支持直接使用 degree。以下命令自动采用项目配置，仍是完全离线 dry-run：
-
-```bash
-.venv/bin/python scripts/test_feetech_rotation.py \
-  --position-deg 5
-```
-
-`--servo-id`、`--zero-raw`、`--direction-sign`、角度限位、`--speed-raw` 和
-`--max-speed-raw` 均可显式覆盖，便于受控调试；越过当前 500 raw 上限会在打开串口和
-enable torque 之前拒绝。放宽上限必须同时显式传入 `--max-speed-raw`。
-
-只有确认预览、机械区域和急停条件后，才能在同一命令末尾增加：
-
-```text
---enable-torque --execute --port /dev/cu.YOUR_USB_RS485
-```
-
-命令完成后 torque 仍保持开启；需使用 `--disable --execute --port ...` 显式关闭。
+命令完成后 torque 状态不会自动改变。明确需要下力时使用 `torque-disable --execute
+--confirm-free-motion-risk`；该动作可能使机构自由转动或失去保持力，不是 stop。
 2026-08-03 已在 ID 1 实机完成 ping 和 `0x38` raw-position 只读测试，连续读数均为
 `2047`；随后用户确认逻辑正方向正确，机械零点最终微调为 `zero_raw=2130`。当前
 `±45°` 和 500 raw 已固化为调试约束，最终机械限位和负载安全速度仍待验收。
