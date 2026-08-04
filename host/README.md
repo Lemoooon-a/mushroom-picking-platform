@@ -399,6 +399,56 @@ This is coordinated point-to-point submission, not interpolated or strictly sync
 stop，timeout 不会自动 torque disable。所有真实运动仍要求显式硬件配置、已确认的默认
 速度/加速度、逐轴机械验证和现场安全措施；软件 stop 不是硬件急停。
 
+## Base-root frame chain and calibration
+
+公开坐标链现在统一为：
+
+```text
+Base -> Slide-zero -> Tool / TCP -> Camera
+```
+
+`geometry.RigidTransform` 使用 `A_T_B`（把 B 转到 A）记号；组合顺序为
+`A_T_C = A_T_B @ B_T_C`。`config/frame_transforms.example.json` 提供 schema 1 示例，
+本机生成的 `config/frame_transforms.local.json` 被 Git 忽略。Camera 外参允许完整 RPY，
+Base–Slide-zero 标定则检查“平移 + yaw”机械假设。
+
+Frame chain 不访问硬件，只接收调用方已经提供的五轴逻辑状态和完整 Slide-zero FK：
+
+```python
+from pathlib import Path
+
+from config.frame_transforms import load_frame_transforms
+from kinematics.frame_chain import RobotFrameChain
+
+transforms = load_frame_transforms(
+    Path("config/frame_transforms.local.json")
+)
+frame_chain = RobotFrameChain(
+    base_T_slide_zero=transforms.base_T_slide_zero,
+    tool_T_camera=transforms.tool_T_camera,
+    slide_zero_kinematics=confirmed_slide_zero_kinematics,
+)
+
+base_T_tool = frame_chain.base_T_tool(axis_state)
+base_point = frame_chain.transform_camera_point_to_base(
+    point_camera,
+    axis_state,
+)
+```
+
+仓库当前没有完整五轴 FK、正式连杆尺寸或冻结的 Tool 轴定义，因此标定脚本要求显式提供
+`--fk-provider module:attribute`，不会拿 Planar 2R 示例尺寸或 startup position 猜算。
+三个工具均默认预览/只读，不自动 home、move、stop、enable 或 torque enable：
+
+```bash
+.venv/bin/python scripts/calibrate_base_slide_frame.py --help
+.venv/bin/python scripts/verify_base_slide_frame.py --help
+.venv/bin/python scripts/set_tool_camera_transform.py --help
+```
+
+完整坐标约定见 `docs/interfaces/ROBOT_FRAME_CONVENTIONS.md`；安全前提、保存与第二参考姿态
+验证流程见 `docs/calibration/BASE_SLIDE_FRAME_CALIBRATION.md`。
+
 ## Upper motion runtime and safety modes
 
 `create_upper_motion_runtime()` 是三类真实硬件的唯一公共组装入口。它加载调用方提供的

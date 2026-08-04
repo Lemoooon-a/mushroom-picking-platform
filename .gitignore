@@ -43,6 +43,7 @@ config/robot.yaml
 host/config/robot.yaml
 /host/config/hardware_local.py
 /host/config/motion_local.py
+/host/config/frame_transforms.local.json
 .env
 
 # Recorded data

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "base_T_slide_zero": {
+    "translation_mm": [0.0, 0.0, 0.0],
+    "rotation_rpy_deg": [0.0, 0.0, 0.0]
+  },
+  "tool_T_camera": null,
+  "metadata": {
+    "base_slide_calibrated_at": null,
+    "base_slide_calibration_method": null,
+    "validated": false,
+    "git_commit": null,
+    "notes": "Example only. Replace values with measured or calibrated values."
+  }
+}
