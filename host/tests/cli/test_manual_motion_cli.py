@@ -43,7 +43,7 @@ from scripts.manual_motion import (
     run_state,
     run_stop,
 )
-from tests.motion_cli_test_support import (
+from tests.helpers.motion_cli_test_support import (
     axis_state,
     command_result,
     fake_runtime,
@@ -291,7 +291,7 @@ class ManualMotionTests(unittest.TestCase):
             x_mm=100, y_mm=100, z_mm=0, yaw_deg=0
         )
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "frame_transforms.local.json"
+            path = Path(directory) / "frame_transforms.json"
             with self.assertRaisesRegex(ValueError, "cannot read"):
                 run_plan_base(
                     fake_runtime(),
@@ -324,7 +324,7 @@ class ManualMotionTests(unittest.TestCase):
   "metadata": {"validated": false}
 }\n"""
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "frame_transforms.local.json"
+            path = Path(directory) / "frame_transforms.json"
             path.write_text(payload, encoding="utf-8")
             before = path.read_bytes()
             with self.assertRaisesRegex(ValueError, "provisional"):

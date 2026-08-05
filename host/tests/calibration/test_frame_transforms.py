@@ -17,7 +17,7 @@ from config.frame_transforms import (
 from geometry.rigid_transform import RigidTransform
 
 
-HOST_ROOT = Path(__file__).resolve().parents[1]
+HOST_ROOT = Path(__file__).resolve().parents[2]
 
 
 class FrameTransformConfigTests(unittest.TestCase):

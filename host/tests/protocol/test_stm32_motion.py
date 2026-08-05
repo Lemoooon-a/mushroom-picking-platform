@@ -282,7 +282,7 @@ class ClientTests(unittest.TestCase):
 
 class FirmwareContractTests(unittest.TestCase):
     def test_host_constants_match_submodule_protocol_header(self) -> None:
-        root = Path(__file__).resolve().parents[2]
+        root = Path(__file__).resolve().parents[3]
         header = (
             root / "firmware/stm32_motion_controller/App/Inc/app_protocol.h"
         ).read_text(encoding="utf-8")
@@ -290,7 +290,7 @@ class FirmwareContractTests(unittest.TestCase):
         self.assertIn("#define APP_PROTOCOL_MAX_LINE_LENGTH (96U)", header)
 
     def test_frozen_document_contains_complete_command_set(self) -> None:
-        root = Path(__file__).resolve().parents[2]
+        root = Path(__file__).resolve().parents[3]
         document = (
             root
             / "firmware/stm32_motion_controller/docs/stm32_motion_protocol_v2.md"
@@ -302,7 +302,7 @@ class FirmwareContractTests(unittest.TestCase):
             self.assertIn(f"`{command}`", document)
 
     def test_firmware_dispatch_and_wire_formats_match_v2_contract(self) -> None:
-        root = Path(__file__).resolve().parents[2]
+        root = Path(__file__).resolve().parents[3]
         firmware = root / "firmware/stm32_motion_controller"
         source = (firmware / "App/Src/app_protocol.c").read_text(encoding="utf-8")
         document = (firmware / "docs/stm32_motion_protocol_v2.md").read_text(

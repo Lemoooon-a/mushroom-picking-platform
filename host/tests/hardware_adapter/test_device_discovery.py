@@ -447,7 +447,7 @@ class HardwareConfigTests(unittest.TestCase):
     def test_example_config_import_has_no_hardware_side_effects(
         self, comports: Mock, scan: Mock
     ) -> None:
-        path = Path(__file__).resolve().parents[1] / "config/examples/hardware.py"
+        path = Path(__file__).resolve().parents[2] / "config/examples/hardware.py"
         spec = importlib.util.spec_from_file_location(
             "config.hardware_example", path
         )

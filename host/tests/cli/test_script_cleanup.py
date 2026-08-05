@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 
-HOST_ROOT = Path(__file__).resolve().parents[1]
+HOST_ROOT = Path(__file__).resolve().parents[2]
 REPO_ROOT = HOST_ROOT.parent
 
 
@@ -48,7 +48,7 @@ class ScriptCleanupTests(unittest.TestCase):
             "scripts/verify_base_slide_frame.py",
             "scripts/set_tool_camera_transform.py",
             "kinematics/planar_2r.py",
-            "tests/test_planar_2r_kinematics.py",
+            "tests/kinematics/test_planar_2r_kinematics.py",
         ):
             self.assertTrue((HOST_ROOT / relative).is_file(), relative)
 

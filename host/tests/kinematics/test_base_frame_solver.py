@@ -150,7 +150,7 @@ class BaseFrameTransformAndGateTests(unittest.TestCase):
         )
 
     def test_import_has_no_hardware_or_local_file_side_effect(self) -> None:
-        host_root = Path(__file__).resolve().parents[1]
+        host_root = Path(__file__).resolve().parents[2]
         command = (
             "import sys; import kinematics.base_frame_solver; "
             "assert 'drivers.can_bus' not in sys.modules; "

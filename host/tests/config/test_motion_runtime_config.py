@@ -185,7 +185,7 @@ class MotionConfigLoadingTests(unittest.TestCase):
         can_open: Mock,
         feetech_open: Mock,
     ) -> None:
-        path = Path(__file__).resolve().parents[1] / "config/examples/motion.py"
+        path = Path(__file__).resolve().parents[2] / "config/examples/motion.py"
         spec = importlib.util.spec_from_file_location(
             "config.motion_example",
             path,
