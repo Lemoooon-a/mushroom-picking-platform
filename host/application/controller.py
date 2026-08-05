@@ -173,6 +173,44 @@ class MushroomRobotController:
             target.x_mm, target.y_mm, target.z_mm, target.yaw_deg
         )
 
+    def plan_base_target_sequence(
+        self,
+        targets: tuple[BaseToolTarget, ...],
+        *,
+        enforce_tray_workspace: tuple[bool, ...],
+    ) -> tuple[object, ...]:
+        """按前一目标终态串接纯规划；任一阶段失败则不返回部分结果。"""
+
+        if not isinstance(targets, tuple) or not targets or not all(
+            isinstance(target, BaseToolTarget) for target in targets
+        ):
+            raise TypeError("targets must be a non-empty tuple of BaseToolTarget")
+        if (
+            not isinstance(enforce_tray_workspace, tuple)
+            or len(enforce_tray_workspace) != len(targets)
+            or not all(isinstance(value, bool) for value in enforce_tray_workspace)
+        ):
+            raise TypeError("enforce_tray_workspace must be a matching bool tuple")
+        self._base_backend.require_base_motion_ready()
+        for target, enforce in zip(targets, enforce_tray_workspace, strict=True):
+            if enforce:
+                self._tray_workspace.require_xyz_allowed(
+                    x_mm=target.x_mm, y_mm=target.y_mm, z_mm=target.z_mm
+                )
+        method = getattr(self._base_backend, "plan_base_sequence", None)
+        if method is not None:
+            plans = method(targets)
+            if not isinstance(plans, tuple) or len(plans) != len(targets):
+                raise RuntimeError("backend returned an invalid Base plan sequence")
+            return plans
+        # 兼容只实现原最小 Protocol 的测试/外部后端；仍保证只规划、不执行。
+        return tuple(
+            self._base_backend.plan_to_base_pose(
+                target.x_mm, target.y_mm, target.z_mm, target.yaw_deg
+            )
+            for target in targets
+        )
+
     def move_to_base_pose(
         self,
         x_mm: float,
@@ -231,6 +269,12 @@ class MushroomRobotController:
 
     def suction_release(self) -> object:
         return self._base_backend.suction_release()
+
+    def suction_idle(self) -> object:
+        method = getattr(self._base_backend, "suction_idle", None)
+        if method is None:
+            raise RuntimeError("backend does not expose suction_idle")
+        return method()
 
     def get_status(self) -> MushroomRobotStatus:
         return MushroomRobotStatus(

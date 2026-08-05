@@ -57,6 +57,12 @@ class _PoseProvider:
         return RigidTransform.from_xyz_yaw_deg(x_mm=0, y_mm=0, z_mm=0, yaw_deg=15)
 
 
+class _SequenceBackend(_Backend):
+    def plan_base_sequence(self, targets):
+        self.calls.append(("sequence", targets))
+        return "pre-motion", "contact-motion", "retreat-motion"
+
+
 class PickWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.now = 100.0
@@ -109,6 +115,25 @@ class PickWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "planning failed"):
             self.planner().plan(self.observation(), self.profile)
         self.assertFalse(any(isinstance(item, tuple) and item[0] == "execute" for item in self.backend.calls))
+
+    def test_sequence_backend_receives_one_atomic_chained_request(self) -> None:
+        backend = _SequenceBackend()
+        controller = MushroomRobotController(
+            base_backend=backend,
+            tray_workspace=self.workspace,
+            target_resolver=VisionTargetResolver(
+                pose_provider=self.provider,
+                hand_eye_calibration=self.calibration,
+                camera_frame_id="camera_optical",
+            ),
+        )
+        plan = self.planner(controller).plan(self.observation(), self.profile)
+        self.assertEqual(
+            (plan.pre_grasp_motion, plan.contact_motion, plan.retreat_motion),
+            ("pre-motion", "contact-motion", "retreat-motion"),
+        )
+        self.assertEqual(backend.calls[0], "ready")
+        self.assertEqual(backend.calls[1][0], "sequence")
 
     def test_quality_and_hand_eye_fail_closed(self) -> None:
         with self.assertRaises(ObservationConfidenceError):

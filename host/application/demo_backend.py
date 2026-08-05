@@ -19,7 +19,10 @@ from config.project.workspace_planning import (
     DEFAULT_OFFSET_WORKSPACE_CONFIG,
     OffsetWorkspaceConfig,
 )
+from geometry.rigid_transform import RigidTransform
+from kinematics.frame_chain import RobotAxisState
 from vision.target_resolver import VisionTargetResolver
+from vision.observation import CaptureMotionState
 
 if TYPE_CHECKING:
     from scripts.run_motion_demo import DemoMotionFlow
@@ -73,8 +76,58 @@ class DemoFlowApplicationBackend:
     def suction_release(self) -> None:
         self.flow.suction_command("release")
 
+    def suction_idle(self) -> None:
+        self.flow.suction_command("idle")
+
     def get_status(self) -> None:
         self.flow.status()
+
+    def capture_state(self) -> tuple[RobotAxisState, CaptureMotionState]:
+        self.flow.require_base_motion_ready()
+        return self.flow._planning_state(), CaptureMotionState.STATIONARY
+
+    def plan_base_sequence(self, targets: tuple[object, ...]) -> tuple[object, ...]:
+        from application.motion_target import BaseToolTarget
+        from scripts.run_motion_demo import DemoStage
+
+        self.flow.require_base_motion_ready()
+        state = self.flow._planning_state()
+        plans: list[tuple[DemoStage, ...]] = []
+        for index, target in enumerate(targets):
+            if not isinstance(target, BaseToolTarget):
+                raise TypeError("sequence targets must be BaseToolTarget")
+            if index == 0:
+                stages = self.flow.plan_to_base_pose(
+                    target.x_mm, target.y_mm, target.z_mm, target.yaw_deg
+                )
+            else:
+                current_pose = self.flow.solver.forward_kinematics_base(state)
+                transform = RigidTransform.from_xyz_yaw_deg(
+                    x_mm=target.x_mm, y_mm=target.y_mm, z_mm=target.z_mm,
+                    yaw_deg=current_pose.yaw_deg if target.yaw_deg is None else target.yaw_deg,
+                )
+                base_plan = self.flow.planner.plan(
+                    current_state=state, base_T_tool_target=transform
+                )
+                stages = tuple(
+                    DemoStage(
+                        stage.kind.name,
+                        stage.base_T_tool_target,
+                        stage.multi_axis_target,
+                        stage.solution,
+                    )
+                    for stage in base_plan.stages
+                )
+                for stage in stages:
+                    self.runtime.controller.validate_positions(stage.multi_axis_target)
+            if not stages or stages[-1].solution is None:
+                raise RuntimeError("planned stage sequence has no final axis solution")
+            plans.append(stages)
+            state = stages[-1].solution.axis_state()
+        return tuple(plans)
+
+    def joints_holding(self) -> bool:
+        return bool(self.runtime.controller.rotary_joints_enabled())
 
     def shutdown(self) -> None:
         self.runtime.close()
@@ -119,4 +172,7 @@ def create_mushroom_robot_controller(
     )
 
 
-__all__ = ["DemoFlowApplicationBackend", "create_mushroom_robot_controller"]
+__all__ = [
+    "DemoFlowApplicationBackend",
+    "create_mushroom_robot_controller",
+]

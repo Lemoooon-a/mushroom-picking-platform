@@ -43,9 +43,6 @@ class VisionRuntimeConfig:
         _positive("maximum_observation_age_s", self.maximum_observation_age_s)
 
 
-DEFAULT_VISION_RUNTIME_CONFIG = VisionRuntimeConfig()
-
-
 def load_vision_runtime_config(path: Path) -> VisionRuntimeConfig:
     if not isinstance(path, Path):
         raise TypeError("path must be pathlib.Path")
@@ -72,6 +69,9 @@ def _positive(name: str, value: object) -> float:
     if converted <= 0.0:
         raise ValueError(f"{name} must be positive")
     return converted
+
+
+DEFAULT_VISION_RUNTIME_CONFIG = VisionRuntimeConfig()
 
 
 __all__ = ["DEFAULT_VISION_RUNTIME_CONFIG", "VisionRuntimeConfig", "VisionRuntimeConfigError", "load_vision_runtime_config"]

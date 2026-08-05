@@ -60,9 +60,10 @@ class PickPlanner:
         retreat = BaseToolTarget(x_mm, y_mm, object_z_mm + grasp_profile.retreat_offset_mm, yaw)
 
         # 三个阶段必须全部规划成功后才构造 PickPlan。只有 contact 是 Tray 最终任务目标。
-        pre_motion = self.controller.plan_base_target(pre, enforce_tray_workspace=False)
-        contact_motion = self.controller.plan_base_target(contact, enforce_tray_workspace=True)
-        retreat_motion = self.controller.plan_base_target(retreat, enforce_tray_workspace=False)
+        pre_motion, contact_motion, retreat_motion = self.controller.plan_base_target_sequence(
+            (pre, contact, retreat),
+            enforce_tray_workspace=(False, True, False),
+        )
         return PickPlan(observation, pre, contact, retreat, pre_motion, contact_motion, retreat_motion)
 
     def _validate_quality(self, observation: VisionTargetObservation, profile: GraspProfile) -> None:
