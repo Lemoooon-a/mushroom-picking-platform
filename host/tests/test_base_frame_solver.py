@@ -5,13 +5,17 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
+from config.workspace_planning import (
+    OffsetWorkspaceSide,
+    SlideSelectionReason,
+)
 from geometry.rigid_transform import RigidTransform, angular_difference_deg
 from kinematics.base_frame_solver import (
     BaseFrameFiveAxisSolver,
-    BaseFrameSolverConfig,
     BaseFrameSolverError,
     FiveAxisNoSolutionError,
     UnvalidatedBaseTransformError,
@@ -26,27 +30,28 @@ from motion.unified_protocol import (
 )
 
 
-def geometry(
-    *,
-    mount: RigidTransform | None = None,
-    tool: RigidTransform | None = None,
-) -> FiveAxisGeometry:
+def geometry(*, tool_z_mm: float = 0.0) -> FiveAxisGeometry:
     return FiveAxisGeometry(
-        link1_length_mm=100.0,
-        link2_length_mm=100.0,
+        link1_length_mm=300.0,
+        link2_length_mm=300.0,
         slide_direction_xyz=(0.0, 1.0, 0.0),
         z_direction_xyz=(0.0, 0.0, 1.0),
-        slide_zero_T_planar_origin_at_zero=mount or RigidTransform.identity(),
-        rotation_output_T_tool=tool or RigidTransform.identity(),
+        slide_zero_T_planar_origin_at_zero=RigidTransform.identity(),
+        rotation_output_T_tool=RigidTransform.from_xyz_yaw_deg(
+            x_mm=0.0,
+            y_mm=0.0,
+            z_mm=tool_z_mm,
+            yaw_deg=0.0,
+        ),
     )
 
 
 def descriptors(
     *,
-    slide: tuple[float, float] = (0.0, 200.0),
-    z: tuple[float, float] = (0.0, 200.0),
-    shoulder: tuple[float, float] = (-180.0, 180.0),
-    elbow: tuple[float, float] = (-180.0, 180.0),
+    slide: tuple[float, float] = (0.0, 800.0),
+    z: tuple[float, float] = (-190.0, 0.0),
+    shoulder: tuple[float, float] = (-65.0, 65.0),
+    elbow: tuple[float, float] = (-160.0, 160.0),
     rotation: tuple[float, float] = (-180.0, 180.0),
 ) -> dict[AxisName, AxisDescriptor]:
     limits = {
@@ -60,15 +65,14 @@ def descriptors(
     for axis in AxisName:
         linear = axis in (AxisName.SLIDE, AxisName.Z)
         result[axis] = AxisDescriptor(
-            name=axis,
-            display_name=axis.value,
-            kind=AxisKind.LINEAR if linear else AxisKind.ROTARY,
-            position_unit="mm" if linear else "deg",
-            velocity_unit="mm/s" if linear else "deg/s",
-            acceleration_unit="mm/s²" if linear else "deg/s²",
-            minimum_position=limits[axis][0],
-            maximum_position=limits[axis][1],
-            capabilities=AxisCapabilities(True, True, True, linear, True, linear, True),
+            axis,
+            axis.value,
+            AxisKind.LINEAR if linear else AxisKind.ROTARY,
+            "mm" if linear else "deg",
+            "mm/s" if linear else "deg/s",
+            "mm/s²" if linear else "deg/s²",
+            *limits[axis],
+            AxisCapabilities(True, True, True, linear, True, linear, True),
         )
     return result
 
@@ -80,7 +84,6 @@ def solver(
     limits: dict[AxisName, AxisDescriptor] | None = None,
     validated: bool = True,
     allow_unvalidated: bool = False,
-    step: float = 5.0,
 ) -> BaseFrameFiveAxisSolver:
     return BaseFrameFiveAxisSolver(
         five_axis_kinematics=model or FiveAxisKinematics(geometry()),
@@ -88,56 +91,63 @@ def solver(
         axis_descriptors=limits or descriptors(),
         base_transform_validated=validated,
         allow_unvalidated_base_transform=allow_unvalidated,
-        config=BaseFrameSolverConfig(slide_search_step_mm=step),
     )
 
 
-def assert_pose_close(
-    case: unittest.TestCase,
-    actual: RigidTransform,
-    expected: RigidTransform,
-) -> None:
-    np.testing.assert_allclose(
-        actual.translation_mm,
-        expected.translation_mm,
-        atol=1e-7,
+def state_for_local_point(
+    model: FiveAxisKinematics,
+    *,
+    local_x_mm: float,
+    local_y_mm: float,
+    slide_mm: float = 0.0,
+    z_mm: float = -80.0,
+    output_yaw_deg: float = 0.0,
+    branch: int = 0,
+) -> RobotAxisState:
+    joint = model.planar_2r.inverse(local_x_mm, local_y_mm)[branch]
+    shoulder = math.degrees(joint.shoulder_rad)
+    elbow = math.degrees(joint.elbow_rad)
+    return RobotAxisState(
+        slide_mm,
+        z_mm,
+        shoulder,
+        elbow,
+        output_yaw_deg - shoulder - elbow,
     )
-    case.assertAlmostEqual(
-        angular_difference_deg(actual.yaw_deg, expected.yaw_deg),
-        0.0,
-        places=7,
-    )
+
+
+def target_for_state(
+    model: FiveAxisKinematics,
+    state: RobotAxisState,
+    base: RigidTransform | None = None,
+) -> RigidTransform:
+    return (base or RigidTransform.identity()) @ model.forward_kinematics(state)
 
 
 class BaseFrameTransformAndGateTests(unittest.TestCase):
-    def test_identity_translation_yaw_and_combined_base_transforms(self) -> None:
+    def test_base_target_conversion_round_trip(self) -> None:
+        base = RigidTransform.from_xyz_yaw_deg(
+            x_mm=10,
+            y_mm=20,
+            z_mm=30,
+            yaw_deg=-35,
+        )
         target_slide = RigidTransform.from_xyz_yaw_deg(
-            x_mm=40, y_mm=50, z_mm=60, yaw_deg=70
+            x_mm=400,
+            y_mm=250,
+            z_mm=-80,
+            yaw_deg=20,
         )
-        bases = (
-            RigidTransform.identity(),
-            RigidTransform.from_xyz_yaw_deg(x_mm=10, y_mm=20, z_mm=30, yaw_deg=0),
-            RigidTransform.from_xyz_yaw_deg(x_mm=0, y_mm=0, z_mm=0, yaw_deg=90),
-            RigidTransform.from_xyz_yaw_deg(x_mm=10, y_mm=20, z_mm=30, yaw_deg=-35),
-        )
-        for base in bases:
-            with self.subTest(base=base):
-                subject = solver(base=base)
-                base_target = base @ target_slide
-                converted = subject.transform_base_target_to_slide_zero(base_target)
-                np.testing.assert_allclose(converted.matrix, target_slide.matrix, atol=1e-10)
-                np.testing.assert_allclose((base @ converted).matrix, base_target.matrix, atol=1e-10)
+        subject = solver(base=base)
+        converted = subject.transform_base_target_to_slide_zero(base @ target_slide)
+        np.testing.assert_allclose(converted.matrix, target_slide.matrix, atol=1e-10)
 
-    def test_unvalidated_transform_is_rejected_by_default_and_explicitly_allowed(self) -> None:
+    def test_unvalidated_transform_is_rejected_by_default(self) -> None:
         with self.assertRaisesRegex(UnvalidatedBaseTransformError, "provisional"):
             solver(validated=False)
-        allowed = solver(validated=False, allow_unvalidated=True)
-        self.assertFalse(allowed.base_transform_validated)
-
-    def test_solver_has_no_startup_position_dependency(self) -> None:
-        subject = solver()
-        self.assertFalse(hasattr(subject, "startup_position"))
-        self.assertFalse(hasattr(subject.five_axis_kinematics.geometry, "startup_position"))
+        self.assertFalse(
+            solver(validated=False, allow_unvalidated=True).base_transform_validated
+        )
 
     def test_import_has_no_hardware_or_local_file_side_effect(self) -> None:
         host_root = Path(__file__).resolve().parents[1]
@@ -156,347 +166,431 @@ class BaseFrameTransformAndGateTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
-
-class FiveAxisRoundTripTests(unittest.TestCase):
-    def test_fk_base_ik_fk_round_trip_for_multiple_working_points(self) -> None:
-        model = FiveAxisKinematics(
-            geometry(
-                mount=RigidTransform.from_xyz_yaw_deg(
-                    x_mm=10, y_mm=20, z_mm=30, yaw_deg=12
-                ),
-                tool=RigidTransform.from_xyz_yaw_deg(
-                    x_mm=15, y_mm=-4, z_mm=-30, yaw_deg=8
-                ),
-            )
-        )
-        base = RigidTransform.from_xyz_yaw_deg(
-            x_mm=-40, y_mm=75, z_mm=100, yaw_deg=-23
-        )
-        subject = solver(model=model, base=base, step=2.0)
-        cases = (
-            RobotAxisState(0, 20, 20, 60, -35),
-            RobotAxisState(40, 75, -30, 90, 140),
-            RobotAxisState(120, 5, 50, -100, -70),
-        )
-        for known in cases:
-            with self.subTest(known=known):
-                base_target = base @ model.forward_kinematics(known)
-                solution = subject.solve_base_target(
-                    base_T_tool_target=base_target,
-                    current_state=known,
-                )
-                reconstructed = base @ model.forward_kinematics(solution.axis_state())
-                assert_pose_close(self, reconstructed, base_target)
-                for axis, margin in solution.limit_margins:
-                    self.assertGreaterEqual(margin, -1e-8, axis.value)
-
-    def test_tcp_z_offset_is_inverted_through_geometry(self) -> None:
-        model = FiveAxisKinematics(
-            geometry(
-                tool=RigidTransform.from_xyz_yaw_deg(
-                    x_mm=0, y_mm=0, z_mm=-30, yaw_deg=0
-                )
-            )
-        )
-        known = RobotAxisState(0, 50, 0, 90, -90)
-        target = model.forward_kinematics(known)
-        solution = solver(model=model).solve_with_fixed_slide(
-            base_T_tool_target=target,
-            current_state=known,
-            slide_mm=0,
-        )
-        self.assertAlmostEqual(solution.z_mm, 50.0)
-        self.assertAlmostEqual(target.translation_mm[2], 20.0)
-
-    def test_incompatible_roll_pitch_is_rejected_instead_of_ignored(self) -> None:
-        target = RigidTransform.from_xyz_rpy_deg(
-            x_mm=100,
-            y_mm=0,
-            z_mm=20,
-            roll_deg=2,
-            pitch_deg=0,
-            yaw_deg=0,
-        )
+    def test_incompatible_roll_pitch_is_rejected(self) -> None:
         with self.assertRaisesRegex(BaseFrameSolverError, "roll/pitch"):
             solver().solve_base_target(
-                base_T_tool_target=target,
-                current_state=RobotAxisState(0, 20, 0, 0, 0),
-            )
-
-
-class RedundancyBranchAndLimitTests(unittest.TestCase):
-    def test_current_slide_is_kept_when_reachable(self) -> None:
-        model = FiveAxisKinematics(geometry())
-        known = RobotAxisState(60, 20, 10, 80, -30)
-        target = model.forward_kinematics(known)
-        result = solver(model=model).solve_base_target(
-            base_T_tool_target=target,
-            current_state=known,
-        )
-        self.assertAlmostEqual(result.slide_mm, 60)
-        self.assertEqual(result.slide_selection_reason, "current")
-
-    def test_nearest_other_slide_is_used_when_current_is_unreachable(self) -> None:
-        model = FiveAxisKinematics(geometry())
-        target = model.forward_kinematics(RobotAxisState(150, 20, 0, 82.819244, 0))
-        current = RobotAxisState(0, 20, 0, 82.819244, 0)
-        result = solver(model=model, step=10).solve_base_target(
-            base_T_tool_target=target,
-            current_state=current,
-        )
-        self.assertGreater(result.slide_mm, 0)
-        self.assertEqual(result.slide_selection_reason, "nearest-discrete-candidate")
-
-    def test_fixed_slide_and_slide_limit(self) -> None:
-        model = FiveAxisKinematics(geometry())
-        known = RobotAxisState(80, 20, 20, 60, -10)
-        target = model.forward_kinematics(known)
-        subject = solver(model=model)
-        result = subject.solve_with_fixed_slide(
-            base_T_tool_target=target,
-            current_state=known,
-            slide_mm=80,
-        )
-        self.assertAlmostEqual(result.slide_mm, 80)
-        self.assertEqual(result.slide_selection_reason, "fixed")
-        with self.assertRaisesRegex(FiveAxisNoSolutionError, "outside"):
-            subject.solve_with_fixed_slide(
-                base_T_tool_target=target,
-                current_state=known,
-                slide_mm=201,
-            )
-
-    def test_slide_soft_limit_endpoint_and_whole_range_unreachable(self) -> None:
-        model = FiveAxisKinematics(geometry())
-        known = RobotAxisState(200, 20, 0, 90, -90)
-        target = model.forward_kinematics(known)
-        endpoint = solver(model=model).solve_with_fixed_slide(
-            base_T_tool_target=target,
-            current_state=known,
-            slide_mm=200,
-        )
-        self.assertAlmostEqual(endpoint.slide_mm, 200)
-        self.assertEqual(dict(endpoint.limit_margins)[AxisName.SLIDE], 0)
-
-        with self.assertRaises(FiveAxisNoSolutionError) as raised:
-            solver(model=model, step=5).solve_base_target(
-                base_T_tool_target=RigidTransform.from_xyz_yaw_deg(
-                    x_mm=500, y_mm=500, z_mm=20, yaw_deg=0
+                base_T_tool_target=RigidTransform.from_xyz_rpy_deg(
+                    x_mm=400,
+                    y_mm=250,
+                    z_mm=-80,
+                    roll_deg=2,
+                    pitch_deg=0,
+                    yaw_deg=0,
                 ),
-                current_state=RobotAxisState(100, 20, 0, 0, 0),
+                current_state=RobotAxisState(0, -80, 0, 0, 0),
             )
-        self.assertEqual(raised.exception.stage, "planar_solutions")
 
-    def test_candidate_order_uses_nearest_slide_then_stable_score(self) -> None:
-        model = FiveAxisKinematics(geometry())
-        target = model.forward_kinematics(RobotAxisState(180, 20, 0, 90, -90))
-        current = RobotAxisState(0, 20, 0, 90, -90)
-        candidates = solver(model=model, step=10).solve_base_target_candidates(
-            base_T_tool_target=target,
+
+class OffsetWorkspaceSolverTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.model = FiveAxisKinematics(geometry())
+
+    def test_current_slide_is_immediately_kept_in_positive_and_negative_regions(self) -> None:
+        for local_y, side in (
+            (200.0, OffsetWorkspaceSide.POSITIVE),
+            (-200.0, OffsetWorkspaceSide.NEGATIVE),
+        ):
+            with self.subTest(side=side):
+                current = state_for_local_point(
+                    self.model,
+                    local_x_mm=400.0,
+                    local_y_mm=local_y,
+                    slide_mm=120.0,
+                )
+                result = solver(model=self.model).solve_base_target(
+                    base_T_tool_target=target_for_state(self.model, current),
+                    current_state=current,
+                )
+                self.assertAlmostEqual(result.slide_mm, current.slide_mm)
+                self.assertIs(
+                    result.slide_selection_reason,
+                    SlideSelectionReason.KEEP_CURRENT_SLIDE,
+                )
+                self.assertIs(result.workspace_side, side)
+
+    def test_current_slide_returns_both_elbow_branches_and_prefers_small_change(self) -> None:
+        current = state_for_local_point(
+            self.model,
+            local_x_mm=450.0,
+            local_y_mm=200.0,
+            branch=1,
+        )
+        candidates = solver(
+            model=self.model,
+            limits=descriptors(rotation=(-360.0, 360.0)),
+        ).solve_base_target_candidates(
+            base_T_tool_target=target_for_state(self.model, current),
             current_state=current,
         )
-        slide_deltas = [abs(item.slide_mm - current.slide_mm) for item in candidates]
-        self.assertEqual(slide_deltas[0], min(slide_deltas))
         self.assertEqual(
-            candidates,
-            solver(model=model, step=10).solve_base_target_candidates(
-                base_T_tool_target=target,
-                current_state=current,
-            ),
-        )
-
-    def test_positive_and_negative_elbow_branches_are_both_returned(self) -> None:
-        model = FiveAxisKinematics(geometry())
-        known = RobotAxisState(20, 20, 0, 90, -20)
-        target = model.forward_kinematics(known)
-        candidates = solver(model=model).solve_base_target_candidates(
-            base_T_tool_target=target,
-            current_state=known,
-            fixed_slide_mm=20,
-        )
-        self.assertEqual(
-            {candidate.branch for candidate in candidates},
+            {candidate.elbow_branch for candidate in candidates},
             {"elbow-positive", "elbow-negative"},
         )
+        self.assertAlmostEqual(candidates[0].elbow_deg, current.elbow_deg)
 
-    def test_elbow_limits_select_only_one_branch_and_both_limits_can_reject(self) -> None:
-        model = FiveAxisKinematics(geometry())
-        known = RobotAxisState(20, 20, 0, 90, 0)
-        target = model.forward_kinematics(known)
-        positive_only = solver(
-            model=model,
-            limits=descriptors(elbow=(0, 180)),
-        ).solve_base_target_candidates(
-            base_T_tool_target=target,
-            current_state=known,
-            fixed_slide_mm=20,
+    def test_valid_current_slide_does_not_generate_center_or_fallback_candidates(self) -> None:
+        current = state_for_local_point(
+            self.model,
+            local_x_mm=400.0,
+            local_y_mm=200.0,
+            slide_mm=120.0,
         )
-        self.assertEqual({item.branch for item in positive_only}, {"elbow-positive"})
-        negative_only = solver(
-            model=model,
-            limits=descriptors(elbow=(-180, 0)),
-        ).solve_base_target_candidates(
-            base_T_tool_target=target,
-            current_state=RobotAxisState(20, 20, 90, -90, 0),
-            fixed_slide_mm=20,
-        )
-        self.assertEqual({item.branch for item in negative_only}, {"elbow-negative"})
-        with self.assertRaises(FiveAxisNoSolutionError) as raised:
-            solver(
-                model=model,
-                limits=descriptors(elbow=(-10, 10)),
-            ).solve_base_target(
-                base_T_tool_target=target,
-                current_state=known,
+        subject = solver(model=self.model)
+        reasons: list[SlideSelectionReason] = []
+        original = subject._solutions_for_slide
+
+        def observed(*args: object, **kwargs: object) -> list[object]:
+            reasons.append(args[4])
+            return original(*args, **kwargs)
+
+        with patch.object(subject, "_solutions_for_slide", side_effect=observed):
+            result = subject.solve_base_target(
+                base_T_tool_target=target_for_state(self.model, current),
+                current_state=current,
             )
-        self.assertEqual(raised.exception.stage, "joint_limits")
+        self.assertIs(
+            result.slide_selection_reason,
+            SlideSelectionReason.KEEP_CURRENT_SLIDE,
+        )
+        self.assertEqual(reasons, [SlideSelectionReason.KEEP_CURRENT_SLIDE])
 
-    def test_outer_singularity_is_deterministic_and_unreachable_target_fails(self) -> None:
-        subject = solver(step=10)
-        singular_target = RigidTransform.from_xyz_yaw_deg(
-            x_mm=200, y_mm=20, z_mm=20, yaw_deg=0
-        )
-        first = subject.solve_base_target_candidates(
-            base_T_tool_target=singular_target,
-            current_state=RobotAxisState(20, 20, 0, 0, 0),
-            fixed_slide_mm=20,
-        )
-        second = subject.solve_base_target_candidates(
-            base_T_tool_target=singular_target,
-            current_state=RobotAxisState(20, 20, 0, 0, 0),
-            fixed_slide_mm=20,
-        )
-        self.assertEqual(first, second)
-        self.assertEqual(first[0].branch, "singular")
-        with self.assertRaises(FiveAxisNoSolutionError):
-            subject.solve_base_target(
-                base_T_tool_target=RigidTransform.from_xyz_yaw_deg(
-                    x_mm=500, y_mm=500, z_mm=20, yaw_deg=0
-                ),
-                current_state=RobotAxisState(0, 20, 0, 0, 0),
-            )
-
-    def test_completely_folded_singularity_is_deterministic(self) -> None:
-        subject = solver(limits=descriptors(rotation=(-360, 360)))
+    def test_center_candidates_are_used_only_when_current_slide_is_invalid(self) -> None:
         target = RigidTransform.from_xyz_yaw_deg(
-            x_mm=0, y_mm=0, z_mm=20, yaw_deg=0
+            x_mm=400,
+            y_mm=500,
+            z_mm=-80,
+            yaw_deg=0,
         )
-        current = RobotAxisState(0, 20, 0, 180, -180)
-        first = subject.solve_base_target_candidates(
+        current = RobotAxisState(0, -80, 0, 0, 0)
+        result = solver(model=self.model).solve_base_target(
             base_T_tool_target=target,
             current_state=current,
-            fixed_slide_mm=0,
         )
-        second = subject.solve_base_target_candidates(
-            base_T_tool_target=target,
-            current_state=current,
-            fixed_slide_mm=0,
+        self.assertIs(
+            result.slide_selection_reason,
+            SlideSelectionReason.POSITIVE_OFFSET_CENTER,
         )
-        self.assertEqual(first, second)
-        self.assertEqual(first[0].branch, "singular")
-        self.assertAlmostEqual(abs(first[0].elbow_deg), 180)
+        self.assertAlmostEqual(result.slide_mm, 250.0)
+        self.assertAlmostEqual(result.local_y_mm, 250.0)
 
-    def test_z_limit_rejection_is_diagnostic(self) -> None:
-        subject = solver(limits=descriptors(z=(0, 10)))
-        with self.assertRaises(FiveAxisNoSolutionError) as raised:
-            subject.solve_base_target(
-                base_T_tool_target=RigidTransform.from_xyz_yaw_deg(
-                    x_mm=100, y_mm=0, z_mm=50, yaw_deg=0
+    def test_center_internal_scoring_prefers_less_slide_motion(self) -> None:
+        target = RigidTransform.from_xyz_yaw_deg(
+            x_mm=400,
+            y_mm=500,
+            z_mm=-80,
+            yaw_deg=0,
+        )
+        current = RobotAxisState(600, -80, 0, 0, 0)
+        result = solver(model=self.model).solve_base_target(
+            base_T_tool_target=target,
+            current_state=current,
+        )
+        self.assertIs(
+            result.slide_selection_reason,
+            SlideSelectionReason.NEGATIVE_OFFSET_CENTER,
+        )
+        self.assertAlmostEqual(result.slide_mm, 750.0)
+
+    def test_fallback_is_used_after_both_centers_fail_slide_limits(self) -> None:
+        target = RigidTransform.from_xyz_yaw_deg(
+            x_mm=400,
+            y_mm=500,
+            z_mm=-80,
+            yaw_deg=0,
+        )
+        subject = solver(
+            model=self.model,
+            limits=descriptors(slide=(0.0, 200.0)),
+        )
+        result = subject.solve_base_target(
+            base_T_tool_target=target,
+            current_state=RobotAxisState(0, -80, 0, 0, 0),
+        )
+        self.assertIs(
+            result.slide_selection_reason,
+            SlideSelectionReason.POSITIVE_OFFSET_FALLBACK,
+        )
+        self.assertGreaterEqual(result.local_y_mm, 300.0)
+        self.assertLessEqual(result.slide_mm, 200.0)
+
+    def test_negative_fallback_reaches_closed_workspace_boundary(self) -> None:
+        target = RigidTransform.from_xyz_yaw_deg(
+            x_mm=400,
+            y_mm=160,
+            z_mm=-80,
+            yaw_deg=0,
+        )
+        subject = solver(
+            model=self.model,
+            limits=descriptors(slide=(300.0, 400.0)),
+        )
+        result = subject.solve_base_target(
+            base_T_tool_target=target,
+            current_state=RobotAxisState(300, -80, 0, 0, 0),
+        )
+        self.assertIs(
+            result.slide_selection_reason,
+            SlideSelectionReason.NEGATIVE_OFFSET_FALLBACK,
+        )
+        self.assertAlmostEqual(result.local_y_mm, -150.0)
+        self.assertAlmostEqual(result.slide_mm, 310.0)
+
+    def test_planar_and_joint_limit_rejections_are_structured(self) -> None:
+        cases = (
+            (
+                FiveAxisKinematics(
+                    FiveAxisGeometry(
+                        150,
+                        150,
+                        (0, 1, 0),
+                        (0, 0, 1),
+                        RigidTransform.identity(),
+                        RigidTransform.identity(),
+                    )
                 ),
-                current_state=RobotAxisState(0, 0, 0, 0, 0),
-            )
-        self.assertEqual(raised.exception.stage, "z_within_limits")
-
-
-class RotationAndOutputTests(unittest.TestCase):
-    def test_zero_positive_negative_and_wrapped_yaw_reconstruct(self) -> None:
-        subject = solver(limits=descriptors(rotation=(-540, 540)))
-        for yaw_deg in (0, 70, -70, 179, -179, 181, -181):
-            with self.subTest(yaw_deg=yaw_deg):
-                target = RigidTransform.from_xyz_yaw_deg(
-                    x_mm=100, y_mm=100, z_mm=20, yaw_deg=yaw_deg
-                )
-                result = subject.solve_with_fixed_slide(
+                descriptors(),
+                "planar_unreachable",
+            ),
+            (self.model, descriptors(shoulder=(-0.01, 0.01)), "shoulder_limit"),
+            (
+                self.model,
+                descriptors(shoulder=(-180.0, 180.0), elbow=(-1.0, 1.0)),
+                "elbow_limit",
+            ),
+        )
+        target = RigidTransform.from_xyz_yaw_deg(
+            x_mm=400,
+            y_mm=250,
+            z_mm=-80,
+            yaw_deg=0,
+        )
+        for candidate_model, limits, expected_stage in cases:
+            with self.subTest(stage=expected_stage), self.assertRaises(
+                FiveAxisNoSolutionError
+            ) as raised:
+                solver(model=candidate_model, limits=limits).solve_base_target(
                     base_T_tool_target=target,
-                    current_state=RobotAxisState(0, 20, 0, 90, yaw_deg - 90),
-                    slide_mm=0,
+                    current_state=RobotAxisState(0, -80, 0, 0, 0),
                 )
-                reconstructed = subject.five_axis_kinematics.forward_kinematics(
-                    result.axis_state()
-                )
-                self.assertAlmostEqual(
-                    angular_difference_deg(reconstructed.yaw_deg, target.yaw_deg),
-                    0,
-                    places=7,
-                )
+            self.assertEqual(raised.exception.stage, expected_stage)
 
-    def test_rotation_compensates_for_both_shoulder_elbow_branches(self) -> None:
-        subject = solver(limits=descriptors(rotation=(-540, 540)))
+    def test_fk_translation_and_yaw_residual_rejections_are_structured(self) -> None:
         target = RigidTransform.from_xyz_yaw_deg(
-            x_mm=100, y_mm=100, z_mm=20, yaw_deg=35
+            x_mm=400,
+            y_mm=250,
+            z_mm=-80,
+            yaw_deg=0,
         )
-        candidates = subject.solve_base_target_candidates(
-            base_T_tool_target=target,
-            current_state=RobotAxisState(0, 20, 0, 90, -55),
-            fixed_slide_mm=0,
-        )
-        by_branch = {item.branch: item for item in candidates}
-        self.assertIn("elbow-positive", by_branch)
-        self.assertIn("elbow-negative", by_branch)
-        for item in by_branch.values():
-            self.assertAlmostEqual(
-                angular_difference_deg(
-                    item.shoulder_deg + item.elbow_deg + item.rotation_deg,
-                    35,
-                ),
-                0,
-                places=7,
+        original = self.model.forward_kinematics
+
+        def shifted_translation(state: RobotAxisState) -> RigidTransform:
+            matrix = original(state).matrix.copy()
+            matrix[0, 3] += 0.01
+            return RigidTransform(matrix)
+
+        def shifted_yaw(state: RobotAxisState) -> RigidTransform:
+            return original(state) @ RigidTransform.from_xyz_yaw_deg(
+                x_mm=0,
+                y_mm=0,
+                z_mm=0,
+                yaw_deg=0.01,
             )
 
-    def test_rotation_periodic_equivalent_nearest_current_is_selected(self) -> None:
-        limits = descriptors(rotation=(-540, 540))
-        subject = solver(limits=limits)
-        target = RigidTransform.from_xyz_yaw_deg(
-            x_mm=200, y_mm=0, z_mm=20, yaw_deg=0
-        )
-        result = subject.solve_with_fixed_slide(
-            base_T_tool_target=target,
-            current_state=RobotAxisState(0, 20, 0, 0, 350),
-            slide_mm=0,
-        )
-        self.assertAlmostEqual(result.rotation_deg, 360)
-        self.assertAlmostEqual(result.yaw_residual_deg, 0)
+        for replacement, expected_stage in (
+            (shifted_translation, "fk_translation_residual"),
+            (shifted_yaw, "fk_yaw_residual"),
+        ):
+            with self.subTest(stage=expected_stage), patch.object(
+                self.model,
+                "forward_kinematics",
+                side_effect=replacement,
+            ), self.assertRaises(FiveAxisNoSolutionError) as raised:
+                solver(
+                    model=self.model,
+                    limits=descriptors(
+                        shoulder=(-180.0, 180.0),
+                        elbow=(-180.0, 180.0),
+                        rotation=(-540.0, 540.0),
+                    ),
+                ).solve_base_target(
+                    base_T_tool_target=target,
+                    current_state=RobotAxisState(0, -80, 0, 0, 0),
+                )
+            self.assertEqual(raised.exception.stage, expected_stage)
 
-    def test_rotation_limit_can_reject_all_periodic_equivalents(self) -> None:
-        limits = descriptors(rotation=(-10, 10))
+    def test_selection_is_deterministic(self) -> None:
         target = RigidTransform.from_xyz_yaw_deg(
-            x_mm=100, y_mm=100, z_mm=20, yaw_deg=170
+            x_mm=400,
+            y_mm=500,
+            z_mm=-80,
+            yaw_deg=0,
         )
+        subject = solver(model=self.model)
+        current = RobotAxisState(400, -80, 0, 0, 0)
+        first = subject.solve_base_target(
+            base_T_tool_target=target,
+            current_state=current,
+        )
+        second = subject.solve_base_target(
+            base_T_tool_target=target,
+            current_state=current,
+        )
+        self.assertEqual(first, second)
+
+    def test_center_gap_x_outside_z_and_rotation_limits_are_diagnostic(self) -> None:
+        cases = (
+            (
+                RigidTransform.from_xyz_yaw_deg(
+                    x_mm=20, y_mm=0, z_mm=-80, yaw_deg=0
+                ),
+                descriptors(),
+                "outside_offset_workspace",
+            ),
+            (
+                RigidTransform.from_xyz_yaw_deg(
+                    x_mm=400, y_mm=250, z_mm=10, yaw_deg=0
+                ),
+                descriptors(),
+                "z_limit",
+            ),
+            (
+                RigidTransform.from_xyz_yaw_deg(
+                    x_mm=450, y_mm=200, z_mm=-80, yaw_deg=170
+                ),
+                descriptors(rotation=(-5, 5)),
+                "rotation_limit",
+            ),
+        )
+        for target, limits, stage in cases:
+            with self.subTest(stage=stage), self.assertRaises(
+                FiveAxisNoSolutionError
+            ) as raised:
+                solver(model=self.model, limits=limits).solve_base_target(
+                    base_T_tool_target=target,
+                    current_state=RobotAxisState(0, -80, 0, 0, 0),
+                )
+            self.assertEqual(raised.exception.stage, stage)
+
+    def test_fixed_slide_must_still_satisfy_offset_workspace(self) -> None:
         with self.assertRaises(FiveAxisNoSolutionError) as raised:
-            solver(limits=limits).solve_with_fixed_slide(
-                base_T_tool_target=target,
-                current_state=RobotAxisState(0, 20, 0, 90, 0),
+            solver(model=self.model).solve_with_fixed_slide(
+                base_T_tool_target=RigidTransform.from_xyz_yaw_deg(
+                    x_mm=400,
+                    y_mm=0,
+                    z_mm=-80,
+                    yaw_deg=0,
+                ),
+                current_state=RobotAxisState(0, -80, 0, 0, 0),
                 slide_mm=0,
             )
-        self.assertEqual(raised.exception.stage, "rotation_limits")
+        self.assertEqual(raised.exception.stage, "outside_offset_workspace")
 
-    def test_solution_to_multi_axis_target_uses_mm_deg_and_no_frame(self) -> None:
-        subject = solver()
-        target = RigidTransform.from_xyz_yaw_deg(
-            x_mm=100, y_mm=100, z_mm=20, yaw_deg=30
+    def test_solution_outputs_complete_target_and_fk_residuals(self) -> None:
+        current = state_for_local_point(
+            self.model,
+            local_x_mm=400,
+            local_y_mm=250,
         )
-        solution = subject.solve_with_fixed_slide(
-            base_T_tool_target=target,
-            current_state=RobotAxisState(0, 20, 0, 90, -60),
-            slide_mm=0,
+        subject = solver(model=self.model)
+        solution = subject.solve_base_target(
+            base_T_tool_target=target_for_state(self.model, current),
+            current_state=current,
         )
-        multi = subject.solution_to_multi_axis_target(solution)
-        self.assertEqual(tuple(item.axis for item in multi.targets), tuple(AxisName))
-        self.assertFalse(hasattr(multi, "frame_id"))
-        self.assertFalse(hasattr(multi, "base_offset"))
-        self.assertFalse(hasattr(multi, "startup_position"))
-        self.assertTrue(all(item.velocity is None for item in multi.targets))
-        self.assertTrue(all(item.acceleration is None for item in multi.targets))
+        target = subject.solution_to_multi_axis_target(solution)
+        self.assertEqual(tuple(item.axis for item in target.targets), tuple(AxisName))
+        self.assertLessEqual(solution.position_residual_mm, 1e-6)
+        self.assertLessEqual(solution.yaw_residual_deg, 1e-6)
+
+
+class FrozenJointLimitTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.model = FiveAxisKinematics(geometry())
+        self.subject = solver(model=self.model)
+
+    def _constrained(self, shoulder: float, elbow: float) -> None:
+        state = RobotAxisState(0.0, -80.0, shoulder, elbow, -shoulder - elbow)
+        self.subject.constrained_solution(
+            base_T_tool_target=target_for_state(self.model, state),
+            axis_state=state,
+            slide_selection_reason=SlideSelectionReason.KEEP_CURRENT_SLIDE,
+            elbow_branch="test",
+            allow_outside_workspace=True,
+        )
+
+    def test_shoulder_closed_boundaries_and_both_outside_directions(self) -> None:
+        self._constrained(-65.0, 0.0)
+        self._constrained(65.0, 0.0)
+        for value in (-65.001, 65.001):
+            with self.subTest(value=value), self.assertRaises(
+                FiveAxisNoSolutionError
+            ) as raised:
+                self._constrained(value, 0.0)
+            self.assertEqual(raised.exception.stage, "shoulder_limit")
+
+    def test_elbow_closed_boundaries_and_both_outside_directions(self) -> None:
+        self._constrained(0.0, -160.0)
+        self._constrained(0.0, 160.0)
+        for value in (-160.001, 160.001):
+            with self.subTest(value=value), self.assertRaises(
+                FiveAxisNoSolutionError
+            ) as raised:
+                self._constrained(0.0, value)
+            self.assertEqual(raised.exception.stage, "elbow_limit")
+
+
+class ZSignAndToolOffsetTests(unittest.TestCase):
+    def test_lower_base_target_produces_more_negative_z(self) -> None:
+        model = FiveAxisKinematics(geometry(tool_z_mm=-240.0))
+        subject = solver(model=model)
+        current = state_for_local_point(
+            model,
+            local_x_mm=400,
+            local_y_mm=250,
+            z_mm=-20,
+        )
+        high = target_for_state(model, current)
+        low = RigidTransform.from_xyz_yaw_deg(
+            x_mm=high.translation_mm[0],
+            y_mm=high.translation_mm[1],
+            z_mm=high.translation_mm[2] - 100.0,
+            yaw_deg=high.yaw_deg,
+        )
+        high_solution = subject.solve_base_target(
+            base_T_tool_target=high,
+            current_state=current,
+        )
+        low_solution = subject.solve_base_target(
+            base_T_tool_target=low,
+            current_state=current,
+        )
+        self.assertLess(low_solution.z_mm, high_solution.z_mm)
+        self.assertAlmostEqual(low_solution.z_mm, high_solution.z_mm - 100.0)
+
+    def test_wrapped_yaw_reconstructs(self) -> None:
+        model = FiveAxisKinematics(geometry())
+        subject = solver(
+            model=model,
+            limits=descriptors(rotation=(-540.0, 540.0)),
+        )
+        for yaw in (0.0, 179.0, -179.0, 181.0, -181.0):
+            with self.subTest(yaw=yaw):
+                target = RigidTransform.from_xyz_yaw_deg(
+                    x_mm=400,
+                    y_mm=250,
+                    z_mm=-80,
+                    yaw_deg=yaw,
+                )
+                solution = subject.solve_with_fixed_slide(
+                    base_T_tool_target=target,
+                    current_state=RobotAxisState(0, -80, 0, 0, yaw),
+                    slide_mm=0,
+                )
+                reconstructed = model.forward_kinematics(solution.axis_state())
+                self.assertAlmostEqual(
+                    angular_difference_deg(reconstructed.yaw_deg, target.yaw_deg),
+                    0.0,
+                    places=7,
+                )
 
 
 if __name__ == "__main__":

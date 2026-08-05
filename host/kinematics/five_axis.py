@@ -33,6 +33,17 @@ class FiveAxisGeometryError(ValueError):
 
 
 @dataclass(frozen=True)
+class PlanarLocalTarget:
+    """固定 Slide 后，Rotation 输出轴在机械臂平面中的局部目标。"""
+
+    local_x_mm: float
+    local_y_mm: float
+    z_axis_mm: float
+    tool_z_mm: float
+    tool_yaw_deg: float
+
+
+@dataclass(frozen=True)
 class FiveAxisGeometry:
     """完整 FK 所需的纯机械几何。
 
@@ -116,6 +127,56 @@ class FiveAxisKinematics:
             @ planar_origin_T_rotation_output
             @ self.geometry.rotation_output_T_tool
         )
+
+    def compute_arm_local_target(
+        self,
+        slide_zero_T_tool: RigidTransform,
+        slide_mm: float,
+    ) -> PlanarLocalTarget:
+        """通过正式几何链统一计算局部 XY 和对应 Z 轴逻辑位置。"""
+
+        if not isinstance(slide_zero_T_tool, RigidTransform):
+            raise TypeError("slide_zero_T_tool must be RigidTransform")
+        slide = _require_finite("slide_mm", slide_mm)
+        geometry = self.geometry
+        output_target = (
+            slide_zero_T_tool @ geometry.rotation_output_T_tool.inverse()
+        )
+        mount = geometry.slide_zero_T_planar_origin_at_zero
+        mount_rotation = mount.rotation_matrix
+        residual_slide_zero = (
+            output_target.translation_mm
+            - np.asarray(geometry.slide_direction_xyz) * slide
+            - mount.translation_mm
+        )
+        residual_mount = mount_rotation.T @ residual_slide_zero
+        z_direction_mount = (
+            mount_rotation.T @ np.asarray(geometry.z_direction_xyz)
+        )
+        if abs(float(z_direction_mount[2])) <= 1e-12:
+            raise FiveAxisGeometryError(
+                "z_direction_xyz has no component normal to the planar frame"
+            )
+        z_axis_mm = float(residual_mount[2] / z_direction_mount[2])
+        planar = residual_mount - z_direction_mount * z_axis_mm
+        return PlanarLocalTarget(
+            local_x_mm=float(planar[0]),
+            local_y_mm=float(planar[1]),
+            z_axis_mm=z_axis_mm,
+            tool_z_mm=float(slide_zero_T_tool.translation_mm[2]),
+            tool_yaw_deg=float(slide_zero_T_tool.yaw_deg),
+        )
+
+    def slide_local_y_per_mm(self) -> float:
+        """返回 Slide 每移动 1 mm 对机械臂局部 y 的扣除系数。"""
+
+        mount_rotation = (
+            self.geometry.slide_zero_T_planar_origin_at_zero.rotation_matrix
+        )
+        slide_direction_mount = (
+            mount_rotation.T @ np.asarray(self.geometry.slide_direction_xyz)
+        )
+        return float(slide_direction_mount[1])
 
 
 def rotation_output_yaw_deg(
@@ -294,6 +355,7 @@ __all__ = [
     "FiveAxisGeometry",
     "FiveAxisGeometryError",
     "FiveAxisKinematics",
+    "PlanarLocalTarget",
     "load_five_axis_geometry",
     "load_local_five_axis_kinematics",
     "rotation_deg_for_output_yaw",

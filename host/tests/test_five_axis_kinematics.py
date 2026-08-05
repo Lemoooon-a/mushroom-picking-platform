@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -107,6 +108,20 @@ class FiveAxisKinematicsTests(unittest.TestCase):
             atol=1e-12,
         )
         self.assertAlmostEqual(result.yaw_deg, 90)
+
+    def test_arm_local_target_uses_same_geometry_and_slide_sign_as_fk(self) -> None:
+        model = FiveAxisKinematics(geometry())
+        state = RobotAxisState(40.0, -30.0, 20.0, 60.0, -10.0)
+        target = model.forward_kinematics(state)
+        local = model.compute_arm_local_target(target, state.slide_mm)
+        planar = model.planar_2r.forward(
+            math.radians(state.shoulder_deg),
+            math.radians(state.elbow_deg),
+        )
+        self.assertAlmostEqual(local.local_x_mm, planar.x)
+        self.assertAlmostEqual(local.local_y_mm, planar.y)
+        self.assertAlmostEqual(local.z_axis_mm, state.z_mm)
+        self.assertAlmostEqual(model.slide_local_y_per_mm(), 1.0)
 
     def test_model_does_not_read_startup_position(self) -> None:
         model = FiveAxisKinematics(geometry())

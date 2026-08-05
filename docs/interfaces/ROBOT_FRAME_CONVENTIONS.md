@@ -121,7 +121,7 @@ target_slide_zero_T_tool
 ```
 
 `RobotFrameChain.transform_base_target_to_slide_zero()` 提供该薄包装；
-`BaseFrameFiveAxisSolver` 在输入边界做同一变换，然后在 Slide-zero 根下生成 Slide 离散候选、
+`BaseFrameFiveAxisSolver` 在输入边界做同一变换，然后在 Slide-zero 根下生成分层 Slide 候选、
 复用 Planar 2R 的两支 IK、反解 Z 和 Rotation、检查五轴软限位，并用完整 FK 重建筛选。
 
 完整目标链为：
@@ -138,10 +138,21 @@ base_T_tool_target
 Slide/Z 使用 mm，Shoulder/Elbow/Rotation 使用 deg。不得向它加入 Base offset、frame ID 或
 startup position。
 
-当前 Base–Slide-zero 变换若仍标记为 `validated=false`，求解器默认拒绝使用。只读调试必须显式
-允许 provisional transform；这不改变配置中的验证状态，也不表示变换已经通过独立姿态验证。
+当前 Base–Slide-zero 变换若仍标记为 `validated=false`，`plan-base` 直接拒绝使用，且不提供命令行
+override；这不改变配置中的验证状态。
 
-## 6. startup position 隔离
+## 6. Z 轴和偏置工作区约定
+
+Base `+Z` 与 Z 逻辑正方向均竖直向上；顶部 Home 为 `z=0 mm`，向下伸出为负值，范围读取集中
+轴配置（当前为 `[-190, 0] mm`）。目标 Base Z 越低，反解 Z 越负。所有高度变化均通过正式
+frame chain/运动学 helper 转换，不能直接假定轴值增量等于 Base 高度增量。
+
+工作区在机械臂平面局部坐标定义：`local_x=[50,450] mm`，正侧
+`local_y=[150,350] mm`，负侧 `local_y=[-350,-150] mm`。这些矩形是强制运动学约束，不是
+显示提示；普通最终五轴解必须落在其中一侧。当前侧由当前五轴 FK 计算，目标侧由最终实际解
+计算，均不使用 Base 全局 Y 的符号。
+
+## 7. startup position 隔离
 
 startup position 只属于系统上电初始化；它不是坐标系，也不进入：
 
@@ -154,7 +165,7 @@ startup position 只属于系统上电初始化；它不是坐标系，也不进
 禁止对运动学目标加减 startup position。肩、肘、Rotation 的逻辑零点、方向、减速比和
 raw count 转换继续由现有关节/驱动层负责。
 
-## 7. Rotation 职责边界
+## 8. Rotation 职责边界
 
 Frame chain 只计算当前位姿。Tool 在 Base 中的目标 yaw 由运动学层按与 FK 相同的共享公式，
 根据 shoulder、elbow 反解 Rotation 逻辑角；周期等价角在 Rotation 软限位内按当前位置选择。

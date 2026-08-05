@@ -56,18 +56,41 @@ Z、平面 XY、Shoulder、Elbow 与 Rotation。Z 不是直接等于目标高度
 当前状态由调用方传入，只用于冗余选择和连续性评分。纯数学模块不查询硬件、本机文件或
 startup position。
 
-## 6. Slide redundancy
+## 6. Offset Workspace Constraints
 
-同一个 TCP 目标可能对应多个 Slide 位置。默认策略为
-`KEEP_CURRENT_SLIDE_THEN_NEAREST`：
+偏置矩形是运动学强约束，不只是可视化提示。分类使用移除 Slide 平移及正式 Tool 固定变换后的
+机械臂平面局部坐标，而不是 Base 全局 Y：
 
-1. 搜索范围严格来自 Slide 软限位；
-2. 当前 Slide、两端软限位和按配置步长生成的有限离散点都会成为候选；
-3. 当前 Slide 可达时优先保持；否则优先选择与当前位置最近的合法离散候选；
-4. `solve_with_fixed_slide()` 可在调用方明确给出 Slide 时只求该位置。
+```text
+Positive: local_x in [50, 450] mm, local_y in [150, 350] mm, center_y=+250 mm
+Negative: local_x in [50, 450] mm, local_y in [-350, -150] mm, center_y=-250 mm
+```
 
-这是有限、确定性的离散搜索，不是解析连续搜索，也不表示找到数学上唯一或全局最优的解。
-默认步长为 5 mm，最终候选仍必须通过完整 FK 残差复核。
+边界包含在内；中心空白区和矩形外部均为 `OUTSIDE`。最终普通五轴解必须位于正偏置区或负偏置
+区。参数、边界容差、Base Z=150 mm 跨区安全平面与 10 mm fallback 步长集中在
+`config/workspace_planning.py`。
+
+该 arm-local 偏置区只回答当前 Slide 下肩肘解是否有效以及是否需要重新分配 Slide；它不是
+Base frame 中的培养槽任务许可。最终用户目标另由应用层 `TrayWorkspace` 在调用本求解器前检查，
+两类配置不得合并。
+
+### Positive and Negative Offset Regions
+
+`compute_arm_local_target()` 是 solver、当前状态侧别判断和诊断共用的唯一局部目标换算入口，
+不会在多个模块重复手写 `tool_y - slide`。
+
+### Keep-Current-Slide Policy
+
+当前 Slide 下只要存在通过工作区、完整五轴闭区间限位、平面 IK 和 FK 残差的合法解，就立即使用
+`KEEP_CURRENT_SLIDE`。此时不得为了更靠近偏置区中心而重新移动 Slide，也不生成中心或 fallback
+候选。
+
+### Slide Candidate Selection Priority
+
+固定优先级为 `KEEP_CURRENT_SLIDE > OFFSET_CENTER > OFFSET_FALLBACK`。当前 Slide 失败后同时验证
+正负中心候选，并只在两个中心均失败后，以每侧最多 64 个、默认 10 mm 步长的有限候选搜索矩形
+内部。同一优先级内按 Slide、Shoulder、Elbow、Rotation 变化量、距该侧中心距离、FK 残差和稳定
+枚举顺序作字典序选择。
 
 ## 7. Shoulder/Elbow branches
 
@@ -82,20 +105,11 @@ FK 与 IK 共用 `rotation_output_yaw_deg()` / `rotation_deg_for_output_yaw()`�
 `rotation_output_T_tool` 的刚性变换统一处理。反解后枚举相差 360° 的周期等价角，只保留
 Rotation 软限位内的值，并优先选择最接近当前 Rotation 的等价值。
 
-## 9. Candidate scoring
+## 9. Workspace-Side Classification
 
-候选首先必须满足五轴软限位和 FK 残差阈值。合法候选先按 Slide 与当前位置的归一化变化量
-排序，再使用集中配置的加权评分：
-
-```text
-w_slide * normalized_slide_change
-+ w_shoulder * normalized_shoulder_change
-+ w_elbow * normalized_elbow_change
-+ w_rotation * normalized_rotation_change
-+ w_margin * soft_limit_margin_penalty
-```
-
-相同排序值使用 `slide, shoulder, elbow, rotation` 数值作为稳定 tie-break，保证结果可重复。
+当前侧别由当前实际五轴状态经 FK 得到 `slide_zero_T_tool(current_q)`，再由统一 helper 计算
+`local_x/local_y`；不得由历史标签、Slide 正负或 Base 全局 Y 推断。目标侧别来自最终选中的
+`FiveAxisSolution.workspace_side`。
 
 ## 10. FK residual verification
 
@@ -121,7 +135,7 @@ velocity, acceleration   -> None（默认）
 `MultiAxisTarget` 不表达笛卡尔 frame；frame 只属于 IK 输入 `base_T_tool_target`。输出中没有
 `frame_id`、Base offset、startup position、rad、原始编码器计数或生产速度猜测。
 
-## 12. Provisional calibration gate
+## 12. Base calibration gate
 
 本机 `frame_transforms.local.json` 中 `validated=false` 时，构造求解器默认报错：
 
@@ -129,19 +143,58 @@ velocity, acceleration   -> None（默认）
 The Base–Slide-zero transform is provisional and has not passed an independent pose validation.
 ```
 
-只读调试可显式传入 `allow_unvalidated_base_transform=True`，CLI 对应
-`--allow-unvalidated-frame-transform`。该许可只作用于本次预览，不写配置，不把验证状态改成 true。
+纯数学 API 为既有离线工具保留显式 override，但 `manual_motion.py plan-base` 不提供 override：标定
+缺失或 `validated` 不为 true 时直接拒绝 Base-frame 规划。预览不会写配置或改变验证状态。
 
-## 13. Current limitations
+## 13. Safe Side-Switch Transition
 
-- Base–Slide-zero 当前单姿态标定仍是 provisional；
-- Slide 使用有限离散搜索，可能漏掉步长之间很窄的可行区间；
+同一合法侧输出一个 `DIRECT`。`POSITIVE <-> NEGATIVE`，以及 `OUTSIDE` 当前状态需要改变任意
+平面轴时，固定输出 `LIFT`、`TRANSIT`、`LOWER`。跨正负偏置区必须先抬升，再横向过渡，最后
+下降。
+
+### LIFT, TRANSIT, and LOWER Invariants
+
+- `LIFT` 保持当前 Base X/Y/yaw 与 Slide/Shoulder/Elbow/Rotation，只由正式 IK 换算 Z；
+- `TRANSIT` 使用最终解的四个平面轴，并在 clearance Base Z 完成侧别切换；
+- `LOWER` 使用最终完整解，与 `TRANSIT` 的四个平面轴完全相同，因此只改变 Z。
+
+每阶段都形成完整 `MultiAxisTarget`，检查五轴限位、工作区语义和 FK 平移/yaw 残差；任一阶段
+失败即拒绝整个计划，不返回部分计划。
+
+### Clearance Height Calculation
+
+```text
+clearance_base_z = max(current_tcp_base_z, target_tcp_base_z, 150 mm)
+```
+
+150 mm 是培养槽边框对应的 Base 绝对安全高度，不是相对当前位置再抬升 150 mm。先在 Base frame
+构造该高度，再通过正式几何 helper 求 Z 逻辑位置，不使用固定轴增量。若当前或目标已经高于
+150 mm，则保持两者中较高高度；当前 TCP 已在最高点且高于 150 mm 时，`LIFT` 是零位移验证，
+随后可直接 `TRANSIT`。要求的安全高度超出 Z 逻辑范围时拒绝整个计划。
+
+150 mm 不是培养槽正常作业 Z 上限。应用层只检查最终任务目标；`LIFT`/`TRANSIT` 可高于培养槽
+Z 上限，但仍必须通过本节已有的轴软限位、阶段约束与完整 FK 验证。
+
+### OUTSIDE Conservative Policy
+
+当前 `OUTSIDE` 时，只有能以当前 Slide/Shoulder/Elbow/Rotation 完整 FK 证明 Base X/Y/yaw 不变、
+仅 Z 改变，才允许单阶段 `DIRECT`；其余到合法侧的平面运动一律使用三阶段。
+
+### Planning-Only CLI
+
+`plan-base` 只打开 `READ_ONLY` runtime，读取状态和标定、规划并逐阶段调用
+`validate_positions()`。它没有 `--execute`，不调用 submit、wait、home、stop 或 torque enable。
+
+## 14. Current limitations
+
+- Base–Slide-zero 是否可用于 CLI 完全取决于本机文件的 `validated=true` 门禁；
+- fallback 使用有限 10 mm 离散搜索，可能漏掉步长之间很窄的可行区间；
 - 只支持当前五轴模型允许的 `x/y/z/yaw`；
 - 不检查自碰撞、环境碰撞、线缆、奇异邻域速度、路径连续性或动态可达性；
 - 候选优选不是数学唯一解，也不是碰撞或路径意义下的全局最优解；
 - 离线 FK/IK 和软限位通过不等于真实机构已安全验证。
 
-## 14. Future real-motion integration
+## 15. Future real-motion integration
 
 真实执行应作为独立任务增加，不能把 `plan-base` 直接改成隐式运动入口。建议顺序是：先完成第二
 独立姿态的 Base–Slide-zero 验证并把验证状态通过正式流程更新；再增加专门的低速执行命令，复用

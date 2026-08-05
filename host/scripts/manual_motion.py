@@ -26,6 +26,12 @@ from geometry.rigid_transform import RigidTransform  # noqa: E402
 from kinematics.base_frame_solver import (  # noqa: E402
     BaseFrameFiveAxisSolver,
     FiveAxisNoSolutionError,
+    UnvalidatedBaseTransformError,
+)
+from kinematics.base_move_transition_planner import (  # noqa: E402
+    BaseMovePlan,
+    BaseMovePlanningError,
+    BaseMoveTransitionPlanner,
 )
 from kinematics.five_axis import (  # noqa: E402
     FiveAxisKinematics,
@@ -57,7 +63,7 @@ from scripts._motion_cli_common import (  # noqa: E402
 _AXIS_ORDER = tuple(AxisName)
 _LINEAR_AXES = (AxisName.SLIDE, AxisName.Z)
 _STOPPABLE_AXES = (AxisName.SLIDE, AxisName.Z, AxisName.SHOULDER, AxisName.ELBOW)
-_HOME_TIMEOUTS_S = {AxisName.SLIDE: 15.0, AxisName.Z: 60.0}
+_HOME_TIMEOUTS_S = {AxisName.SLIDE: 15.0, AxisName.Z: 120.0}
 _DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "frame_transforms.local.json"
 
 
@@ -105,94 +111,72 @@ def run_plan_base(
     runtime: object,
     base_T_tool_target: RigidTransform,
     *,
-    fixed_slide_mm: float | None,
-    allow_unvalidated_frame_transform: bool,
     frame_config: Path = _DEFAULT_FRAME_CONFIG,
     frame_document: FrameTransformsDocument | None = None,
     five_axis_kinematics: FiveAxisKinematics | None = None,
     emit: Callable[[str], None] = print,
 ) -> bool:
-    """只读读取五轴状态并把 Base TCP 目标预览为 ``MultiAxisTarget``。"""
+    """只读读取当前状态并预览 Base TCP 的安全单阶段或三阶段计划。"""
 
     if not isinstance(base_T_tool_target, RigidTransform):
         raise TypeError("base_T_tool_target must be RigidTransform")
-    if not isinstance(allow_unvalidated_frame_transform, bool):
-        raise TypeError("allow_unvalidated_frame_transform must be bool")
-    emit("Base target:")
+    emit("Requested Base TCP target:")
     _emit_transform(base_T_tool_target, emit=emit)
+
+    document = (
+        frame_document
+        if frame_document is not None
+        else load_frame_transforms_document(frame_config)
+    )
+    model = (
+        five_axis_kinematics
+        if five_axis_kinematics is not None
+        else load_local_five_axis_kinematics()
+    )
+    if not isinstance(document, FrameTransformsDocument):
+        raise TypeError("frame_document must be FrameTransformsDocument")
+    if not isinstance(model, FiveAxisKinematics):
+        raise TypeError("plan-base requires the built-in FiveAxisKinematics model")
+    base_transform_validated = document.metadata.get("validated") is True
+    emit("Base calibration loaded:")
+    emit(
+        "  source: "
+        + ("<in-memory test document>" if frame_document is not None else str(frame_config))
+    )
+    emit(f"  validation status: {base_transform_validated}")
+    emit("  base_T_slide_zero:")
+    _emit_transform(document.transforms.base_T_slide_zero, emit=emit)
+    if not base_transform_validated:
+        raise UnvalidatedBaseTransformError(
+            "The Base–Slide-zero transform is provisional and has not passed "
+            "an independent pose validation."
+        )
 
     with runtime:
         initialize_read_only_rotary_positions(runtime, _AXIS_ORDER)
         descriptors = runtime.controller.list_axes()
         states = runtime.controller.get_axis_states(_AXIS_ORDER)
         current_state = _robot_axis_state(states)
-        document = (
-            frame_document
-            if frame_document is not None
-            else load_frame_transforms_document(frame_config)
-        )
-        model = (
-            five_axis_kinematics
-            if five_axis_kinematics is not None
-            else load_local_five_axis_kinematics()
-        )
-        if not isinstance(document, FrameTransformsDocument):
-            raise TypeError("frame_document must be FrameTransformsDocument")
-        if not isinstance(model, FiveAxisKinematics):
-            raise TypeError("plan-base requires the built-in FiveAxisKinematics model")
-        base_transform_validated = document.metadata.get("validated") is True
-        emit("Loaded base_T_slide_zero:")
-        _emit_transform(document.transforms.base_T_slide_zero, emit=emit)
-        emit(f"  validated: {base_transform_validated}")
         descriptor_by_axis = {descriptor.name: descriptor for descriptor in descriptors}
         solver = BaseFrameFiveAxisSolver(
             five_axis_kinematics=model,
             base_T_slide_zero=document.transforms.base_T_slide_zero,
             axis_descriptors=descriptor_by_axis,
             base_transform_validated=base_transform_validated,
-            allow_unvalidated_base_transform=allow_unvalidated_frame_transform,
         )
-        slide_zero_target = solver.transform_base_target_to_slide_zero(
-            base_T_tool_target
-        )
-        emit("Converted Slide-zero target:")
-        _emit_transform(slide_zero_target, emit=emit)
+        planner = BaseMoveTransitionPlanner(solver)
         emit("Current axis state:")
         for state in states:
             emit(f"  {format_axis_state(state)}")
-        candidates = solver.solve_base_target_candidates(
-            base_T_tool_target=base_T_tool_target,
+        plan = planner.plan(
             current_state=current_state,
-            fixed_slide_mm=fixed_slide_mm,
+            base_T_tool_target=base_T_tool_target,
         )
-        selected = candidates[0]
-        target = solver.solution_to_multi_axis_target(selected)
-        runtime.controller.validate_positions(target)
+        for stage in plan.stages:
+            runtime.controller.validate_positions(stage.multi_axis_target)
 
-    emit(f"Candidate count: {len(candidates)}")
-    emit("Selected solution:")
-    emit(f"  slide: {selected.slide_mm:.9f} mm")
-    emit(f"  z: {selected.z_mm:.9f} mm")
-    emit(f"  shoulder: {selected.shoulder_deg:.9f} deg")
-    emit(f"  elbow: {selected.elbow_deg:.9f} deg")
-    emit(f"  rotation: {selected.rotation_deg:.9f} deg")
-    emit(f"Branch: {selected.branch}")
-    emit(f"Slide selection: {selected.slide_selection_reason}")
-    emit(f"Score: {selected.score:.9f}")
-    emit(f"Position residual: {selected.position_residual_mm:.9g} mm")
-    emit(f"Yaw residual: {selected.yaw_residual_deg:.9g} deg")
-    emit("Limit margins:")
-    for axis, margin in selected.limit_margins:
-        unit = "mm" if axis in _LINEAR_AXES else "deg"
-        emit(f"  {axis.value}: {margin:.9f} {unit}")
-    emit("Generated MultiAxisTarget (actuator-space logical targets; no Cartesian frame):")
-    for item in target.targets:
-        unit = "mm" if item.axis in _LINEAR_AXES else "deg"
-        emit(
-            f"  axis={item.axis.value} position={item.position:.9f} {unit} "
-            f"velocity={item.velocity} acceleration={item.acceleration}"
-        )
-    emit("READ_ONLY plan-base preview complete; no command was submitted")
+    _emit_base_move_plan(plan, emit=emit)
+    emit("Planning only. No real motion command was issued.")
     return True
 
 
@@ -447,11 +431,6 @@ def build_parser() -> argparse.ArgumentParser:
     plan_base.add_argument("--tcp-y-mm", type=finite_float, required=True)
     plan_base.add_argument("--tcp-z-mm", type=finite_float, required=True)
     plan_base.add_argument("--tcp-yaw-deg", type=finite_float, required=True)
-    plan_base.add_argument("--slide-mm", type=finite_float)
-    plan_base.add_argument(
-        "--allow-unvalidated-frame-transform",
-        action="store_true",
-    )
 
     move = commands.add_parser("move", help="preview or move one absolute axis target")
     move.add_argument("--axis", choices=tuple(axis.value for axis in AxisName), required=True)
@@ -568,10 +547,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             succeeded = run_plan_base(
                 runtime,
                 base_target,
-                fixed_slide_mm=args.slide_mm,
-                allow_unvalidated_frame_transform=(
-                    args.allow_unvalidated_frame_transform
-                ),
             )
         elif args.command == "state":
             succeeded = run_state(runtime, axes[0])
@@ -603,12 +578,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             succeeded = run_stop(runtime, axes[0], execute=execute)
         return 0 if succeeded else 1
+    except UnvalidatedBaseTransformError as exc:
+        print(f"plan-base calibration unavailable: {exc}", file=sys.stderr)
+        return 2
     except FiveAxisNoSolutionError as exc:
         print(
             f"plan-base no solution: {exc}; stage={exc.stage}; "
             f"counts={exc.stage_counts}",
             file=sys.stderr,
         )
+        return 1
+    except BaseMovePlanningError as exc:
+        print(f"plan-base transition planning failed: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         print("manual motion interrupted; CLI-owned stops were attempted at most once", file=sys.stderr)
@@ -640,7 +621,10 @@ def _robot_axis_state(states: tuple[object, ...]) -> RobotAxisState:
             raise ValueError(f"axis {axis.value} current position is not valid")
         if axis in _LINEAR_AXES and state.homed is not True:
             raise ValueError(f"axis {axis.value} is not reference-homed")
-        positions[axis] = float(state.current_position)
+        position = float(state.current_position)
+        if not math.isfinite(position):
+            raise ValueError(f"axis {axis.value} current position is not finite")
+        positions[axis] = position
     return RobotAxisState(
         positions[AxisName.SLIDE],
         positions[AxisName.Z],
@@ -659,6 +643,64 @@ def _emit_transform(
     rpy = transform.rpy_deg
     emit(f"  xyz_mm: [{xyz[0]:.9f}, {xyz[1]:.9f}, {xyz[2]:.9f}]")
     emit(f"  rpy_deg: [{rpy[0]:.9f}, {rpy[1]:.9f}, {rpy[2]:.9f}]")
+
+
+def _emit_base_move_plan(
+    plan: BaseMovePlan,
+    *,
+    emit: Callable[[str], None],
+) -> None:
+    emit("Current Base TCP pose:")
+    _emit_transform(plan.current_base_T_tool, emit=emit)
+    emit(
+        "Current local coordinates: "
+        f"x={plan.current_local_x_mm:.9f} mm "
+        f"y={plan.current_local_y_mm:.9f} mm"
+    )
+    emit(f"Current workspace side: {plan.current_workspace_side.name}")
+    final = plan.stages[-1].solution
+    emit(
+        "Final target local coordinates: "
+        f"x={final.local_x_mm:.9f} mm y={final.local_y_mm:.9f} mm"
+    )
+    emit(f"Target workspace side: {plan.target_workspace_side.name}")
+    emit(f"Slide selection reason: {final.slide_selection_reason.name}")
+    emit(f"Side switch required: {plan.requires_side_switch_clearance}")
+    emit(f"Clearance lift: {plan.clearance_lift_mm:.9f} mm")
+    clearance = (
+        "none"
+        if plan.clearance_base_z_mm is None
+        else f"{plan.clearance_base_z_mm:.9f} mm"
+    )
+    emit(f"Clearance Base Z: {clearance}")
+    emit(f"Stage count: {len(plan.stages)}")
+    for index, stage in enumerate(plan.stages, start=1):
+        solution = stage.solution
+        emit(f"Stage {index}: {stage.kind.name}")
+        emit("  Base target:")
+        xyz = stage.base_T_tool_target.translation_mm
+        emit(
+            f"    x={xyz[0]:.9f} mm y={xyz[1]:.9f} mm "
+            f"z={xyz[2]:.9f} mm yaw={stage.base_T_tool_target.yaw_deg:.9f} deg"
+        )
+        emit("  Axis target:")
+        emit(
+            f"    slide={solution.slide_mm:.9f} mm z={solution.z_mm:.9f} mm "
+            f"shoulder={solution.shoulder_deg:.9f} deg "
+            f"elbow={solution.elbow_deg:.9f} deg "
+            f"rotation={solution.rotation_deg:.9f} deg"
+        )
+        emit("  Workspace:")
+        emit(
+            f"    local_x={solution.local_x_mm:.9f} mm "
+            f"local_y={solution.local_y_mm:.9f} mm "
+            f"side={solution.workspace_side.name}"
+        )
+        emit("  Validation:")
+        emit(
+            f"    translation_residual={solution.position_residual_mm:.9g} mm "
+            f"yaw_residual={solution.yaw_residual_deg:.9g} deg"
+        )
 
 
 if __name__ == "__main__":
