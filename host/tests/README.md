@@ -10,8 +10,8 @@
 - `suites/calibration/`：标定算法、状态模型和脚本适配。
 - `suites/protocol/`：CAN、舵机及 STM32 协议和驱动。
 - `suites/motion/`：轴抽象、统一控制器和吸盘控制。
-- `suites/application/`：应用控制器和培养槽工作区。
-- `suites/vision/`：视觉目标解析。
+- `suites/application/`：应用控制器、GraspProfile、PickPlanner、Workflow 和 Robot Service 状态/故障语义。
+- `suites/vision/`：视觉协议、Fake/Socket gateway、拍照快照和目标解析。
 - `suites/cli/`：维护与调试命令行入口。
 - `suites/hardware_adapter/`：设备发现与硬件适配。
 - `suites/integration/`：离线启动和演示编排。
@@ -37,4 +37,4 @@
   -q
 ```
 
-本次目录整理按明确指令未重新运行任何测试；最近一次整理前已知结果为 524 项 Host 测试通过。
+2026-08-06 Robot Service 集成后结果为 553 项 Host 离线测试通过；automatic discovery 不包含真实硬件测试。

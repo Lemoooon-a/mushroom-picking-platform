@@ -2,17 +2,15 @@
 
 更新时间：2026-08-06（Asia/Shanghai）
 
-证据范围：当前源码、配置、提交历史、STM32 子模块文档，以及本轮目录迁移后的 Host 编译、纯导入、local loader、524 项离线测试和 CLI `--help` 结果；本轮未执行网络同步、固件构建或真实硬件命令。
+证据范围：当前源码、配置、提交历史、STM32 子模块文档、Host 编译、553 项离线测试，以及 Robot Service dry-run CLI 的 startup/status/observe/plan-observation/quit 冒烟结果；本轮未执行网络同步、固件构建或真实硬件命令。
 
 ## 1. 技术结论
 
-项目已从“跨层功能散落在脏工作树”推进到“依赖顺序明确、可在本地 Git 中复现的 Host 子系统集成”阶段。STM32 Slide/Z、物理开关归零和 machine protocol 仍是硬件证据最成熟的部分；Host 已形成五轴点到点控制、关节 holding 生命周期、吸盘语义、Base frame（基座坐标系）偏移规划、安全过渡、培养槽门限、应用控制器与视觉能力门禁。
+项目处于 Host 子系统离线集成阶段。STM32 Slide/Z、物理开关归零和 machine protocol 仍是硬件证据最成熟的部分；Host 现在把五轴点到点控制、关节 holding、吸盘命令、Base 规划、视觉协议、拍照快照、抓取计划与应用状态统一收口到 `MushroomRobotService`。
 
-S1、R1–R6、C1/C2 已固化功能基线；O1/O2 将配置来源和离线测试按职责分层，O3 同步文档，O4 修复测试包遮蔽生产包和迁移后相对路径问题。本轮迁移后 524 项 Host 离线测试全部通过，数量未低于迁移前基线；核心模块、local 配置正式 loader 与三个零硬件 CLI 帮助检查也通过。该结果恢复了可复现的离线基线，但不能据此证明真实五轴、培养槽作业、吸附、视觉抓取或完整采摘流程已完成硬件验证。
+V1–V3 分别实现版本化 Vision Gateway、原子 PickPlan/Workflow 和顶层 Robot Service；V4 同步本报告与接口文档。553 项 Host 离线测试全部通过，dry-run CLI 不再构造硬件 runtime，状态中明确记录 `submitted_hardware_commands=0`。这证明软件框架和合成路径可复现，不证明真实五轴运动、培养槽作业、吸附或自动采摘已完成硬件验证。
 
-当前最大缺口是完整机械系统验证：新增的 Robot motion envelope（机器人运动包络）只集中
-startup 与中间安全阶段策略，不是完整碰撞/物理包络；仍缺五轴阶段运动日志、真空反馈、已验证
-`tool_T_camera` 手眼外参、视觉抓取与故障恢复证据。下一主要里程碑应是受控的子系统硬件回归。
+当前最大缺口是真实数据与机械系统验证：仍缺真实视觉 producer、已验证 `tool_T_camera`、经确认的 GraspProfile、真空反馈和完整碰撞模型。下一主要里程碑应先完成手眼/视觉/grasp 数据闭环，再进行受控小范围硬件验证。
 
 ## 2. 总体进度矩阵
 
@@ -29,8 +27,11 @@ startup 与中间安全阶段策略，不是完整碰撞/物理包络；仍缺�
 | 五轴运动学 | Implemented | FK/IK、偏移工作区、关节限位过滤、确定性候选选择 | 真实几何与多姿态机械复核 | Mathematical/offline tested |
 | 多执行器协调 | Implemented | 五轴点到点提交、到位稳定窗、timeout、peer stop、startup/return | 不是轨迹同步；无碰撞/扫掠模型 | Offline integrated |
 | 坐标与工作区策略 | Implemented | Base/Slide/Arm/Tool 链、Tray 最终 TCP、arm-local offset、startup/clearance envelope | 完整机械/碰撞包络尚未建模 | Mathematical/offline tested |
-| 视觉到机器人 | Implemented with gate | observation、Camera→Tool→Base 解析、未验证外参 fail-closed | `tool_T_camera` 当前缺失/未验证 | Offline tested；真实运动 blocked |
-| 完整采摘任务 | Not verified | 应用 API、startup、Base 目标、吸盘与返回接口已具备 | 感知、吸附确认、搬运/释放策略、恢复状态机 | 尚未 system validated |
+| 视觉通信与观察 | Implemented | JSON v1、Fake/Socket gateway、timeout/长度/frame/request 校验、CaptureSnapshot | 无真实视觉 producer、内参/深度证据 | Offline tested；真实 producer unavailable |
+| 视觉到机器人 | Implemented with gate | q_capture 绑定、Camera→Tool→Base、低质量/过期/手眼缺失 fail-closed | `tool_T_camera` 当前缺失/未验证 | Offline tested；真实运动 blocked |
+| 抓取规划与流程 | Implemented with gate | GraspProfile、pre/contact/retreat 原子计划、dry-run/execute 阶段、FAULT 规则 | 真实 profile、真空确认、放置/释放、自动恢复 | Offline tested；hardware-blocked |
+| 顶层运行服务 | Implemented | 单一 Service、状态、capabilities、CLI、JSONL 记录、三种模式 | execute 尚无本轮实机证据 | Offline tested |
+| 完整采摘任务 | Not verified | 软件侧观察/规划/抓取框架已集成 | 真实感知、物理吸附确认、搬运/释放和系统验证 | unavailable / not system validated |
 
 ## 3. 仓库与版本状态
 
@@ -38,32 +39,23 @@ startup 与中间安全阶段策略，不是完整碰撞/物理包络；仍缺�
 
 | 仓库 | 关系 | 分支 / upstream | 当前提交序列 | 最终工作树 | 可复现性 |
 | --- | --- | --- | --- | --- | --- |
-| `/Users/sd/Projects/mushroom-picking-platform` | 根仓库 | `main` / `origin/main` | R1–R6、C1/C2、O1 `e55b628`、O2 `c9274db`、O3 `b554ebc`、O4 本报告提交 | O4 后目标为 clean | 本地提交可追溯；尚未 push |
+| `/Users/sd/Projects/mushroom-picking-platform` | 根仓库 | `main` / `origin/main` | 起点 `f3f3802`；V1 `86bb07a`、V2 `c04b787`、V3 `d17a887`、V4 本报告提交 | V4 后目标为 clean | 本地提交可追溯；尚未 push |
 | `firmware/stm32_motion_controller` | `.gitmodules` + root gitlink 正式子模块 | `refactor/generic-stepper-driver` / 无 upstream | S1 `6ee9a62b210e798e6199a97889cde424afca6b8f` | clean | root 已锁定 S1；跨机器取用前需先发布子模块提交 |
 
 根仓库只有一个 worktree。本轮未 fetch，也未 push，因此不把本地 upstream 计数解释为远端实时状态。
 
-### 3.2 本轮提交
+### 3.2 Robot Service 集成提交
 
 | 标识 | Commit | Message | 结果 |
 | --- | --- | --- | --- |
-| S1 | `6ee9a62` | `fix(motion): finalize Z home direction and machine range` | 子模块 5 文件；工作树 clean |
-| R1 | `3a265b1` | `chore(host): sync verified axis and joint configuration` | gitlink、轴/关节配置与只读诊断同步 |
-| R2 | `e886344` | `feat(host): add joint holding lifecycle and suction control` | holding、吸盘与统一接口 |
-| R3 | `0da9633` | `feat(host): add offset workspace planning and safe transitions` | 偏移规划与阶段过渡 |
-| R4 | `62d5011` | `feat(host): add tray-gated application and vision capability boundary` | 托盘、应用、手眼与视觉门禁 |
-| R5 | `78ccb62` | `feat(host): integrate startup demo with application safety lifecycle` | demo/application 安全生命周期 |
-| R6 | `cd95ea9` | `docs: synchronize repository status and interface evidence` | 上一轮状态与交接证据同步 |
-| C1 | `bca3443` | `refactor(host): separate workspace and motion envelope config` | 配置模型、注入、CLI 输出与测试 |
-| C2 | `022879a` | `docs(host): clarify configuration and workspace roles` | 配置职责与工作区文档同步 |
-| O1 | `e55b628` | `refactor(host): organize project and local configuration layout` | project/examples/local 分层、loader 与 import 路径同步 |
-| O2 | `c9274db` | `refactor(host): group offline tests by domain` | 41 个测试文件按领域分组并集中 helper |
-| O3 | `b554ebc` | `docs: synchronize configuration and test layout` | README、进度、handoff、标定及接口路径同步 |
-| O4 | 本报告所在提交 | `fix(host): restore imports after layout reorganization` | discovery 包隔离、测试相对路径、README 与迁移后验证证据 |
+| V1 | `86bb07a` | `feat(host): add versioned vision gateway protocol` | 协议、Fake/Socket gateway、snapshot、配置、测试与协议文档 |
+| V2 | `c04b787` | `feat(host): add grasp planning and pick workflow` | GraspProfile、三阶段原子计划、Workflow、结果语义与测试 |
+| V3 | `d17a887` | `feat(host): add top-level robot service runtime` | Service 状态/API、chained plan、纯离线后端、CLI、JSONL 与测试 |
+| V4 | 本报告所在提交 | `docs: document vision and pick runtime boundaries` | runtime/pick/grasp 文档、README 与当前进度同步 |
 
 ### 3.3 未提交与本机配置
 
-本轮以 `b554ebc` clean 为起点；O4 终检目标是根仓库、根 index 和子模块工作树均 clean。以下本机文件已逐字节迁移，继续由 Git ignore 保护，未进入任何提交：
+本轮以 `f3f3802` clean 为起点；V4 终检目标是根仓库、根 index 和子模块工作树均 clean。以下本机文件继续由 Git ignore 保护，未进入任何提交：
 
 - `host/config/local/hardware.py`
 - `host/config/local/motion.py`
@@ -71,7 +63,7 @@ startup 与中间安全阶段策略，不是完整碰撞/物理包络；仍缺�
 - `host/config/local/frame_transforms.json`
 - `host/config/local/tray_workspace.json`
 
-五个 local 文件当前 SHA-256 与移动后记录及 `/tmp/mushroom-config-backup.WlyNLd` 逐项一致；正式 loader 读取成功，读取前后哈希不变，没有发生写回。没有使用 `git add -f`；本轮执行了受控 `git mv`，没有 stash、reset、rebase、force checkout、硬件 I/O 或 push。
+本轮未修改五个既有 local 文件，也未创建 `local/vision_runtime.json` 或 `local/grasp_profile.json`。没有使用 `git add -f`、stash、reset、rebase 或 force checkout；没有硬件 I/O 或 push。
 
 ## 4. 系统架构
 
@@ -84,16 +76,18 @@ MG4010E CAN joint layer ────────────┼─> UnifiedMotio
                                     │        ├─ holding / suction lifecycle
 Feetech Rotation axis ──────────────┘        ├─ BaseFrameFiveAxisSolver
                                              ├─ BaseMoveTransitionPlanner
-                                             └─ MushroomRobotController
-                                                      ├─ TrayWorkspace gate
-                                                      └─ VisionTargetResolver gate
+                                             └─ MushroomRobotController ← PickPlanner
+                                                      ↑                    ↑
+                                               VisionPickWorkflow ← VisionGateway
+                                                      ↑
+                                               MushroomRobotService
 ```
 
 - `firmware/stm32_motion_controller/`：独立版本化的 STM32 平台代码、协议与硬件参数。
 - `host/drivers/`、`host/robot/`：平台协议、transport 与执行器适配。
 - `host/motion/`：可复用的统一控制、到位、holding 与 suction 语义。
 - `host/kinematics/`、`host/geometry/`：算法与坐标变换，不直接访问硬件。
-- `host/application/`、`host/vision/`：应用边界、培养槽门禁与视觉能力 fail-closed。
+- `host/application/`、`host/vision/`：Service 状态/记录、培养槽门禁、抓取工作流、视觉协议/gateway 和 fail-closed 解析。
 - `host/scripts/`：人工入口；真实动作需显式授权/确认，import 不应产生硬件 I/O。
 - `host/config/` 根：typed models、loaders 和 schema。
 - `host/config/project/`：当前项目机器的 tracked 参数与规划策略。
@@ -157,7 +151,9 @@ machine protocol v2 提供带 command id 的接受响应与终态 event；Host c
 
 `MushroomRobotController` 提供 startup、Base pose plan/move、return、stop、holding、suction、status 与 shutdown。最终任务目标必须先通过 `TrayWorkspace`；startup、return、`LIFT`、`TRANSIT` 不被普通最终目标 Z 门限误拦截。
 
-视觉边界可以把已验证的 Camera observation 解析为 Base tool goal，但在 hand-eye missing/provisional 时 fail-closed。完整采摘尚缺感知质量、抓取偏置、真空确认、搬运/放置策略、失败恢复与真实培养槽验证，因此不能标记为 Integrated 或 System validated。
+`MushroomRobotService` 是唯一进程级应用入口。Vision Gateway 只通信/校验，snapshot 把 observation 绑定到拍摄姿态，resolver 只组合 Camera→Base，PickPlanner 生成 pre/contact/retreat，Workflow 只编排阶段；最终运动仍经 controller 的 Base 出口。
+
+当前 hand-eye missing，tracked grasp example 保持 `validated=false`/null，所以 Camera observation 可显示，但 `plan-observation`/`pick` 明确拒绝。无真空反馈时即使 retreat 完成也只能返回 `PHYSICAL_PICK_UNVERIFIED`。完整采摘仍不能标记为 System validated。
 
 ## 9. 验证结果
 
@@ -171,18 +167,17 @@ machine protocol v2 提供带 command id 的接受响应与终态 event；Host c
 
 | 阶段 | 命令 | 结果 |
 | --- | --- | --- |
-| 目录迁移前全量 | `.venv/bin/python -m unittest discover -s tests -q` | exit 0；Ran 524；OK；无真实硬件 I/O |
-| O4 修复前 discovery | `.venv/bin/python -m unittest discover -s tests -p "test_*.py" -v` | exit 1；Ran 130；1 failure、35 errors；同名测试包遮蔽生产包，无硬件 I/O |
-| O4 修复后 discovery | `.venv/bin/python -m unittest discover -s tests -p "test_*.py" -v` | exit 0；Ran 524；OK；test time 0.841s、process real 1.00s；无真实硬件 I/O |
-| 核心编译与导入 | 任务指定 `py_compile` 与核心纯导入命令 | exit 0；`core imports: OK`；无硬件 I/O |
-| local 配置加载 | hardware、motion、five-axis、frame transforms、tray workspace 正式 loader | exit 0；`local config loading: OK`；读取前后 SHA-256 不变 |
-| 零硬件 CLI | `run_motion_demo.py --help`、`manual_motion.py --help`、`robot_capabilities.py --help` | 三项 exit 0；未执行任何子命令或动作 |
-| 新目录指定模块格式 | `.venv/bin/python -m unittest tests.suites.kinematics.test_base_frame_solver tests.suites.motion.test_unified_controller -q` | 路径格式已同步；全量 discovery 已覆盖对应模块 |
+| 起始基线 | `.venv/bin/python -m unittest discover -s tests -q` | exit 0；Ran 524；OK；附件提供且本轮前复核基线一致 |
+| V1 定向 | vision protocol/gateway/snapshot + 既有 resolver/controller | exit 0；Ran 23；OK |
+| V2 定向 | GraspProfile/PickWorkflow + 既有 controller/resolver | exit 0；Ran 24；OK |
+| V3 定向 | Robot Service/CLI/workflow/controller/integration/bootstrap | exit 0；Ran 63；OK |
+| V4 前全量 | `.venv/bin/python -m unittest discover -s tests -q` | exit 0；Ran 553；OK；0.904s；无真实硬件 I/O |
+| dry-run CLI | `robot_service.py --mode dry-run --fake-position 0 0 100` 后 startup/status/observe/plan-observation/quit | exit 0；observation 成功；hand-eye 明确拒绝；`submitted_hardware_commands=0` |
 
 ### 9.3 Mathematical Tests
 
-五轴 FK/IK、Base solver、offset workspace、motion envelope 注入、transition planner、RigidTransform、
-frame chain、tray boundary 和 vision transform 均包含在本轮通过的 524 项测试中。输入为合成值或本地
+五轴 FK/IK、Base solver、offset workspace、motion envelope、transition planner、RigidTransform、
+frame chain、tray boundary、vision protocol/gateway/snapshot、grasp planner 与状态机均包含在通过的 553 项测试中。输入为合成值或本地
 example，不读取真实机器标定来证明精度。
 
 ### 9.4 Electrical Bench Tests
@@ -195,11 +190,12 @@ example，不读取真实机器标定来证明精度。
 
 ### 9.6 Integrated System Tests
 
-本轮 Host 离线集成测试随 524 项 discovery 通过；没有真实五轴、托盘、视觉、吸附或完整采摘系统测试。
+本轮 Host 离线集成测试随 553 项 discovery 通过；没有真实五轴、托盘、视觉、吸附或完整采摘系统测试。
 
 ## 10. 资源与性能
 
-- 本轮 Host 全量 524 项测试用时 0.841 秒，进程 real 1.00 秒。
+- 本轮 Host 全量 553 项测试用时 0.904 秒。
+- Vision socket 默认 timeout `2.0 s`、最大单消息 `65536 bytes`；不自动重连。
 - STM32 protocol 最大 frame 为 96 bytes；UART 日志流量仍可能影响 machine protocol 压力边界。
 - CAN transport 有 timeout/retry 与锁；真实双电机长期吞吐和错误恢复未验收。
 - 没有本轮可信的新 FLASH/RAM、ISR timing 或机械节拍数据，不能猜测。
@@ -207,12 +203,13 @@ example，不读取真实机器标定来证明精度。
 ## 11. 安全默认行为
 
 - STM32 上电不运动、不自动 home；Slide/Z enable 默认关闭；pump/release 默认 off。
-- Host runtime 构造允许设备发现但不 open；`runtime.open()` 不自动 home/move。
+- Robot Service read-only/dry-run 不构造硬件 runtime；execute 才构造既有 runtime，且 `runtime.open()` 本身不自动 home/move。
 - 默认 runtime mode 为 `READ_ONLY`；真实运动需要显式模式和 CLI 确认。
 - startup 执行顺序为 suction idle、rotary holding enable/verify、Z Home、Slide Home、startup pose；offline 模式不发送这些命令。
 - stop 不自动移除 holding；disable 前要求确认静止并提示支撑机构。
 - communication/fault/timeout 走 terminal error 与 best-effort stop；不能等同于硬件急停。
 - hand-eye missing/provisional 时视觉运动 fail-closed；Base 手工运动不因此被禁用。
+- grasp profile 缺失/未验证、no target、低 confidence、过期 observation 和规划拒绝均不运动；motion/suction failure best-effort stop 后进入 FAULT。
 - 本轮未发现或修改任何 boot-test/自动真实运动宏；未开启真实运动默认项。
 
 ## 12. 已知问题和风险
@@ -225,6 +222,7 @@ example，不读取真实机器标定来证明精度。
 4. Robot motion envelope 配置已集中 startup/clearance，但完整机械包络与碰撞/扫掠路径模型尚不存在。
 5. 仓库没有本轮 Host 组合能力的真实硬件日志，离线通过不能升级为 hardware-tested。
 6. S1 与根提交尚未 push；root gitlink 在其他机器可获取之前，必须先发布子模块提交。
+7. 真实 socket vision producer 与 validated GraspProfile 均不存在；当前只有 Fake gateway 的合成验证。
 
 ### Risks
 
@@ -241,6 +239,7 @@ example，不读取真实机器标定来证明精度。
 - Shoulder/Elbow/Rotation 最终负载速度、标定证据与安全失能策略。
 - vacuum sensor、阈值、吸附成功定义和 emergency release policy。
 - `tool_T_camera`、Camera frame/内参/深度、抓取 offset 与独立验证阈值。
+- 真实视觉 producer 的部署地址、时间基准、断线运维策略和最大延迟。
 - 是否扩展 Robot motion envelope 以表达经硬件验证的机械范围；碰撞区、阶段轨迹和跨执行器故障传播策略仍待设计。
 - 是否将单机 tracked 参数迁移为多机器 profile；该决定不得与当前功能提交混合。
 
@@ -265,18 +264,18 @@ example，不读取真实机器标定来证明精度。
 - 验收：多姿态 FK 残差、实际到位、clearance、timeout/peer stop 与恢复记录完整。
 - 安全：先建立机械包络和碰撞禁区，软件 stop 外另备硬件急停。
 
-### P3 — 视觉与完整采摘流程
+### P3 — 视觉与完整采摘验证
 
-- 目标：完成 hand-eye、目标质量门限、抓取 offset、真空确认、搬运/释放和恢复状态机。
-- 验收：独立验证集通过，Camera target 才从 unavailable 升级；完整流程需重复成功与失败恢复证据。
+- 目标：接入真实 producer，完成 hand-eye、GraspProfile、真空确认、搬运/释放和恢复策略。
+- 验收：真实 observation 与独立标定验证集通过后才允许 Camera motion；完整流程需重复成功、失败恢复和物理吸附证据。
 
-本轮已完成配置和测试目录迁移验证：discovery 恢复 524 项并全部通过，指定模块路径已更新，local 配置加载未写回；仍需在独立环境复核可移植性，且不得把离线结果解释为真实硬件验收。
+本轮已完成软件侧 Robot Service/vision/pick 框架并通过 553 项离线测试；不得把该结果解释为真实硬件验收。
 
 ## 15. 交接信息
 
-- 当前阶段：Host 子系统离线集成已固化；真实完整采摘未验证。
-- 当前任务：O1–O3 已提交，O4 修复并验证目录迁移；等待最终提交与人工 review，未 push。
-- 首读文件：本报告、`host/config/README.md`、`host/tests/README.md`、`host/config/project/robot_motion_envelope.py`、`host/scripts/run_motion_demo.py`、`host/kinematics/base_move_transition_planner.py`、`host/application/controller.py`。
+- 当前阶段：Host Robot Service、视觉 gateway/observation 和抓取规划框架已离线集成；真实完整采摘未验证。
+- 当前任务：V1–V3 已提交，V4 同步文档与最终验证；未 push。
+- 首读文件：本报告、`docs/interfaces/ROBOT_SERVICE_RUNTIME.md`、`VISION_GATEWAY_PROTOCOL.md`、`PICK_WORKFLOW.md`、`host/scripts/robot_service.py`、`host/application/robot_service.py`。
 - 首跑命令：
 
 ```bash
@@ -289,6 +288,6 @@ cd host
 ```
 
 - 已确认并提交的关键语义：Z Home `0 mm`、向下负坐标、Z `-190..0 mm`；Shoulder `[-65,65]°`；Elbow `[-160,160]°`；Rotation `[-150,150]°`。
-- 不得猜测：真实 link/外参、最终行程、碰撞包络、真空阈值、抓取 offset、急停与失能机械后果。
-- 非忽略未提交变更：O4 终检目标为无；5 份机器专属 local 配置继续 ignored。
-- 下一里程碑：先发布可获取的子模块/root 提交，再执行有硬件急停保障的 P1 回归。
+- 不得猜测：真实外参、视觉深度/方向、抓取 offset、碰撞包络、真空阈值、急停与失能机械后果。
+- 非忽略未提交变更：V4 终检目标为无；既有 5 份机器专属 local 配置继续 ignored，新增 2 份 local 配置尚未创建。
+- 下一里程碑：采集并独立验证 hand-eye、真实视觉 observation 和 GraspProfile，再设计有硬件急停保障的最小动作验证。

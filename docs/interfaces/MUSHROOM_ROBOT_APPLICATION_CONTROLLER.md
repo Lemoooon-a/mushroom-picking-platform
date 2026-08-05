@@ -1,4 +1,6 @@
-# MushroomRobotController 应用层接口
+# MushroomRobotController 应用层能力接口
+
+> 顶层进程入口现为 `MushroomRobotService`；本控制器只负责单次机器人能力、Tray 门禁与 Base 计划/执行，不拥有完整采摘流程。
 
 ## 1. 职责
 
@@ -34,6 +36,7 @@ robot.enable_joints()
 robot.disable_joints()
 robot.suction_grip()
 robot.suction_release()
+robot.suction_idle()
 robot.get_status()
 robot.shutdown()
 ```
@@ -45,6 +48,8 @@ Camera frame 坐标，也不支持任意 roll/pitch。
 `TrayWorkspace.require_xyz_allowed()`。越界时不会读取规划状态、调用 IK、调用 transition planner
 或提交硬件命令。`move_to_base_pose()` 必须先调用同一个 `plan_to_base_pose()`，再把得到的计划交给
 `execute_base_plan()`；执行入口不重新解算，也没有第二套门限。
+
+`plan_base_target(BaseToolTarget, enforce_tray_workspace=...)` 是 Robot Service 和 PickPlanner 的统一值对象入口。只有已知的 pre-grasp/retreat 中间高位阶段可设置 `False`；这不会绕过 Base solver、OffsetWorkspace、轴/关节限位或 RobotMotionEnvelope。
 
 `startup()` 与 `return_to_startup()` 直接使用专用启动流程，因此允许访问培养槽任务区外的
 `STARTUP_SAFE_POSE`。普通 `move_to_base_pose(startup_x, startup_y, startup_z)` 不享有该例外。
@@ -142,10 +147,10 @@ side-switch clearance 和轴/关节限位，并明确 envelope 不是碰撞模�
 
 ## 6. 明确不提供的接口
 
-当前不提供或不声称可执行：
+当前不提供或不声称已真实可执行：
 
 - `move_to_camera_target(...)`；
 - `move_to_detection(...)`；
-- `pick_detected_object(...)`；
+- 经硬件验证的 `pick_detected_object(...)`；软件侧等价编排位于 `VisionPickWorkflow`；
 - `move_to_mushroom(...)`；
-- 自动吸取、视觉闭环或运动中图像时间同步。
+- 物理吸附确认、自动放置/释放、视觉闭环或运动中图像时间同步。

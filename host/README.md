@@ -652,3 +652,22 @@ cd host
 2026-08-03 已在 ID 1 实机完成 ping 和 `0x38` raw-position 只读测试，连续读数均为
 `2047`；随后用户确认逻辑正方向正确，机械零点最终微调为 `zero_raw=2130`。当前
 `±45°` 和 500 raw 已固化为调试约束，最终机械限位和负载安全速度仍待验收。
+
+## 顶层 Robot Service
+
+统一入口为 `scripts/robot_service.py`：
+
+```bash
+cd host
+.venv/bin/python scripts/robot_service.py --mode read-only
+.venv/bin/python scripts/robot_service.py --mode dry-run --fake-position 0 0 100
+```
+
+`read-only` 和 `dry-run` 都不执行设备发现或构造硬件 runtime；dry-run 使用正式几何、Base solver、TrayWorkspace、OffsetWorkspace 和 RobotMotionEnvelope 进行纯算法规划。`execute` 沿用现有 MotionAuthorization，并要求：
+
+```bash
+.venv/bin/python scripts/robot_service.py --mode execute \
+  --confirm-motion --confirm-rotation-no-stop
+```
+
+不要在自动测试中运行 execute。当前本机 hand-eye missing，且没有 validated grasp profile；`observe` 可显示 Fake/Socket Camera observation，`plan-observation` 和 `pick` 会明确 fail-closed。详见 `docs/interfaces/ROBOT_SERVICE_RUNTIME.md`、`VISION_GATEWAY_PROTOCOL.md` 和 `PICK_WORKFLOW.md`。

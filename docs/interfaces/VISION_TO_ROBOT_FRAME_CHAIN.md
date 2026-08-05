@@ -12,8 +12,8 @@ Base frame 中的 TCP xyz+yaw 目标
 → 统一执行
 ```
 
-Camera frame 到 Base frame 的视觉运动不可用。原因不是缺少一个 API 名称，而是生产链中同时
-缺少经过验证的 `tool_T_camera`、视觉观察生产者、相机内参/深度证据和抓取偏移配置。实现不会用
+Camera frame 到 Base frame 的真实视觉运动不可用。软件现已实现版本化 gateway、拍照快照、观察数据契约、解析器和抓取规划，但生产链仍同时
+缺少经过验证的 `tool_T_camera`、真实视觉 producer、相机内参/深度证据和抓取偏移配置。实现不会用
 单位矩阵、全零外参、猜测值或“当前最新轴位置”补齐这些缺口。
 
 ## 2. 记号与实际坐标系
@@ -42,8 +42,8 @@ A_T_C = A_T_B @ B_T_C
 | `slide_zero_T_tool(q)` | 当前五轴状态下 TCP 在 Slide-zero 中的位姿 | `FiveAxisKinematics.forward_kinematics()` | 是 | 本机几何 `geometry_confirmed=true`；有离线 FK 测试 | FK、Base 求解器残差检查 |
 | `base_T_tool(q)` | 当前 TCP 在 Base 中的位姿 | 前两项组合 | 是 | 随前两项；有离线组合测试 | Base-root FK、规划当前状态 |
 | `tool_T_camera` | Camera 坐标转换到 Tool | 配置槽位、人工录入脚本 | 配置结构存在；本机值为 `null` | 缺失；不存在独立 `tool_camera_validated=true` 记录 | 旧 `RobotFrameChain` Camera helper；新 resolver 门禁 |
-| `camera_T_target` | 目标在 Camera 中的完整位姿 | 本轮 `VisionTargetObservation` 契约 | 只有契约 | 无生产者、无真实数据验证 | `VisionTargetResolver` 输入 |
-| `object_T_tool_grasp` | 目标到期望 TCP 抓取位姿的偏移 | 每次调用显式 `grasp_offset` | 无项目配置 | 未验证 | `resolve_tool_goal_in_base()` 参数 |
+| `camera_T_target` | 目标在 Camera 中的位置/可选方向 | Vision Gateway v1 + `VisionTargetObservation` | Fake/Socket 消费契约已实现 | 合成测试；无真实 producer | `VisionTargetResolver` 输入 |
+| `object_T_tool_grasp` | 目标到期望 TCP 抓取位姿的策略 | `GraspProfile` 三段 Base Z/yaw 策略 | schema/example 已实现 | 本机真实值缺失 | `PickPlanner` |
 | `base_T_target` | 目标在 Base 中的位姿 | 预期矩阵链组合 | 有受门禁的纯计算实现 | 只有合成测试；真实能力不可用 | `resolve_object_in_base()` |
 | `base_T_tool_goal` | 最终 TCP 抓取目标 | `base_T_target @ object_T_tool_grasp` | 有受门禁的纯计算实现 | 只有合成测试；真实能力不可用 | `resolve_tool_goal_in_base()` |
 
@@ -76,8 +76,7 @@ base_T_tool_goal
 
 ## 5. 当前视觉输出审计
 
-仓库中没有视觉检测模块或 detection 数据文件，因此当前真实输出类型是“未实现”，不能描述为
-2D pixel、3D point、position+yaw 或 6D pose 中的任何一种。仓库也没有找到：
+仓库中没有真实视觉检测模块或 detection 数据文件。协议 v1 接受 Camera frame 的 3D position 和可选 quaternion orientation；这只是消费契约，不能描述为真实 producer 已实现。仓库仍没有找到：
 
 - 相机内参；
 - 深度图或深度相机 SDK 接入；
@@ -86,8 +85,7 @@ base_T_tool_goal
 - 目标 yaw 估计策略；
 - 视觉置信度与时间戳生产逻辑。
 
-本轮定义的 `VisionTargetObservation` 是未来完整 6D 输出的消费契约，不代表当前视觉算法已能
-产生 orientation。若未来视觉只输出 3D 点，应另增与真实能力匹配的 point 契约，不得伪造旋转。
+`orientation=null` 是合法且明确的“未提供方向”。fixed/keep-current yaw 可以只使用位置；`FROM_OBSERVATION` 必须明确拒绝 null，不得伪造旋转。
 
 ## 6. 时间对应与静止门禁
 
@@ -96,8 +94,9 @@ base_T_tool_goal
 ```text
 全部轴已到位且机器人静止
 → 读取稳定五轴逻辑状态
-→ 采集图像
-→ detection 与该状态组成同一 observation
+→ 生成 request_id 并发送 capture_request
+→ 收到同 request_id 的 detection 后再次读取轴状态
+→ 仅在状态未变时把 detection 与 q_capture 组成 observation
 → 使用 observation.capture_axis_state 作为 q_capture
 ```
 

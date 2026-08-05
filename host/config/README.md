@@ -27,6 +27,12 @@
 | `project/feetech.py` | 项目正式参数 | 是 | 当前单台项目机器人 | 是 | Rotation 型号、协议、零点、方向与软限位 |
 | `project/workspace_planning.py` | 项目规划策略 | 是 | 当前机器人策略 | 是 | arm-local 正负偏置区、Slide 候选、fallback 与数值容差 |
 | `project/robot_motion_envelope.py` | 软件安全阶段策略 | 是 | 当前机器人策略 | 是 | startup/return pose 与跨区绝对 Base Z clearance |
+| `project/vision_runtime.py` | typed model + loader | 是 | 否 | 按 Robot Service 加载 | socket、frame、timeout、消息上限与质量门限；默认未验证 |
+| `examples/vision_runtime.json` | template | 是 | 否 | 否 | 真实 socket 配置占位模板 |
+| `local/vision_runtime.json` | local JSON | 否，ignored | 是 | 可选 | 真实视觉 producer 地址与验证状态 |
+| `project/grasp_strategy.py` | validated loader | 是 | 否 | 按 Robot Service 加载 | 只接受完整且 `validated=true` 的 GraspProfile |
+| `examples/grasp_profile.json` | template | 是 | 否 | 否 | 所有真实 offset 保持 `null` |
+| `local/grasp_profile.json` | local JSON | 否，ignored | 是 | 可选 | 经确认的真实抓取策略 |
 
 ## 配置来源规则
 
@@ -37,6 +43,7 @@
 - `project/robot_motion_envelope.py` 只描述 startup 与中间安全阶段策略，不是碰撞模型或安全认证。
 - `local/tray_workspace.json` 只描述 Base frame 中普通最终任务 TCP 的绝对允许范围，不是机械极限。
 - `host/calibration/` 只保存标定算法、状态模型和 capture/solve 逻辑；机器专属标定结果统一保存在 ignored `host/config/local/`。
+- `vision_runtime` 和 `grasp_profile` 的 tracked example 都默认 fail-closed；不得把 example 复制后的 placeholder 当作 validated 数据。
 
 ## 三类工作区与安全策略
 
