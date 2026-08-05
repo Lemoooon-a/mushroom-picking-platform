@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "validated": false,
+  "approach_offset_mm": null,
+  "contact_offset_mm": null,
+  "retreat_offset_mm": null,
+  "yaw_mode": null,
+  "fixed_yaw_deg": null,
+  "minimum_confidence": null,
+  "maximum_observation_age_s": null
+}

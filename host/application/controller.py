@@ -7,6 +7,7 @@ import math
 from typing import Protocol, runtime_checkable
 
 from application.tray_workspace import TrayWorkspace
+from application.motion_target import BaseToolTarget
 from calibration.hand_eye import HandEyeCalibrationStatus, hand_eye_status
 from geometry.rigid_transform import RigidTransform
 from vision.observation import VisionTargetObservation
@@ -130,6 +131,10 @@ class MushroomRobotController:
     def tray_workspace(self) -> TrayWorkspace:
         return self._tray_workspace
 
+    @property
+    def target_resolver(self) -> VisionTargetResolver | None:
+        return self._target_resolver
+
     def startup(self) -> object:
         return self._base_backend.startup()
 
@@ -140,15 +145,33 @@ class MushroomRobotController:
         z_mm: float,
         yaw_deg: float | None = None,
     ) -> object:
-        self._base_backend.require_base_motion_ready()
-        if yaw_deg is not None:
-            _finite("yaw_deg", yaw_deg)
-        self._tray_workspace.require_xyz_allowed(
-            x_mm=x_mm,
-            y_mm=y_mm,
-            z_mm=z_mm,
+        return self.plan_base_target(
+            BaseToolTarget(x_mm, y_mm, z_mm, yaw_deg),
+            enforce_tray_workspace=True,
         )
-        return self._base_backend.plan_to_base_pose(x_mm, y_mm, z_mm, yaw_deg)
+
+    def plan_base_target(
+        self,
+        target: BaseToolTarget,
+        *,
+        enforce_tray_workspace: bool = True,
+    ) -> object:
+        """复用唯一 Base 规划出口；仅抓取中间高位阶段可跳过 Tray 门限。"""
+
+        if not isinstance(target, BaseToolTarget):
+            raise TypeError("target must be a BaseToolTarget")
+        if not isinstance(enforce_tray_workspace, bool):
+            raise TypeError("enforce_tray_workspace must be a bool")
+        self._base_backend.require_base_motion_ready()
+        if enforce_tray_workspace:
+            self._tray_workspace.require_xyz_allowed(
+                x_mm=target.x_mm,
+                y_mm=target.y_mm,
+                z_mm=target.z_mm,
+            )
+        return self._base_backend.plan_to_base_pose(
+            target.x_mm, target.y_mm, target.z_mm, target.yaw_deg
+        )
 
     def move_to_base_pose(
         self,
@@ -159,6 +182,19 @@ class MushroomRobotController:
     ) -> object:
         plan = self.plan_to_base_pose(x_mm, y_mm, z_mm, yaw_deg)
         return self._base_backend.execute_base_plan(plan)
+
+    def execute_base_plan(self, plan: object) -> object:
+        return self._base_backend.execute_base_plan(plan)
+
+    def resolve_object_in_base(
+        self,
+        observation: VisionTargetObservation,
+    ) -> RigidTransform:
+        if self._target_resolver is None:
+            raise HandEyeCalibrationUnavailable(
+                "Hand-eye calibration is missing or not validated."
+            )
+        return self._target_resolver.resolve_object_in_base(observation)
 
     def plan_to_observation(
         self,
@@ -248,6 +284,7 @@ def _finite(name: str, value: object) -> float:
 
 __all__ = [
     "BaseFrameRobotBackend",
+    "BaseToolTarget",
     "MushroomRobotController",
     "MushroomRobotStatus",
     "RobotCapabilities",
