@@ -1,280 +1,280 @@
 # 蘑菇采摘平台当前进度
 
-> 更新时间：2026-08-04
-> 证据范围：当前源码/配置、Git 状态、Host 离线测试、已验收 STM32 tag 及仓库内
-> 历史构建/硬件记录。编译和离线测试不视为硬件验收。上层运动专项详见
-> [UPPER_MOTION_CONTROL_HANDOFF.md](UPPER_MOTION_CONTROL_HANDOFF.md)。
+更新时间：2026-08-06（Asia/Shanghai）
+
+证据范围：当前源码、配置、提交历史、STM32 子模块文档以及 Host 离线测试；本轮未执行网络同步、固件构建或真实硬件命令。
 
 ## 1. 技术结论
 
-项目处于“底层执行器组件初步可用、五轴统一点到点边界已离线实现、整机协调待开发”阶段。
+项目已从“跨层功能散落在脏工作树”推进到“依赖顺序明确、可在本地 Git 中复现的 Host 子系统集成”阶段。STM32 Slide/Z、物理开关归零和 machine protocol 仍是硬件证据最成熟的部分；Host 已形成五轴点到点控制、关节 holding 生命周期、吸盘语义、Base frame（基座坐标系）偏移规划、安全过渡、培养槽门限、应用控制器与视觉能力门禁。
 
-- 最成熟的是已锁定为 `stm32-motion-v0.1.0` 的 STM32 Slide/Z/吸盘和 machine protocol；
-- MG4010E 已具备 CAN、协议、单关节、肩肘配置和最小 Planar 2R 命令桥；
-- Feetech 已确认为 `SM-45BL-C001`、RS-485、自动方向 USB 转换板、115200 baud 和 ID 1；
-  已完成 ping/raw read、正方向和零点确认，并把当前调试参数固化为项目配置；
-- Host 已形成 `UnifiedMotionController`，并通过共享 façade 向前端和运动学提供窄接口；
-- Host 人工入口已收敛为一个 `scripts/manual_motion.py` 统一 CLI 和 STM32、MG4010、Feetech
-  三个 backend maintenance CLI；设备枚举与标定入口继续独立；
-- 最大缺口转为五轴统一层的真实硬件验证、vacuum 协调、坐标变换和采摘状态机；
-- 下一里程碑应是先固化当前未提交基线，再逐轴低速验证统一点到点生命周期，不是直接做整机采摘。
+本轮按 S1、R1–R6 固化了全部目标变更，Host 517 项离线测试通过。该结果证明接口、数学和 fake/mock 集成可复现，不证明真实五轴、培养槽作业、吸附、视觉抓取或完整采摘流程已经完成硬件验证。
+
+当前最大缺口是完整机械系统验证：缺少可复核的五轴阶段运动日志、独立 Robot motion envelope（机器人机械运动包络）、真空反馈、已验证 `tool_T_camera` 手眼外参、视觉抓取与故障恢复证据。下一主要里程碑应是受控的子系统硬件回归，而不是移动配置或测试目录。
 
 ## 2. 总体进度矩阵
 
 | 子系统 | 当前状态 | 已实现能力 | 主要缺口 | 验证级别 |
 | --- | --- | --- | --- | --- |
-| STM32 Slide | Implemented/Compiles/部分实机记录 | STEP/DIR、相对/绝对运动、停止/禁用、StallGuard homing | 最终全行程、异常场景复验 | 历史 bench/mechanical evidence；本轮未重测 |
-| STM32 Z | Implemented/Compiles/部分实机记录 | STEP/DIR、位置运动、停止/禁用、开关 homing | 最终行程、普通运动 endstop 策略 | 历史 bench/mechanical evidence；本轮未重测 |
-| STM32 machine protocol | Implemented/Compiles | v1 sequence、同步响应、异步事件、稳定错误码 | 高日志/长时间通信与正式系统联调 | 固件已验收；Host offline tested |
-| Vacuum | Implemented/Compiles | 吸附/释放状态机、互锁、查询、停止 | 无真空反馈、参数待机械验证 | 固件已验收；完整吸取未验证 |
-| TMC5160 diagnostics/homing | Implemented/Compiles | SPI 配置、DIAG、Slide/Z homing | 最终参数和全异常矩阵 | 部分 bench/mechanical evidence |
-| MG4010E CAN/protocol | Implemented/Offline tested | transport、`0x94/92/9A/9C/A4/81` | 长时间双电机实机稳定性 | Offline tested |
-| MG4010E single joint | Implemented/Offline tested | 绝对位置解释、软限位、命令、软件停止；统一层轮询到位 | 原生到位事件、统一层真实硬件复验 | Offline tested；部分历史实测说明 |
-| Shoulder/elbow calibration | Implemented/Not fully verified | 零点、方向、限位、速度配置 | 独立原始校准记录和复测 | Code/test evidence，校准证据不足 |
-| Planar 2R | Implemented/Offline tested | FK/IK、双解、不可达/奇异、按关节限位筛解 | 实际连杆长度、碰撞和连续性 | Mathematical offline tested |
-| Feetech rotation | Implemented/部分 Bench/Mechanical tested | C001 profile、项目安装配置、ping/raw read、位置/反馈、六字节位置命令、torque disable、dry-run | 最终限位/负载速度、完整反馈、重复性验证 | ID 1 ping/raw read；方向与零点受控确认 |
-| Multi-joint coordination | Implemented/Offline tested | 五轴逻辑 DTO、背靠背提交、到位/timeout、组结果、失败尽力停止、前端/运动学 façade | 真实硬件验证、vacuum 纳入、严格协调/轨迹（当前不支持） | 纯 fake/offline tested only |
-| Coordinate transforms | Planned | 架构文档 | camera/base/slide/tool frames 均未落地 | Not verified |
-| Harvesting task | Planned | 架构文档 | 视觉、接近、下探、吸附确认、搬运、释放、恢复 | Not verified |
+| STM32 Slide | Implemented | STEP/DIR、mm 换算、绝对/相对机器坐标、软限位、开关归零 | 最终全行程与异常矩阵仍需复验 | 文档记录 mechanically tested；本轮未复测 |
+| STM32 Z | Implemented | 最高点 Home、向下负坐标、`-190..0 mm`、位置有效性 | S1 重新烧录后的归零与边界回归 | 文档记录 mechanically tested；本轮未复测 |
+| STM32 machine protocol | Implemented | ASCII v2 request/response/event、序号、错误码、状态与停止 | 长时串口压力和日志干扰 | Bench evidence + Host contract tests |
+| TMC5160 | Implemented | SPI 配置、STEP/DIR、状态/故障轮询、物理开关 homing | DIAG/堵转和负载边界证据不完整 | 组件级硬件记录 |
+| Vacuum pump/release | Implemented | `SU/SR/SX`、Host `grip/release/idle` 适配 | 无压力/真空传感器与吸附成功判定 | Offline tested |
+| MG4010E CAN | Implemented | transport、协议 codec、驱动、读状态、位置与 holding 命令 | 长时双电机总线、掉线恢复 | Offline tested；历史实机证据有限 |
+| Shoulder/Elbow | Implemented | 零点、方向、36:1、软限位、enable/disable/state、到位检测 | 原始标定记录与负载回归 | Offline tested；参数声明来自实测 |
+| Rotation | Implemented | RS-485 协议、位置换算、`-150..150°`、torque 生命周期 | 无已验证独立 stop；负载速度未验收 | Offline tested；历史小角度证据 |
+| 五轴运动学 | Implemented | FK/IK、偏移工作区、关节限位过滤、确定性候选选择 | 真实几何与多姿态机械复核 | Mathematical/offline tested |
+| 多执行器协调 | Implemented | 五轴点到点提交、到位稳定窗、timeout、peer stop、startup/return | 不是轨迹同步；无碰撞/扫掠模型 | Offline integrated |
+| 坐标与托盘门限 | Implemented | Base/Slide/Arm/Tool 链、最终 TCP 培养槽门限 | 独立机械包络尚未建模 | Mathematical/offline tested |
+| 视觉到机器人 | Implemented with gate | observation、Camera→Tool→Base 解析、未验证外参 fail-closed | `tool_T_camera` 当前缺失/未验证 | Offline tested；真实运动 blocked |
+| 完整采摘任务 | Not verified | 应用 API、startup、Base 目标、吸盘与返回接口已具备 | 感知、吸附确认、搬运/释放策略、恢复状态机 | 尚未 system validated |
 
 ## 3. 仓库与版本状态
 
-### 根仓库
+### 3.1 仓库拓扑
 
-- path：项目根目录；branch：`main`；upstream：`origin/main`；
-- 本轮清理前基线 HEAD：`47bdef5`，`refactor(host): organize upper motion debug interfaces`；
-- 当前版本已将 STM32 Host 异步提交、统一 controller/protocol、frontend/kinematics façade、
-  bootstrap、fake examples、tests 和成员交接文档纳入同一可复现提交；最终 hash 以
-  `git log -1 --oneline` 为准；
-- `feetech_arm.zip` 保持原文件且被 Git 忽略；
-- 当前 399 tests 中 398 条通过；唯一失败是用户当前 STM32 子模块 protocol version `"2"`
-  与 Host 常量 `"1"` 的既有差异。离线结果不证明五轴真实硬件联调。
+| 仓库 | 关系 | 分支 / upstream | 当前提交序列 | 最终工作树 | 可复现性 |
+| --- | --- | --- | --- | --- | --- |
+| `/Users/sd/Projects/mushroom-picking-platform` | 根仓库 | `main` / `origin/main` | R1–R6；R5 为 `78ccb62`，R6 为本报告提交 | R6 后 clean | 本地可复现；尚未 push |
+| `firmware/stm32_motion_controller` | `.gitmodules` + root gitlink 正式子模块 | `refactor/generic-stepper-driver` / 无 upstream | S1 `6ee9a62b210e798e6199a97889cde424afca6b8f` | clean | root 已锁定 S1；跨机器取用前需先发布子模块提交 |
 
-### STM32 submodule
+根仓库只有一个 worktree。相对本地已有的 `origin/main` 引用，R6 后预计 `ahead 21, behind 0`；本轮未 fetch，因此不把该数字解释为远端实时状态。
 
-- path：`firmware/stm32_motion_controller`；branch：`main`；
-- 当前工作树 HEAD：`2efcdcd2a6c6cda42de2a4fdd782fa1ae451fb3f`；
-- root 通过 `.gitmodules` 和 gitlink 正式跟踪，但当前显示 `+`，说明用户已有 submodule
-  checkout 与 root 记录的 gitlink 不同；
-- 本轮未改变 submodule 文件、HEAD 或 root gitlink。
+### 3.2 本轮提交
 
-未提交文件的逐项归属见上层专项交接第 2 节和最终 `git status --short`。
+| 标识 | Commit | Message | 结果 |
+| --- | --- | --- | --- |
+| S1 | `6ee9a62` | `fix(motion): finalize Z home direction and machine range` | 子模块 5 文件；工作树 clean |
+| R1 | `3a265b1` | `chore(host): sync verified axis and joint configuration` | gitlink、轴/关节配置与只读诊断同步 |
+| R2 | `e886344` | `feat(host): add joint holding lifecycle and suction control` | holding、吸盘与统一接口 |
+| R3 | `0da9633` | `feat(host): add offset workspace planning and safe transitions` | 偏移规划与阶段过渡 |
+| R4 | `62d5011` | `feat(host): add tray-gated application and vision capability boundary` | 托盘、应用、手眼与视觉门禁 |
+| R5 | `78ccb62` | `feat(host): integrate startup demo with application safety lifecycle` | demo/application 安全生命周期 |
+| R6 | 本报告所在提交 | `docs: synchronize repository status and interface evidence` | 当前状态与交接证据同步 |
+
+### 3.3 未提交与本机配置
+
+R6 终检目标是根仓库、根 index 和子模块工作树均 clean。以下本机文件继续由 Git ignore 保护，未进入任何提交：
+
+- `host/config/hardware_local.py`
+- `host/config/motion_local.py`
+- `host/config/five_axis_geometry.local.json`
+- `host/config/frame_transforms.local.json`
+- `host/config/tray_workspace.local.json`
+
+配置与测试目录重组被明确延后；本轮没有 rename、stash、reset、clean、rebase、force checkout 或 push。
 
 ## 4. 系统架构
 
 ```text
-STM32 Slide/Z/Vacuum firmware
-        ↑ ASCII serial protocol v1
-STM32MotionClient ───────┐
-                        │
-MG4010 CanRotaryJoint ───┼─> UnifiedMotionController
-        ↑                │              ├─> FrontendMotionFacade
-Planar 2R IK/FK          │              └─> KinematicsMotionFacade
-                        │                         ↑
-FeetechRotationAxis ─────┘              future planner/task workflow
+STM32 Slide / Z / Vacuum firmware
+        ↑ ASCII serial machine protocol v2
+STM32MotionClient ───────────────────┐
+                                    │
+MG4010E CAN joint layer ────────────┼─> UnifiedMotionController
+                                    │        ├─ holding / suction lifecycle
+Feetech Rotation axis ──────────────┘        ├─ BaseFrameFiveAxisSolver
+                                             ├─ BaseMoveTransitionPlanner
+                                             └─ MushroomRobotController
+                                                      ├─ TrayWorkspace gate
+                                                      └─ VisionTargetResolver gate
 ```
 
-- reusable Host libraries：`host/drivers/`、`host/robot/`、`host/kinematics/`；
-- platform firmware：`firmware/stm32_motion_controller`；
-- algorithm-only：`host/kinematics/planar_2r.py`；
-- 最小 actuator bridge：`host/robot/planar_arm.py`；
-- 统一运动与客户端边界：`host/motion/unified_*`、`client_*`、`host/bootstrap.py`；
-- capability 声明：`host/motion/capabilities.py`；
-- 未完成集成层：vacuum 协调、坐标系、`host/tasks/` 采摘流程。
-
-当前人工控制入口：
-
-| 用途 | 入口 |
-| --- | --- |
-| 五轴统一状态/人工运动 | `host/scripts/manual_motion.py` |
-| STM32/Slide/Z/Vacuum 维护 | `host/scripts/maintenance/stm32_motion.py` |
-| Shoulder/Elbow/MG4010 维护 | `host/scripts/maintenance/mg4010_joint.py` |
-| Rotation/Feetech 维护 | `host/scripts/maintenance/feetech_rotation.py` |
-
-日常人工控制只使用统一 CLI；maintenance 只用于 backend protocol、原始状态、寄存器和 power
-语义。所有写命令默认预览并要求操作专属确认。
+- `firmware/stm32_motion_controller/`：独立版本化的 STM32 平台代码、协议与硬件参数。
+- `host/drivers/`、`host/robot/`：平台协议、transport 与执行器适配。
+- `host/motion/`：可复用的统一控制、到位、holding 与 suction 语义。
+- `host/kinematics/`、`host/geometry/`：算法与坐标变换，不直接访问硬件。
+- `host/application/`、`host/vision/`：应用边界、培养槽门禁与视觉能力 fail-closed。
+- `host/scripts/`：人工入口；真实动作需显式授权/确认，import 不应产生硬件 I/O。
+- `host/config/*.local.*`：机器专属配置；被忽略且不会随提交分发。
+- `host/tests/`：当前保留 flat layout 的离线测试；目录整理延后。
+- CubeMX/Core 等生成代码与手写 `App/` 代码在子模块中保持原有边界，本轮未重构。
 
 ## 5. STM32 固件进度
 
 ### 5.1 Slide and Z Motion
 
-两轴均有 µm 机器单位、相对/绝对运动、状态、停止、禁用和 enable。当前位置为 STEP
-脉冲估计，不是编码器闭环。当前源码软限位为 Z `0..60800 step`、Slide
-`0..35555 step`，注释明确仍是保守临时值。
+`App/Src/motion_platform_config.c` 固化 Slide `0..33333 step` 与 Z `-60800..0 step`；Host 对应为 Slide `0..799.988 mm`、Z `-190..0 mm`。Z Home 位于最高点，向下为负。S1 只固化已存在且此前声明实机测试过的方向、行程与文档，没有执行本轮实机复验。
 
 ### 5.2 TMC5160 Configuration and Diagnostics
 
-两轴 TMC5160、SPI、DIAG 和电流配置已进入验收 commit。现有证据支持“代码实现、可编译、
-有部分台架记录”，不支持所有驱动故障和全机械行程均完成验收。
+固件保留 TMC5160 SPI 配置、STEP/DIR 运动、状态/故障读取和周期轮询。当前证据支持组件实现与既有硬件调试，不足以证明所有负载、DIAG 与堵转边界。
 
 ### 5.3 Homing and Position Validity
 
-Z 使用低有效感应开关，Slide 使用 StallGuard sensorless homing。成功 homing 后建立
-machine zero 与 valid；上电、禁用和相关故障后位置可能失效。
+Slide/Z 使用物理开关归零；成功后才设置 `homed`/`position_valid`。上电不自动 home。stop、fault 或位置不可信路径不会被离线测试描述为“已安全到位”。Z 搜索方向、距离与负坐标协议向量已随 S1 同步。
 
 ### 5.4 UART Logging and Machine Protocol
 
-协议为 `@seq command` / `=seq response` / `!seq event`。支持 `QS MR MA HM ST DI EN SA
-CF QH SQ SU SR SX VR`。根 Host 已新增正式 `STM32MotionClient`，并以测试锁定固件 header
-和 README 中的 protocol contract。
+machine protocol v2 提供带 command id 的接受响应与终态 event；Host contract tests 读取子模块文档/向量锁定格式。最大 frame 为 96 bytes。日志与 machine protocol 共用 UART 时仍需做长时间压力验证。
 
 ### 5.5 Vacuum Pump and Release Valve
 
-固件提供非阻塞吸附/释放、pump/valve 互锁和安全关闭。无真空传感器，故 `DONE V 1` 不等于
-吸附成功。
+固件命令 `SU`、`SR`、`SX` 分别映射吸附、释放与 idle；Host 提供语义别名和 `SuctionController`。上电 pump/release 默认 off。本项目没有真空传感器，因此“命令完成”不等于“已抓住蘑菇”。
 
 ### 5.6 Fault, Limit, and Emergency Handling
 
-协议有 fault/error、单轴 stop/disable 和 `SA` 全轴禁用。软件停止不替代硬件急停；吸盘的
-紧急释放策略和跨后端统一停止尚未形成系统政策。
+固件维持独立软限位和 fault 保护；Host limit 不是底层保护的替代品。软件 stop 不是硬件急停；本轮没有修改急停硬件或宣称 abrupt stop 后位置必然有效。
 
 ## 6. MG4010E 关节控制进度
 
-- transport：`CanMotorBus` 支持 `gs_usb` 与 SocketCAN、共享锁、timeout/retry、旧帧清理、
-  ID 与 frame 验证；
-- protocol/driver：当前只开放 `0x94`、`0x92`、`0x9A`、`0x9C`、`0xA4`、`0x81`；
-- joint：`CanRotaryJoint` 使用输出轴 rad，处理 36:1、zero、direction、soft limits、最大速度；
-- position source：`0x94` 是跨重启单圈机械解释来源，`0x92` 只服务当前上电周期 A4 目标；
-- shoulder：ID 1、zero 100°、direction +1、-60°..+70°；
-- elbow：ID 2、zero 158°、direction -1、-152°..+152°；
-- 两者 max speed 50°/s；
-- 单关节底层仍缺自动 enable/clear fault/home 和原生 arrival event；统一控制器已用逻辑位置、
-  tolerance、stable window 与 deadline 提供离线验证的 arrival/timeout，但尚未实机复验。
+- CAN transport 具有 timeout、retry 与共享锁；protocol/driver 增加了 enable、disable 和协议定义状态读取。
+- `CanRotaryJoint` 使用 36:1、输出绝对角逻辑零点、方向和软限位；shoulder 为 `[-65,65]°`，elbow 为 `[-160,160]°`。
+- `logical-angle` 是只读诊断，按有符号最短角差输出 `[-180,180)`，不会初始化、使能或运动。
+- `UnifiedMotionController` 管理 holding 生命周期、rollback、到位稳定窗、timeout、stop 与故障传播。
+- 离线协议、driver、joint、maintenance CLI 和 controller 测试通过；本轮没有真实 CAN 命令。
+- 缺口仍包括原始标定记录、双电机负载/长时通信、异常断电恢复和整机 stop 策略。
 
 ## 7. 标定与运动学进度
 
-肩肘配置与离线测试一致，但 `docs/calibration/` 没有原始测量记录。Planar 2R 使用 x 向前、
-y 向左、z 向上的右手系，提供 forward kinematics（正运动学，FK）与 inverse kinematics
-（逆运动学，IK）、两支解、reachability 和 singularity 处理。当前工作树的
-`Planar2RArmController` 已按肩肘软限位筛解并连接真实关节命令 API，但只做背靠背下发，
-不等待到位。实际 `L1/L2` 尚未项目化，不得从示例值猜测。
+- Shoulder：输出绝对角 `100°` 为逻辑零点，方向 `+1`，范围 `[-65,65]°`。
+- Elbow：输出绝对角 `158°` 为逻辑零点，方向 `-1`，范围 `[-160,160]°`。
+- Rotation：`zero_raw=2130`、方向 `+1`，范围 `[-150,150]°`。
+- 正偏移 arm-local 工作区：X `[50,450] mm`、Y `[150,350] mm`；负偏移：X `[50,450] mm`、Y `[-350,-150] mm`。
+- 培养槽最终 TCP 目标使用 Base frame 绝对坐标：X `[20,480] mm`、Y `[20,700] mm`、Z `[0,180] mm`。
+- 五轴 solver 支持 FK/IK、可达性、关节限位过滤、偏移候选与确定性选择；transition planner 生成 `DIRECT` 或 `LIFT/TRANSIT/LOWER` 阶段。
+- 真实几何来自被忽略的 `five_axis_geometry.local.json`，Base 外参来自 `frame_transforms.local.json`。数学测试通过不等于机构无碰撞或实机目标正确。
+- 当前 `tool_T_camera` 缺失或未验证；Base 手工运动可用，Camera 目标在 FK/planner/submit 前被拒绝。
 
 ## 8. 系统协调与采摘任务
 
-六类后端已可在 fake 下装配并查询 capability。Slide/Z 走 STM32，Shoulder/Elbow 走
-MG4010E，Rotation 走 Feetech；五个运动轴已接入 `UnifiedMotionController`，具备统一逻辑
-DTO、软限位复核、异步提交、结果轮询、arrival/timeout 和组失败尽力停止。前端与运动学
-façade 共享同一 controller，bootstrap 构造不执行硬件 I/O。Vacuum 尚未纳入该五轴接口，
-真实硬件级 fault/stop 策略仍需验证；camera-to-robot transform、vacuum confirmation 及
-接近/下探/搬运/释放/恢复状态机仍缺失。
+统一控制器覆盖 Slide、Z、shoulder、elbow、rotation 和 suction/holding 生命周期。五轴位置提交是低速点到点协调，不是严格同步轨迹。group failure/timeout 会 best-effort stop 可停止的 peer；Rotation 没有已验证独立 stop，不能承诺所有轴同时停止。
+
+`MushroomRobotController` 提供 startup、Base pose plan/move、return、stop、holding、suction、status 与 shutdown。最终任务目标必须先通过 `TrayWorkspace`；startup、return、`LIFT`、`TRANSIT` 不被普通最终目标 Z 门限误拦截。
+
+视觉边界可以把已验证的 Camera observation 解析为 Base tool goal，但在 hand-eye missing/provisional 时 fail-closed。完整采摘尚缺感知质量、抓取偏置、真空确认、搬运/放置策略、失败恢复与真实培养槽验证，因此不能标记为 Integrated 或 System validated。
 
 ## 9. 验证结果
 
 ### 9.1 Firmware Builds
 
-历史记录：在 STM32 submodule 执行 Debug/Release CMake build 均成功；验收 commit/tag 已
-固定。本轮没有重跑固件 build，也没有修改固件。
+本轮未运行 firmware build，也未重新采集 FLASH/RAM。既有 build 只能证明当时可编译，不能证明 S1 参数已在当前硬件上复验。
 
 ### 9.2 Host Unit Tests
 
-工作目录 `host/`，命令：
+工作目录均为 `/Users/sd/Projects/mushroom-picking-platform/host`，解释器为 `.venv/bin/python`，全部使用 fake/mock，无真实硬件 I/O。
 
-```bash
-.venv/bin/python -m unittest discover -s tests -q
-```
-
-exit 1，`Ran 399 tests`；398 通过，唯一失败为既有 Host/STM32 protocol version 差异；
-硬件未参与，本轮没有新增失败。
+| 阶段 | 命令 | 结果 |
+| --- | --- | --- |
+| 提交前基线 | `.venv/bin/python -m unittest discover -s tests -q` | exit 0；Ran 517；OK |
+| R1 相关 | `.venv/bin/python -m unittest tests.test_joint tests.test_mg4010_maintenance_cli tests.test_stm32_motion tests.test_motion_runtime_config -q` | exit 0；Ran 80；OK |
+| R2 相关 | `.venv/bin/python -m unittest tests.test_mg4010_protocol tests.test_mg4010_driver tests.test_joint tests.test_feetech_rotation tests.test_stm32_motion tests.test_suction_control tests.test_unified_controller tests.test_motion_bootstrap tests.test_motion_client_interfaces tests.test_motion_client_facades -q` | exit 0；Ran 188；OK |
+| R3 相关 | `.venv/bin/python -m unittest tests.test_workspace_planning tests.test_five_axis_kinematics tests.test_base_frame_solver tests.test_base_move_transition_planner tests.test_manual_motion_cli -q` | exit 0；Ran 68；OK |
+| R4 相关 | `.venv/bin/python -m unittest tests.test_tray_workspace tests.test_application_controller tests.test_hand_eye_calibration tests.test_frame_calibration_scripts tests.test_vision_target_resolver tests.test_robot_capabilities_cli -q` | exit 0；Ran 45；OK |
+| R5 相关 | `.venv/bin/python -m unittest tests.test_run_motion_demo -q` | exit 0；Ran 16；OK |
+| 每个 R1–R5 提交后 | `.venv/bin/python -m unittest discover -s tests -q` | 每次 exit 0；Ran 517；OK |
+| R6 文档守卫 | `.venv/bin/python -m unittest tests.test_script_cleanup -q` | exit 0；Ran 6；OK |
+| R6 提交前全量 | `.venv/bin/python -m unittest discover -s tests -q` | exit 0；Ran 517；OK |
 
 ### 9.3 Mathematical Tests
 
-Planar 2R、joint conversion、Feetech raw/rad conversion 均包含在上述离线测试。
+五轴 FK/IK、Base solver、offset workspace、transition planner、RigidTransform、frame chain、tray boundary 和 vision transform 均包含在 517 项测试中。输入为合成值或本地 example，不读取真实机器标定来证明精度。
 
 ### 9.4 Electrical Bench Tests
 
-2026-08-03 使用 `/dev/cu.usbmodem5B790798091`、115200 baud 对
-`SM-45BL-C001` ID 1 执行只读台架测试：ping 成功，首次和随后三次 `0x38` 位置读取均为
-`position_raw=2047`（`179.912109375°`），程序退出后 `lsof` 未发现端口占用。未读取完整
-feedback，未执行 torque 或位置写入。STM32 和 MG4010 的历史说明不能替代完整台架证据。
+本轮未执行。历史证据支持 STM32 protocol/执行器组件和少量 Rotation/MG4010 读取，但没有新增 bench log。
 
 ### 9.5 Mechanical Tests
 
-Feetech 已完成受控小角度方向确认，用户确认 `direction_sign=+1`、逻辑正方向为 `+X`，
-机械零点最终微调为 `zero_raw=2130`。当前 `±45°` 和 500 raw 是调试配置，尚无最终机械
-限位、负载速度或重复回零验收记录。
+本轮未执行。S1 保存的是此前测试过的 Z Home 与负机器坐标行为，不是新一次硬件验收。
 
 ### 9.6 Integrated System Tests
 
-统一 controller、两组 façade、bootstrap 和 examples 只有 fake/offline test；无整机采摘测试。
+Host 离线集成通过；没有真实五轴、托盘、视觉、吸附或完整采摘系统测试。
 
 ## 10. 资源与性能
 
-- STM32 protocol frame 最大 96 bytes；
-- 固件协议与 debug log 共用 USART1，正式运行需控制日志量；
-- Feetech 与 STM32 Python transport 均有有限 timeout、无无限重试；
-- MG4010 transport 有配置化 timeout/retry，并以共享锁串行化同一 CAN 总线事务；
-- 本轮 Host 测试 399 项约 0.48 s；
-- 本轮没有重新采集 STM32 FLASH/RAM 或真实串口/CAN 吞吐量。
+- Host 全量 517 项测试单次约 0.70–0.85 秒，进程 wall 约 1 秒。
+- STM32 protocol 最大 frame 为 96 bytes；UART 日志流量仍可能影响 machine protocol 压力边界。
+- CAN transport 有 timeout/retry 与锁；真实双电机长期吞吐和错误恢复未验收。
+- 没有本轮可信的新 FLASH/RAM、ISR timing 或机械节拍数据，不能猜测。
 
 ## 11. 安全默认行为
 
-- STM32 上电不运动、不自动 home，轴默认 disabled；pump/valve 默认 off；
-- STM32 Host client 构造不打开串口，也不发送命令；
-- MG4010 driver/joint 不自动 enable、clear fault、home 或发送位置；
-- MG4010 maintenance 不加显式 motion flag 时为预览，`0x81` 仅称 software stop；
-- Feetech import/构造不打开串口，write 默认 preview；真实 write 需要 `--execute` 和操作专属
-  确认，port/baud 来自 local config 与设备发现；
-- `UpperMotionRuntime` 构造只创建共享 façade，不 open/close 硬件，不自动 enable/home/move；
-- 通信失败抛出异常；MG4010 A4 结果未知时尽力发 `0x81`；Feetech 不无限重试；
-- STM32 `DI/SA` 和相关异常会使开环位置 invalid；突然断电后必须重新确认位置/归零；
-- 当前未发现 Host 自动真实运动宏；STM32 boot-test 与 real-motion 宏默认值仍以验收 commit
-  源码为准，本轮没有改动。
+- STM32 上电不运动、不自动 home；Slide/Z enable 默认关闭；pump/release 默认 off。
+- Host runtime 构造允许设备发现但不 open；`runtime.open()` 不自动 home/move。
+- 默认 runtime mode 为 `READ_ONLY`；真实运动需要显式模式和 CLI 确认。
+- startup 执行顺序为 suction idle、rotary holding enable/verify、Z Home、Slide Home、startup pose；offline 模式不发送这些命令。
+- stop 不自动移除 holding；disable 前要求确认静止并提示支撑机构。
+- communication/fault/timeout 走 terminal error 与 best-effort stop；不能等同于硬件急停。
+- hand-eye missing/provisional 时视觉运动 fail-closed；Base 手工运动不因此被禁用。
+- 本轮未发现或修改任何 boot-test/自动真实运动宏；未开启真实运动默认项。
 
 ## 12. 已知问题和风险
 
 ### Confirmed issues
 
-- 统一运动 controller/protocol、client façade、bootstrap、tests、examples 和交接文档已按
-  完整依赖范围组成同一提交；
-- Feetech zip 没有 license/provenance，原始代码存在错误的 4-byte position write；
-- Feetech 型号/总线/baud、当前 port、servo ID 1、方向和零点已确认；`±45°` 与 500 raw
-  仅为当前调试约束，不能视为最终机械验收值；
-- `docs/calibration/` 缺肩肘独立记录；
-- STM32 App README 的旧 `0..200 step` 描述与当前源码软限位不一致；
-- 无 vacuum feedback；五运动轴统一层已离线实现，但尚无硬件验证、vacuum 协调、坐标变换
-  或 task state machine。
+1. `tool_T_camera` 没有已验证值，视觉目标运动不可用。
+2. 无真空传感器，无法从软件确认吸附成功。
+3. Rotation 无已验证独立 stop；统一 stop 只能 best-effort。
+4. 独立 Robot motion envelope 与碰撞/扫掠路径模型尚不存在。
+5. 仓库没有本轮 Host 组合能力的真实硬件日志，离线通过不能升级为 hardware-tested。
+6. S1 与根提交尚未 push；root gitlink 在其他机器可获取之前，必须先发布子模块提交。
 
 ### Risks
 
-- C001 feedback、write status 和 USB 转换板行为仍需实机只读验证；
-- 临时 Slide/Z soft limits 和 sensorless homing 参数可能不覆盖完整机构；
-- 肩肘背靠背命令不能保证同时到位；
-- 软件 stop 不是硬件急停，故障传播策略未统一；
-- 算法离线正确不等于真实连杆、碰撞和负载安全。
+- 当前 tracked joints/Rotation 值兼具项目配置与实机标定属性，未来多机器部署可能需要 profile 化。
+- Home 时 TCP Base Z 当前恰为 `180 mm`，与 tray `z_max` 相同；二者语义不同，机械变化时不能自动耦合。
+- 失能会移除 holding，机构可能下坠；软件 stop 不是急停。
+- `DIRECT/LIFT/TRANSIT/LOWER` 解决阶段顺序，不保证路径无碰撞。
+- local JSON/Python 配置被正确忽略，但人工复制 example 后仍可能保留 placeholder。
 
 ## 13. 开放决策
 
-- Feetech 最终机械 limits、负载 max speed 与 write status 行为；设备路径继续运行时注入；
-- Slide/Z 最终 travel 与 homing 参数；
-- vacuum PWM/timing、传感器和 emergency release 策略；
-- shoulder/elbow 实际 link lengths、安装偏移和校准复验；
-- IK branch/连续性/碰撞筛选；
-- 统一层最终 arrival window、timeout、stop/fault policy 及真实硬件验证方案；
-- camera/base/slide/tool 坐标系；
-- 未提交修改的提交拆分及 `feetech_arm.zip` 是否归档到外部制品存储。
+- Slide 最终机械全行程、速度/加速度和异常矩阵。
+- Z 重新烧录 S1 后的 Home、`-190..0 mm`、上下边界和故障恢复验收。
+- Shoulder/Elbow/Rotation 最终负载速度、标定证据与安全失能策略。
+- vacuum sensor、阈值、吸附成功定义和 emergency release policy。
+- `tool_T_camera`、Camera frame/内参/深度、抓取 offset 与独立验证阈值。
+- Robot motion envelope、碰撞区、阶段轨迹和跨执行器故障传播策略。
+- 是否将单机 tracked 参数迁移为多机器 profile；该决定不得与当前功能提交混合。
 
 ## 14. 下一阶段建议
 
-| Priority | Goal | 影响文件 | 证据/硬件 | 验收标准 | 安全要求 |
-| --- | --- | --- | --- | --- | --- |
-| P0 | 对齐 Host/STM32 protocol version 并复核基线 | Host protocol constant、用户当前 submodule | 无硬件 | 399 tests 全部通过 | 不覆盖或回退用户 submodule 修改 |
-| P1 | Feetech 只读识别 | driver、calibration docs | 铭牌、接线、官方手册、适配器 | ping/read 重复成功，错误/断线明确失败 | 不 enable torque |
-| P1 | Feetech 低速标定 | config、calibration docs | 空载/安全机械区域 | zero/direction/limits 可复测 | 小角度、低速、可断电 |
-| P2 | 统一五轴接口台架验证 | `host/motion/`、bootstrap、tests | 逐轴真实硬件 | 各轴 arrival/deadline/fault/stop 与逻辑单位可复测 | 单轴低速、人工急停就绪 |
-| P2 | 低速多轴协调 | unified controller、tests | 分阶段台架 | 点到点到位或安全失败；不声称严格同步 | 单后端逐步接入 |
-| P3 | 完整采摘 workflow | transforms、tasks | 视觉/真空/整机 | 吸附确认、搬运、释放、恢复闭环 | 故障注入与人工急停 |
+### P0 — 发布本地可复现基线
+
+- 目标：经人工 review 后先 push 子模块 S1，再 push 根仓库 R1–R6，保证 gitlink 可获取。
+- 文件：无新增源文件；只发布现有提交。
+- 验收：新 clone 能初始化子模块并运行 517 项测试。
+- 安全：发布不等于硬件验收；本轮未执行 push。
+
+### P1 — Z/Slide 与 holding 受控硬件回归
+
+- 目标：验证 S1 固件、Z 负坐标、双轴 Home、MG4010/Rotation holding 和 stop/fault 路径。
+- 证据：日期、固件 hash、根 hash、命令、初始姿态、边界、日志、异常与人工急停准备。
+- 验收：低速、空载、小范围通过后再验证边界；不得跨过未确认软限位。
+
+### P2 — 五轴阶段与培养槽门限验证
+
+- 目标：逐个验证 startup、`DIRECT/LIFT/TRANSIT/LOWER`、return 和 tray 最终目标拒绝。
+- 验收：多姿态 FK 残差、实际到位、clearance、timeout/peer stop 与恢复记录完整。
+- 安全：先建立机械包络和碰撞禁区，软件 stop 外另备硬件急停。
+
+### P3 — 视觉与完整采摘流程
+
+- 目标：完成 hand-eye、目标质量门限、抓取 offset、真空确认、搬运/释放和恢复状态机。
+- 验收：独立验证集通过，Camera target 才从 unavailable 升级；完整流程需重复成功与失败恢复证据。
+
+配置与测试目录整理应在上述功能基线稳定后单独进行，保持纯机械提交并确保 517 项数量不变。
 
 ## 15. 交接信息
 
-- overall stage：组件实现 + 离线集成；
-- active task：评审已提交的统一五轴 controller 及前端/运动学共享接口，随后进行逐轴低速验证；
-- read first：本文件、两份 `docs/handoffs/*_MOTION_INTERFACE_HANDOFF.md`、`host/README.md`、
-  `host/motion/unified_*`、`host/motion/client_*` 及对应 tests；
-- run first：`git status --short`、`git submodule status`、Host 399 tests；
-- confirmed hardware config：Feetech C001/RS-485/115200/4096 counts、ID 1、
-  `zero_raw=2130`、`direction_sign=+1`/`+X`，shoulder/elbow 当前代码配置与 STM32 验收 tag；
-- must not guess：Feetech 最终 limits/负载速度、真实 link lengths、最终 travel、vacuum success；
-- commit scope：统一运动 controller/protocol、STM32 Host 异步依赖、client façade、bootstrap、
-  tests、examples 和交接文档；STM32 submodule 的 `+2efcdcd` 状态为用户已有且未纳入清理提交；
-- next milestone：从干净检出复核离线基线，再逐轴验证统一 arrival/timeout/fault/stop，之后接入
-  vacuum/坐标变换；严格同步和轨迹插补仍不在当前实现范围。
+- 当前阶段：Host 子系统离线集成已固化；真实完整采摘未验证。
+- 当前任务：S1 与 R1–R6 本地提交完成，等待终检与人工 review；未 push。
+- 首读文件：本报告、`host/scripts/run_motion_demo.py`、`host/motion/unified_controller.py`、`host/kinematics/base_move_transition_planner.py`、`host/application/controller.py`、子模块 `App/README.md`。
+- 首跑命令：
+
+```bash
+cd /Users/sd/Projects/mushroom-picking-platform
+git status --short
+git submodule status
+git -C firmware/stm32_motion_controller status --short
+cd host
+.venv/bin/python -m unittest discover -s tests -q
+```
+
+- 已确认并提交的关键语义：Z Home `0 mm`、向下负坐标、Z `-190..0 mm`；Shoulder `[-65,65]°`；Elbow `[-160,160]°`；Rotation `[-150,150]°`。
+- 不得猜测：真实 link/外参、最终行程、碰撞包络、真空阈值、抓取 offset、急停与失能机械后果。
+- 非忽略未提交变更：R6 终检目标为无；5 份机器专属 local 配置继续 ignored。
+- 下一里程碑：先发布可获取的子模块/root 提交，再执行有硬件急停保障的 P1 回归。
