@@ -24,6 +24,16 @@ from config.frame_transforms import (  # noqa: E402
     FrameTransformsDocument,
     load_frame_transforms_document,
 )
+from application.controller import MushroomRobotController  # noqa: E402
+from application.demo_backend import DemoFlowApplicationBackend  # noqa: E402
+from application.tray_workspace import (  # noqa: E402
+    TargetOutsideTrayWorkspace,
+    TrayWorkspace,
+)
+from config.tray_workspace import (  # noqa: E402
+    TrayWorkspaceConfigError,
+    load_tray_workspace_config,
+)
 from config.workspace_planning import (  # noqa: E402
     OffsetWorkspaceSide,
     SlideSelectionReason,
@@ -64,7 +74,6 @@ from scripts._motion_cli_common import (  # noqa: E402
     format_command_result,
     format_group_result,
     initialize_read_only_rotary_positions,
-    prepare_rotation_power,
 )
 
 
@@ -86,6 +95,9 @@ _AXIS_ORDER = tuple(AxisName)
 _ROTARY_AXES = (AxisName.SHOULDER, AxisName.ELBOW, AxisName.ROTATION)
 _STOPPABLE_OR_REPORTED_AXES = _AXIS_ORDER
 _DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "frame_transforms.local.json"
+_DEFAULT_TRAY_WORKSPACE_CONFIG = (
+    HOST_ROOT / "config" / "tray_workspace.local.json"
+)
 
 
 class DemoFlowError(RuntimeError):
@@ -276,7 +288,6 @@ class DemoMotionFlow:
         self.virtual_state: RobotAxisState | None = None
         self.motion_interrupted = False
         self.startup_fk_valid = False
-        self.rotation_power_prepared = False
 
     def startup(self) -> None:
         """读取状态；执行模式下严格 Z→Slide→中心姿态。"""
@@ -285,14 +296,27 @@ class DemoMotionFlow:
         initial_states = self.runtime.controller.get_axis_states(_AXIS_ORDER)
         self.emit("Initial five-axis state:")
         self._emit_states(initial_states)
-        rotary_seed = _rotary_seed_state(initial_states)
 
         if self.execute:
+            suction = self.runtime.controller.suction_idle()
+            self.emit("Startup suction safe state:")
+            self._emit_suction_status(suction)
+            enabled = self.runtime.controller.enable_rotary_joints()
+            self.emit(
+                "Rotary joints enabled: "
+                f"shoulder={enabled.shoulder} elbow={enabled.elbow} "
+                f"rotation={enabled.rotation}"
+            )
+            enabled_states = self.runtime.controller.get_axis_states(_AXIS_ORDER)
+            self.emit("Five-axis state after rotary-joint enable:")
+            self._emit_states(enabled_states)
+            rotary_seed = _rotary_seed_state(enabled_states)
             self._home_and_verify(AxisName.Z, self._home_timeout(AxisName.Z))
             self._home_and_verify(AxisName.SLIDE, self._home_timeout(AxisName.SLIDE))
             homed_states = self.runtime.controller.get_axis_states(_AXIS_ORDER)
             current_state = _robot_axis_state(homed_states)
         else:
+            rotary_seed = _rotary_seed_state(initial_states)
             current_state = RobotAxisState(
                 self.startup_definition.slide_axis_mm,
                 self.startup_definition.z_axis_mm,
@@ -321,7 +345,6 @@ class DemoMotionFlow:
             )
             return
 
-        self._prepare_rotation_power()
         self._execute_stage(
             DemoStage(
                 "STARTUP_SAFE_POSE",
@@ -353,6 +376,19 @@ class DemoMotionFlow:
             self.emit(f"Current FK unavailable: {exc}")
         else:
             self._emit_fk_status(state, label="Current FK Base TCP pose")
+        try:
+            enabled = self.runtime.controller.get_rotary_joint_enable_status()
+            self.emit(
+                "Rotary joint enable state: "
+                f"shoulder={enabled.shoulder} elbow={enabled.elbow} "
+                f"rotation={enabled.rotation}"
+            )
+        except Exception as exc:
+            self.emit(f"Rotary joint enable state unavailable: {exc}")
+        try:
+            self._emit_suction_status(self.runtime.controller.get_suction_status())
+        except Exception as exc:
+            self.emit(f"Suction state unavailable: {exc}")
         if not self.execute and self.virtual_state is not None:
             self._emit_fk_status(
                 self.virtual_state,
@@ -360,9 +396,40 @@ class DemoMotionFlow:
             )
 
     def move(self, x_mm: float, y_mm: float, z_mm: float, yaw_deg: float | None) -> bool:
+        self.require_base_motion_ready()
+        stages = self.plan_to_base_pose(x_mm, y_mm, z_mm, yaw_deg)
+        return self.execute_plan(stages)
+
+    def require_base_motion_ready(self) -> None:
+        if not self.startup_fk_valid:
+            raise DemoFlowError("startup FK validation is not valid")
+        if self.execute and not self.runtime.controller.rotary_joints_enabled():
+            raise DemoFlowError(
+                'Rotary joints are disabled. Run "joints enable" before motion.'
+            )
         if self.motion_interrupted:
-            self.emit('MOVE REJECTED: run "status" and then "init" or restart first')
-            return False
+            raise DemoFlowError(
+                'MOVE REJECTED: run "status" and then "init" or restart first'
+            )
+
+    def execute_plan(self, plan: object) -> bool:
+        """执行已由规划入口完整验证的阶段，不重新解算目标。"""
+
+        if not isinstance(plan, tuple) or not plan or not all(
+            isinstance(stage, DemoStage) for stage in plan
+        ):
+            raise TypeError("plan must be a non-empty tuple of DemoStage objects")
+        return self._run_stages(plan)
+
+    def plan_to_base_pose(
+        self,
+        x_mm: float,
+        y_mm: float,
+        z_mm: float,
+        yaw_deg: float | None,
+    ) -> tuple[DemoStage, ...]:
+        """只生成现有 Base-frame 阶段，不提交任何轴命令。"""
+
         current_state = self._planning_state()
         current_pose = self.solver.forward_kinematics_base(current_state)
         target_yaw = current_pose.yaw_deg if yaw_deg is None else _finite("yaw_deg", yaw_deg)
@@ -392,9 +459,14 @@ class DemoMotionFlow:
                 )
                 for stage in plan.stages
             )
-        return self._run_stages(stages)
+        for stage in stages:
+            self.runtime.controller.validate_positions(stage.multi_axis_target)
+        return stages
 
     def return_to_startup(self) -> bool:
+        if self.execute and not self.runtime.controller.rotary_joints_enabled():
+            self.emit('Rotary joints are disabled. Run "joints enable" before motion.')
+            return False
         if self.startup_pose is None:
             raise DemoFlowError("startup pose has not been solved")
         current_state = self._planning_state()
@@ -450,10 +522,63 @@ class DemoMotionFlow:
         )
         self.emit(
             "Stop requested. No plan will resume automatically; Rotation has no "
-            "verified independent software stop and is reported as such."
+            "verified independent software stop and is reported as such. "
+            "Rotary joint holding torque remains enabled."
         )
 
-    def command_loop(self) -> None:
+    def suction_command(self, action: str) -> None:
+        if not self.execute and action != "status":
+            self.emit(f"READ_ONLY suction {action} preview; no suction command was sent")
+            return
+        self.emit(f"Suction command requested: {action.upper()}")
+        methods = {
+            "grip": self.runtime.controller.suction_grip,
+            "release": self.runtime.controller.suction_release,
+            "idle": self.runtime.controller.suction_idle,
+            "status": self.runtime.controller.get_suction_status,
+        }
+        self._emit_suction_status(methods[action]())
+
+    def joints_command(self, action: str) -> None:
+        if action == "status":
+            status = self.runtime.controller.get_rotary_joint_enable_status()
+            self.emit(
+                "Rotary joints: "
+                f"shoulder={status.shoulder} elbow={status.elbow} "
+                f"rotation={status.rotation} all_enabled={status.all_enabled}"
+            )
+            return
+        if not self.execute:
+            self.emit(f"READ_ONLY joints {action} preview; no torque command was sent")
+            return
+        if action == "disable":
+            self.emit("WARNING:")
+            self.emit("Disabling joint torque removes position holding.")
+            self.emit("Make sure the mechanism is supported and clear of obstacles.")
+            status = self.runtime.controller.disable_rotary_joints()
+            self.emit(
+                "Rotary joints disabled: "
+                f"shoulder={status.shoulder} elbow={status.elbow} "
+                f"rotation={status.rotation}"
+            )
+            return
+        status = self.runtime.controller.enable_rotary_joints()
+        self.emit(
+            "Rotary joints enabled: "
+            f"shoulder={status.shoulder} elbow={status.elbow} "
+            f"rotation={status.rotation}"
+        )
+        states = self.runtime.controller.get_axis_states(_AXIS_ORDER)
+        self._emit_states(states)
+        state = _robot_axis_state(states)
+        self.virtual_state = state
+        self._emit_fk_status(state, label="Current FK Base TCP pose after enable")
+
+    def command_loop(self, application_controller: MushroomRobotController) -> None:
+        if not isinstance(application_controller, MushroomRobotController):
+            raise TypeError(
+                "application_controller must be MushroomRobotController"
+            )
         self.emit('Type "help" for commands.')
         while True:
             try:
@@ -478,6 +603,11 @@ class DemoMotionFlow:
                     continue
                 self.emit('Use "init" before "quit" if you want to return to the startup pose.')
                 self.stop()
+                self.emit(
+                    'Rotary joints remain enabled unless "joints disable" was '
+                    "explicitly executed. Support the mechanism before disabling "
+                    "joint torque."
+                )
                 return
             if command == "help":
                 self._emit_help()
@@ -485,10 +615,35 @@ class DemoMotionFlow:
             if command == "status":
                 self.status()
                 continue
+            if command == "workspace":
+                self._emit_workspace(application_controller.tray_workspace)
+                continue
             if command == "stop":
                 self.stop()
                 continue
-            if not self.startup_fk_valid and command not in ("status", "stop"):
+            if command == "suction":
+                if len(parts) != 2 or parts[1].lower() not in (
+                    "grip", "release", "idle", "status"
+                ):
+                    self.emit("usage: suction <grip|release|idle|status>")
+                    continue
+                try:
+                    self.suction_command(parts[1].lower())
+                except Exception as exc:
+                    self.emit(f"SUCTION failed: {exc}")
+                continue
+            if command == "joints":
+                if len(parts) != 2 or parts[1].lower() not in (
+                    "enable", "disable", "status"
+                ):
+                    self.emit("usage: joints <enable|disable|status>")
+                    continue
+                try:
+                    self.joints_command(parts[1].lower())
+                except Exception as exc:
+                    self.emit(f"JOINTS failed: {exc}")
+                continue
+            if not self.startup_fk_valid:
                 self.emit("Command rejected: startup FK validation is not valid")
                 continue
             if command in ("init", "return-init"):
@@ -503,12 +658,17 @@ class DemoMotionFlow:
                     continue
                 try:
                     values = tuple(float(value) for value in parts[1:])
-                    self.move(
+                    application_controller.move_to_base_pose(
                         values[0],
                         values[1],
                         values[2],
                         values[3] if len(values) == 4 else None,
                     )
+                except TargetOutsideTrayWorkspace as exc:
+                    self.emit(
+                        "REJECTED: target outside cultivation-tray workspace."
+                    )
+                    self.emit(str(exc))
                 except Exception as exc:
                     self._handle_plan_failure("MOVE", exc)
                 continue
@@ -556,17 +716,6 @@ class DemoMotionFlow:
             raise DemoFlowError(
                 f"{axis.value} Home position {state.current_position:.6f} mm is not near 0"
             )
-
-    def _prepare_rotation_power(self) -> None:
-        state = self.runtime.controller.get_state(AxisName.ROTATION)
-        prepare_rotation_power(
-            self.runtime,
-            state,
-            confirm_no_independent_stop=True,
-            confirm_torque_enable=True,
-            emit=self.emit,
-        )
-        self.rotation_power_prepared = True
 
     def _execute_stage(self, stage: DemoStage, *, timeout_s: float) -> RobotAxisState:
         self.runtime.controller.validate_positions(stage.multi_axis_target)
@@ -796,6 +945,50 @@ class DemoMotionFlow:
         for state in states:
             self.emit(f"  {format_axis_state(state)}")
 
+    def _emit_suction_status(self, status: object) -> None:
+        self.emit(f"Suction command: {status.mode.value.upper()}")
+        self.emit(
+            "Command acknowledged: "
+            f"{'yes' if status.command_acknowledged else 'no'}"
+        )
+        self.emit(
+            "Physical vacuum verified: "
+            f"{'yes' if status.physically_verified else 'no'}"
+        )
+        self.emit(
+            f"Outputs: pump={'on' if status.pump_on else 'off'} "
+            f"release_valve={'open' if status.release_open else 'closed'} "
+            f"busy={status.busy} fault={status.fault}"
+        )
+
+    def _emit_workspace(self, tray_workspace: TrayWorkspace) -> None:
+        config = tray_workspace.config
+        offset = self.solver.workspace
+        self.emit("Cultivation-tray workspace in Base frame:")
+        self.emit(f"  X: [{config.x_min_mm:g}, {config.x_max_mm:g}] mm")
+        self.emit(f"  Y: [{config.y_min_mm:g}, {config.y_max_mm:g}] mm")
+        self.emit(f"  Z: [{config.z_min_mm:g}, {config.z_max_mm:g}] mm")
+        self.emit("Positive offset workspace in arm-local frame:")
+        self.emit(
+            f"  local X: [{offset.local_x_min_mm:g}, "
+            f"{offset.local_x_max_mm:g}] mm"
+        )
+        self.emit(
+            f"  local Y: [{offset.positive_y_min_mm:g}, "
+            f"{offset.positive_y_max_mm:g}] mm"
+        )
+        self.emit("Negative offset workspace in arm-local frame:")
+        self.emit(
+            f"  local X: [{offset.local_x_min_mm:g}, "
+            f"{offset.local_x_max_mm:g}] mm"
+        )
+        self.emit(
+            f"  local Y: [{offset.negative_y_min_mm:g}, "
+            f"{offset.negative_y_max_mm:g}] mm"
+        )
+        self.emit("Startup safe pose:")
+        self.emit("  explicit exception")
+
     def _emit_transform(self, transform: RigidTransform) -> None:
         xyz = transform.translation_mm
         self.emit(
@@ -824,8 +1017,11 @@ class DemoMotionFlow:
     def _emit_help(self) -> None:
         self.emit("Commands:")
         self.emit("  status")
+        self.emit("  workspace")
         self.emit("  move <x_mm> <y_mm> <z_mm> [yaw_deg]")
         self.emit("  init | return-init")
+        self.emit("  suction <grip|release|idle|status>")
+        self.emit("  joints <enable|disable|status>")
         self.emit("  stop")
         self.emit("  quit")
         self.emit("  help")
@@ -848,6 +1044,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=_DEFAULT_FRAME_CONFIG,
         help="validated Base-to-Slide-zero transform JSON",
+    )
+    parser.add_argument(
+        "--tray-workspace-config",
+        type=Path,
+        default=_DEFAULT_TRAY_WORKSPACE_CONFIG,
+        help="user-validated Base-frame cultivation-tray workspace JSON",
     )
     return parser
 
@@ -877,26 +1079,38 @@ def create_demo_flow(
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        tray_workspace = TrayWorkspace(
+            load_tray_workspace_config(args.tray_workspace_config)
+        )
         runtime, flow = create_demo_flow(
             execute=args.execute,
             frame_config=args.frame_config,
         )
-        with runtime:
-            try:
-                flow.startup()
-                flow.command_loop()
-            except KeyboardInterrupt:
-                print("motion demo interrupted; requesting software stop", file=sys.stderr)
-                flow.stop()
-                return 130
-            except Exception as exc:
-                print(f"startup failed: {exc}", file=sys.stderr)
-                if isinstance(exc, StartupPoseNoSolutionError):
-                    for rejection in exc.rejections:
-                        print(f"  rejected: {rejection}", file=sys.stderr)
-                if args.execute:
-                    flow.stop()
-                return 1
+        backend = DemoFlowApplicationBackend(runtime=runtime, flow=flow)
+        robot = MushroomRobotController(
+            base_backend=backend,
+            tray_workspace=tray_workspace,
+        )
+        started = False
+        try:
+            robot.startup()
+            started = True
+            flow.command_loop(robot)
+        except KeyboardInterrupt:
+            print("motion demo interrupted; requesting software stop", file=sys.stderr)
+            if started:
+                robot.stop()
+            return 130
+        except Exception as exc:
+            print(f"startup failed: {exc}", file=sys.stderr)
+            if isinstance(exc, StartupPoseNoSolutionError):
+                for rejection in exc.rejections:
+                    print(f"  rejected: {rejection}", file=sys.stderr)
+            if args.execute and started:
+                robot.stop()
+            return 1
+        finally:
+            robot.shutdown()
         return 0
     except KeyboardInterrupt:
         print("motion demo interrupted", file=sys.stderr)
@@ -905,6 +1119,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         BaseMovePlanningError,
         FiveAxisNoSolutionError,
         MultiAxisSubmissionError,
+        TrayWorkspaceConfigError,
         UnifiedMotionError,
         UnvalidatedBaseTransformError,
     ) as exc:
@@ -1041,8 +1256,6 @@ def _rotary_seed_state(states: Sequence[AxisState]) -> RobotAxisState:
             raise DemoFlowError(
                 f"initial {axis.value} moving/busy is not confirmed false"
             )
-        if axis in (AxisName.SHOULDER, AxisName.ELBOW) and state.enabled is not True:
-            raise DemoFlowError(f"initial {axis.value} enabled state is not true")
         if not state.position_valid or state.current_position is None:
             raise DemoFlowError(
                 f"initial {axis.value} absolute position is invalid; initialization refused"
@@ -1076,6 +1289,10 @@ def _robot_axis_state(states: Sequence[AxisState]) -> RobotAxisState:
             raise DemoFlowError(f"axis {axis.value} moving/busy is not confirmed false")
         if axis in (AxisName.SLIDE, AxisName.Z) and state.homed is not True:
             raise DemoFlowError(f"axis {axis.value} is not homed")
+        if axis in _ROTARY_AXES and state.enabled is not True:
+            raise DemoFlowError(
+                'Rotary joints are disabled. Run "joints enable" before motion.'
+            )
         positions[axis] = _finite(f"{axis.value} position", state.current_position)
     return RobotAxisState(
         positions[AxisName.SLIDE],

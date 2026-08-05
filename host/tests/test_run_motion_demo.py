@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import io
 import math
+from pathlib import Path
 from types import SimpleNamespace
+import tempfile
 import unittest
+from unittest.mock import patch
 
+from application.controller import MushroomRobotController
+from application.demo_backend import DemoFlowApplicationBackend
+from application.tray_workspace import TrayWorkspace
+from config.tray_workspace import TrayWorkspaceConfig
 from config.workspace_planning import OffsetWorkspaceSide
 from geometry.rigid_transform import RigidTransform
 from kinematics.base_frame_solver import BaseFrameFiveAxisSolver, FiveAxisNoSolutionError
@@ -23,11 +31,14 @@ from motion.unified_protocol import (
     MultiAxisCommandHandle,
     MultiAxisCommandResult,
     MultiAxisTarget,
+    RotaryJointEnableStatus,
 )
+from motion.suction import SuctionMode, SuctionStatus
 from scripts.run_motion_demo import (
     DemoFlowError,
     DemoMotionFlow,
     StartupSafePose,
+    main,
     solve_startup_safe_pose,
 )
 
@@ -123,11 +134,12 @@ def _axis_state(
     *,
     homed: bool | None,
     valid: bool = True,
+    enabled: bool = True,
 ) -> AxisState:
     return AxisState(
         axis=axis,
         connected=True,
-        enabled=True,
+        enabled=enabled,
         busy=False,
         homed=homed,
         position_valid=valid,
@@ -210,6 +222,74 @@ class _FakeController:
             ),
         }
         self.pending: MultiAxisTarget | None = None
+        self.rotary_enabled = True
+
+    @staticmethod
+    def _suction_status(mode: SuctionMode) -> SuctionStatus:
+        return SuctionStatus(
+            mode=mode,
+            command_acknowledged=True,
+            physically_verified=False,
+            vacuum_detected=None,
+            pump_on=mode is SuctionMode.GRIP,
+            release_open=mode is SuctionMode.RELEASE,
+            busy=False,
+            fault=0,
+            raw_state=0 if mode is SuctionMode.IDLE else 1,
+        )
+
+    def suction_idle(self) -> SuctionStatus:
+        self.log.append("suction:idle")
+        return self._suction_status(SuctionMode.IDLE)
+
+    def suction_grip(self) -> SuctionStatus:
+        self.log.append("suction:grip")
+        return self._suction_status(SuctionMode.GRIP)
+
+    def suction_release(self) -> SuctionStatus:
+        self.log.append("suction:release")
+        return self._suction_status(SuctionMode.RELEASE)
+
+    def get_suction_status(self) -> SuctionStatus:
+        self.log.append("suction:status")
+        return self._suction_status(SuctionMode.IDLE)
+
+    def get_rotary_joint_enable_status(self) -> RotaryJointEnableStatus:
+        self.log.append("joints:status")
+        return RotaryJointEnableStatus(
+            self.rotary_enabled,
+            self.rotary_enabled,
+            self.rotary_enabled,
+        )
+
+    def rotary_joints_enabled(self) -> bool:
+        return self.rotary_enabled
+
+    def enable_rotary_joints(self) -> RotaryJointEnableStatus:
+        self.log.append("joints:enable")
+        self.rotary_enabled = True
+        for axis in (AxisName.SHOULDER, AxisName.ELBOW, AxisName.ROTATION):
+            state = self.states[axis]
+            self.states[axis] = _axis_state(
+                axis,
+                state.current_position,
+                homed=None,
+                enabled=True,
+            )
+        return RotaryJointEnableStatus(True, True, True)
+
+    def disable_rotary_joints(self) -> RotaryJointEnableStatus:
+        self.log.append("joints:disable")
+        self.rotary_enabled = False
+        for axis in (AxisName.SHOULDER, AxisName.ELBOW, AxisName.ROTATION):
+            state = self.states[axis]
+            self.states[axis] = _axis_state(
+                axis,
+                state.current_position,
+                homed=None,
+                enabled=False,
+            )
+        return RotaryJointEnableStatus(False, False, False)
 
     def list_axes(self) -> tuple[AxisDescriptor, ...]:
         descriptors = _descriptors()
@@ -361,6 +441,28 @@ def _flow(
     )
 
 
+def _application_controller(
+    runtime: _FakeRuntime,
+    flow: DemoMotionFlow,
+    *,
+    tray_config: TrayWorkspaceConfig | None = None,
+) -> MushroomRobotController:
+    return MushroomRobotController(
+        base_backend=DemoFlowApplicationBackend(runtime=runtime, flow=flow),
+        tray_workspace=TrayWorkspace(
+            tray_config
+            or TrayWorkspaceConfig(
+                x_min_mm=100,
+                x_max_mm=300,
+                y_min_mm=-300,
+                y_max_mm=300,
+                z_min_mm=90,
+                z_max_mm=130,
+            )
+        ),
+    )
+
+
 class StartupSafePoseSolverTests(unittest.TestCase):
     def test_fixed_center_pose_is_outside_without_relaxing_normal_targets(self) -> None:
         subject = _solver()
@@ -402,6 +504,8 @@ class StartupExecutionTests(unittest.TestCase):
         flow, _output = _flow(runtime, execute=True)
         flow.startup()
         log = runtime.log
+        self.assertLess(log.index("suction:idle"), log.index("joints:enable"))
+        self.assertLess(log.index("joints:enable"), log.index("home:z"))
         self.assertLess(log.index("home:z"), log.index("home-wait:z"))
         self.assertLess(log.index("home-wait:z"), log.index("home:slide"))
         self.assertLess(log.index("home:slide"), log.index("home-wait:slide"))
@@ -438,6 +542,22 @@ class StartupExecutionTests(unittest.TestCase):
                 if failed_axis == "z":
                     self.assertNotIn("home:slide", runtime.log)
 
+    def test_rotary_enable_failure_prevents_all_homing_and_motion(self) -> None:
+        runtime = _FakeRuntime()
+        flow, _output = _flow(runtime, execute=True)
+
+        def fail_enable() -> RotaryJointEnableStatus:
+            runtime.log.append("joints:enable-failed")
+            raise RuntimeError("elbow enable failed")
+
+        runtime.controller.enable_rotary_joints = fail_enable  # type: ignore[method-assign]
+        with self.assertRaisesRegex(RuntimeError, "elbow enable failed"):
+            flow.startup()
+        self.assertIn("suction:idle", runtime.log)
+        self.assertNotIn("home:z", runtime.log)
+        self.assertNotIn("home:slide", runtime.log)
+        self.assertFalse(any(item.startswith("submit:") for item in runtime.log))
+
     def test_read_only_startup_never_homes_submits_stops_or_enables_torque(self) -> None:
         runtime = _FakeRuntime()
         flow, _output = _flow(runtime, execute=False)
@@ -445,15 +565,141 @@ class StartupExecutionTests(unittest.TestCase):
         self.assertTrue(flow.move(200.0, 250.0, 120.0, 0.0))
         self.assertTrue(flow.return_to_startup())
         flow.stop()
-        forbidden_prefixes = ("home:", "submit:", "stop:", "rotation:")
+        forbidden_prefixes = (
+            "home:", "submit:", "stop:", "rotation:", "suction:", "joints:enable",
+            "joints:disable",
+        )
         self.assertFalse(
             any(item.startswith(forbidden_prefixes) for item in runtime.log),
             runtime.log,
         )
         self.assertTrue(flow.startup_fk_valid)
 
+    def test_cli_suction_and_joint_commands_and_quit_lifecycle(self) -> None:
+        runtime = _FakeRuntime()
+        flow, output = _flow(runtime, execute=True)
+        flow.startup()
+        runtime.log.clear()
+        with patch(
+            "builtins.input",
+            side_effect=[
+                "suction grip",
+                "suction release",
+                "suction idle",
+                "suction status",
+                "joints status",
+                "joints disable",
+                "joints enable",
+                "stop",
+                "quit",
+            ],
+        ):
+            flow.command_loop(_application_controller(runtime, flow))
+        self.assertIn("suction:grip", runtime.log)
+        self.assertIn("suction:release", runtime.log)
+        self.assertIn("suction:idle", runtime.log)
+        self.assertIn("suction:status", runtime.log)
+        self.assertIn("joints:disable", runtime.log)
+        self.assertIn("joints:enable", runtime.log)
+        self.assertTrue(runtime.controller.rotary_enabled)
+        self.assertTrue(any("Disabling joint torque" in line for line in output))
+        self.assertTrue(any("remain enabled" in line for line in output))
+
+    def test_cli_workspace_and_outside_move_reject_without_motion_command(self) -> None:
+        runtime = _FakeRuntime()
+        flow, output = _flow(runtime, execute=False)
+        flow.startup()
+        runtime.log.clear()
+        controller = _application_controller(runtime, flow)
+        with (
+            patch(
+                "builtins.input",
+                side_effect=["workspace", "move 500 250 120 0", "quit"],
+            ),
+            patch.object(
+                controller,
+                "move_to_base_pose",
+                wraps=controller.move_to_base_pose,
+            ) as move_to_base_pose,
+        ):
+            flow.command_loop(controller)
+        move_to_base_pose.assert_called_once_with(500.0, 250.0, 120.0, 0.0)
+        self.assertTrue(
+            any(
+                line == "REJECTED: target outside cultivation-tray workspace."
+                for line in output
+            )
+        )
+        self.assertTrue(
+            any("Cultivation-tray workspace in Base frame:" in line for line in output)
+        )
+        self.assertTrue(
+            any("Positive offset workspace in arm-local frame:" in line for line in output)
+        )
+        self.assertFalse(
+            any(item.startswith(("validate:", "submit:", "stop:")) for item in runtime.log),
+            runtime.log,
+        )
+        self.assertFalse(any(line.startswith("MOVE failed:") for line in output))
+
+    def test_missing_workspace_config_fails_before_runtime_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing.json"
+            with (
+                patch("scripts.run_motion_demo.create_demo_flow") as create_flow,
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                self.assertEqual(
+                    main(["--tray-workspace-config", str(missing)]),
+                    1,
+                )
+        create_flow.assert_not_called()
+
+    def test_read_only_cli_never_sends_suction_or_torque_writes(self) -> None:
+        runtime = _FakeRuntime()
+        flow, _output = _flow(runtime, execute=False)
+        flow.startup()
+        runtime.log.clear()
+        flow.suction_command("grip")
+        flow.joints_command("enable")
+        flow.joints_command("disable")
+        self.assertEqual(runtime.log, [])
+
 
 class DemoPlanningTests(unittest.TestCase):
+    def test_application_gate_allows_clearance_stage_above_tray_z_max(self) -> None:
+        runtime = _FakeRuntime()
+        flow, output = _flow(runtime, execute=False)
+        flow.startup()
+        controller = _application_controller(runtime, flow)
+        self.assertTrue(controller.move_to_base_pose(200, 250, 120, 0))
+        stage_lines = [line for line in output if "Base TCP" in line]
+        self.assertTrue(
+            any(
+                "TRANSIT" in line and "z=180.000000" in line
+                for line in stage_lines
+            )
+        )
+        self.assertTrue(
+            any(
+                "LOWER" in line and "z=120.000000" in line
+                for line in stage_lines
+            )
+        )
+
+    def test_public_plan_to_base_pose_never_submits(self) -> None:
+        runtime = _FakeRuntime()
+        flow, _output = _flow(runtime, execute=False)
+        flow.startup()
+        runtime.log.clear()
+        stages = flow.plan_to_base_pose(200.0, 250.0, 120.0, 0.0)
+        self.assertEqual(tuple(stage.name for stage in stages), ("TRANSIT", "LOWER"))
+        self.assertEqual(
+            sum(item.startswith("validate:") for item in runtime.log),
+            2,
+        )
+        self.assertFalse(any(item.startswith("submit:") for item in runtime.log))
+
     def test_first_positive_and_negative_targets_are_transit_then_lower(self) -> None:
         for target_y in (250.0, -250.0):
             with self.subTest(target_y=target_y):

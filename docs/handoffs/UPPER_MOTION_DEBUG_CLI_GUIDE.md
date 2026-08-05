@@ -1,6 +1,6 @@
 # Upper Motion Manual and Maintenance CLI Guide
 
-更新日期：2026-08-04
+更新日期：2026-08-05
 
 ## 1. Entry-Point Overview
 
@@ -33,8 +33,7 @@ cd host
 .venv/bin/python scripts/manual_motion.py inspect
 .venv/bin/python scripts/manual_motion.py state --axis shoulder
 .venv/bin/python scripts/manual_motion.py plan-base \
-  --tcp-x-mm 510 --tcp-y-mm 0 --tcp-z-mm 65 --tcp-yaw-deg 0 \
-  --allow-unvalidated-frame-transform
+  --tcp-x-mm 510 --tcp-y-mm 0 --tcp-z-mm 180 --tcp-yaw-deg 0
 .venv/bin/python scripts/manual_motion.py move \
   --axis shoulder --position 20 --velocity 2
 .venv/bin/python scripts/manual_motion.py move-group \
@@ -53,21 +52,19 @@ cd host
 
 ### 2.1 Base TCP 五轴目标预览
 
-`plan-base` 读取当前五轴逻辑状态，把 Base 根的 TCP `x/y/z/yaw` 目标转换到 Slide-zero，生成并
-筛选五轴逆运动学候选，调用统一 controller 的只读 `validate_positions()`，最后打印选中解、分支、
-评分、FK 残差、软限位余量和完整 `MultiAxisTarget`。不提供 `--execute`，不会 submit、wait、home、
-stop 或 torque enable。
+`plan-base` 读取当前五轴逻辑状态与已验证的 Base 标定，计算当前/目标局部坐标和侧别，再调用
+只读 `validate_positions()` 检查每一个完整五轴阶段。当前 Slide 有合法解时必须保持；否则依次
+尝试正负偏置中心和 10 mm 有限 fallback。
 
-不提供 `--slide-mm` 时采用“当前 Slide 优先、否则最近离散候选”策略；提供时只在指定 Slide 上
-求解。当前 `base_T_slide_zero` 尚为 provisional，因此必须显式提供：
+同侧打印一个 `DIRECT`；正负侧切换打印 `LIFT`、`TRANSIT`、`LOWER`。培养槽边框对应的安全平面
+是 Base `Z=150 mm`，实际切换高度为当前、目标与 150 mm 三者中的最高值，并由正式运动学换算
+为 Z 轴目标。当前 TCP 已高于 150 mm 时不会继续上抬，`LIFT` 为零位移检查并直接进入横移。
+输出包含每阶段 Base 位姿、五轴目标、局部
+工作区和 FK 残差。它没有 `--slide-mm`、`--allow-unvalidated-frame-transform` 或 `--execute`；标定
+缺失或未验证会拒绝规划，不会 submit、wait、home、stop、torque enable 或写回标定。
 
-```text
---allow-unvalidated-frame-transform
-```
-
-该参数只允许本次只读预览，不写回标定文件，也不表示标定已经验证。若目标无解，CLI 会保留已
-打印的 Slide-zero 目标，并报告失败阶段和候选统计，不生成伪造目标。真实 Base 目标执行将在完成
-独立姿态验证后作为单独任务增加。
+正负偏置矩形是运动学约束，不只是可视化提示；最终普通五轴解必须位于其中一侧。真实 Base
+目标执行仍是后续独立任务。
 
 ## 3. STM32 Maintenance
 
@@ -88,9 +85,13 @@ stop 或 torque enable。
 .venv/bin/python scripts/maintenance/mg4010_joint.py --help
 ```
 
-子命令：`raw-status`、`basic-parameters`、`initialize`、`state`、`move`、`software-stop`；支持
-`shoulder` 和 `elbow`。move 参数是逻辑输出轴 `position-deg` 和 `velocity-deg-s`，并通过正式
-`CanRotaryJoint` 完成换算与命令。
+子命令：`raw-status`、`basic-parameters`、`logical-angle`、`initialize`、`state`、`move`、
+`software-stop`；支持 `shoulder` 和 `elbow`。move 参数是逻辑输出轴 `position-deg` 和
+`velocity-deg-s`，并通过正式 `CanRotaryJoint` 完成换算与命令。
+
+`logical-angle` 不执行限位内位置初始化；它只读 `0x94`，按正式减速比、零点和方向输出相对逻辑
+零点的有符号最短角差。即使 `within_limits=false` 也会显示诊断角度；加 `--watch` 可在同一打开的
+runtime 中持续读取，`--interval` 设置刷新周期。
 
 `initialize` 只读取稳定绝对位置并建立当前进程的逻辑位置解释；它不是 enable、home 或 motion。
 `software-stop` 发送 MG4010 `0x81`，不表示驱动下力、断电或硬件急停。肩肘联合动作统一使用
@@ -171,3 +172,70 @@ manual_motion.py move-group
 enable、自动 home、startup position、完整初始化状态机、自动标定运动、Rotation 独立 stop 或
 统一模糊的 disable-all。
 离线测试和编译结果不构成真实硬件验收。
+
+## 12. Five-Axis Motion Demo: Suction and Holding Torque
+
+真实五轴闭环验证使用：
+
+```bash
+cd host
+.venv/bin/python scripts/run_motion_demo.py --execute \
+  --tray-workspace-config config/tray_workspace.local.json
+```
+
+执行模式启动顺序为：读取状态、`suction idle`、使能 Shoulder/Elbow/Rotation、验证使能、Z
+Homing、Slide Homing、进入 startup safe pose。任一关节使能失败都会阻断后续 Homing 和运动。
+不加 `--execute` 时只做状态读取与规划预览，不发送吸盘、扭矩、Homing、运动或 stop 写命令。
+
+交互命令示例：
+
+```text
+status
+joints status
+joints enable
+
+workspace
+move <tray_x_mm> <tray_y_mm> <tray_z_mm> <yaw_deg>
+
+suction status
+suction grip
+suction release
+suction idle
+
+stop
+joints status
+
+joints disable
+joints status
+quit
+```
+
+`tray_x_mm/tray_y_mm/tray_z_mm` 必须从 `workspace` 显示、且经用户确认的 Base-frame 培养槽范围
+内选择。本机当前确认范围为 X `[20, 480] mm`、Y `[20, 700] mm`、Z `[0, 180] mm`；缺失或
+未确认配置会在打开硬件前拒绝 CLI 启动。
+
+这里的 Z 是最终 TCP 在 Base frame 中的绝对高度；`0 mm` 不是 Z 轴逻辑零位，`180 mm` 是当前
+Base 标定和 Tool/TCP 几何计算出的 Z 回零 TCP 高度。配置是静态快照，标定或工具长度变化后必须
+重新计算并确认。
+
+吸盘实际映射：`grip`=`SU`（泵 ON、释放阀 CLOSED），`release`=`SR`（泵 OFF、阀 OPEN，固件默认
+500 ms 后自动 IDLE），`idle`=`SX`（泵 OFF、阀 CLOSED）。`status` 显示的是 commanded output
+state；当前协议没有真空传感器结果，因此 `Physical vacuum verified` 始终为 `no`，不能据此判断
+物体已经吸牢。
+
+`stop` 只停止当前运动，不调用 MG4010 `0x80` 或 Feetech Torque Disable；startup、DIRECT、
+LIFT、TRANSIT、LOWER、init、吸盘动作以及 `quit` 都不会自动移除保持力。显式失能后，任何普通
+Base 目标或旋转关节运动会提示先执行 `joints enable`。重新使能会重读 Shoulder、Elbow、
+Rotation 实际位置并打印当前 FK/TCP。
+
+> WARNING: Support the mechanism before disabling rotary-joint torque.
+
+真实硬件建议按以下四阶段低速验证，不要同时施加大外力或测试吸盘与运动：
+
+1. `joints status` → `joints enable` → 轻触确认保持 → `stop` → 再次确认仍使能；
+2. 支撑机构后 `joints disable`，确认 move 被拒绝，再 `joints enable` 并核对 FK；
+3. 机械臂静止时依次执行 `suction status/grip/status/release/status/idle`，人工确认泵阀方向；
+4. `joints enable` → `init` → 保守目标 → `suction grip/release` → `init`。
+
+`quit` 会提示：旋转关节保持使能，除非此前显式执行过 `joints disable`。关闭 Host 通信不等于
+对硬件供电状态做保证，现场仍需确认电源、驱动器与机构支撑。
