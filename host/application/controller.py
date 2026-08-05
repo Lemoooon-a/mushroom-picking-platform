@@ -1,0 +1,255 @@
+"""蘑菇机器人应用层唯一入口及能力门禁。"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import math
+from typing import Protocol, runtime_checkable
+
+from application.tray_workspace import TrayWorkspace
+from calibration.hand_eye import HandEyeCalibrationStatus, hand_eye_status
+from geometry.rigid_transform import RigidTransform
+from vision.observation import VisionTargetObservation
+from vision.target_resolver import (
+    HandEyeCalibrationUnavailable,
+    VisionTargetResolver,
+)
+
+
+class UnsupportedToolGoalOrientationError(ValueError):
+    """解析结果超出当前仅支持 xyz+yaw 的 Base 目标接口。"""
+
+
+@runtime_checkable
+class BaseFrameRobotBackend(Protocol):
+    """已经验证的 Base-frame 运动链所需的最小适配面。"""
+
+    def startup(self) -> object: ...
+
+    def require_base_motion_ready(self) -> None: ...
+
+    def plan_to_base_pose(
+        self,
+        x_mm: float,
+        y_mm: float,
+        z_mm: float,
+        yaw_deg: float | None,
+    ) -> object: ...
+
+    def execute_base_plan(self, plan: object) -> object: ...
+
+    def return_to_startup(self) -> object: ...
+
+    def stop(self) -> object: ...
+
+    def enable_joints(self) -> object: ...
+
+    def disable_joints(self) -> object: ...
+
+    def suction_grip(self) -> object: ...
+
+    def suction_release(self) -> object: ...
+
+    def get_status(self) -> object: ...
+
+    def shutdown(self) -> object: ...
+
+
+@dataclass(frozen=True)
+class RobotCapabilities:
+    base_frame_motion: bool
+    suction_control: bool
+    rotary_joint_enable_control: bool
+    hand_eye_calibration: HandEyeCalibrationStatus
+    vision_target_resolution: bool
+    vision_target_motion: bool
+
+
+@dataclass(frozen=True)
+class MushroomRobotStatus:
+    capabilities: RobotCapabilities
+    backend_status: object
+
+
+class MushroomRobotController:
+    """Base 运动可用、Camera 运动默认受门禁的应用层 façade。"""
+
+    def __init__(
+        self,
+        *,
+        base_backend: BaseFrameRobotBackend,
+        tray_workspace: TrayWorkspace,
+        target_resolver: VisionTargetResolver | None = None,
+        suction_control: bool = True,
+        rotary_joint_enable_control: bool = True,
+        orientation_tolerance_deg: float = 1e-6,
+    ) -> None:
+        if not isinstance(base_backend, BaseFrameRobotBackend):
+            raise TypeError("base_backend must implement BaseFrameRobotBackend")
+        if not isinstance(tray_workspace, TrayWorkspace):
+            raise TypeError("tray_workspace must be TrayWorkspace")
+        if target_resolver is not None and not isinstance(
+            target_resolver, VisionTargetResolver
+        ):
+            raise TypeError("target_resolver must be VisionTargetResolver or None")
+        if not isinstance(suction_control, bool):
+            raise TypeError("suction_control must be a bool")
+        if not isinstance(rotary_joint_enable_control, bool):
+            raise TypeError("rotary_joint_enable_control must be a bool")
+        if (
+            isinstance(orientation_tolerance_deg, bool)
+            or not isinstance(orientation_tolerance_deg, (int, float))
+            or not math.isfinite(orientation_tolerance_deg)
+            or orientation_tolerance_deg < 0.0
+        ):
+            raise ValueError(
+                "orientation_tolerance_deg must be finite and non-negative"
+            )
+        self._base_backend = base_backend
+        self._tray_workspace = tray_workspace
+        self._target_resolver = target_resolver
+        self._suction_control = suction_control
+        self._rotary_joint_enable_control = rotary_joint_enable_control
+        self._orientation_tolerance_deg = float(orientation_tolerance_deg)
+
+    @property
+    def capabilities(self) -> RobotCapabilities:
+        resolver = self._target_resolver
+        calibration = None if resolver is None else resolver.hand_eye_calibration
+        resolution_available = resolver is not None and resolver.available
+        return RobotCapabilities(
+            base_frame_motion=True,
+            suction_control=self._suction_control,
+            rotary_joint_enable_control=self._rotary_joint_enable_control,
+            hand_eye_calibration=hand_eye_status(calibration),
+            vision_target_resolution=resolution_available,
+            vision_target_motion=resolution_available,
+        )
+
+    @property
+    def tray_workspace(self) -> TrayWorkspace:
+        return self._tray_workspace
+
+    def startup(self) -> object:
+        return self._base_backend.startup()
+
+    def plan_to_base_pose(
+        self,
+        x_mm: float,
+        y_mm: float,
+        z_mm: float,
+        yaw_deg: float | None = None,
+    ) -> object:
+        self._base_backend.require_base_motion_ready()
+        if yaw_deg is not None:
+            _finite("yaw_deg", yaw_deg)
+        self._tray_workspace.require_xyz_allowed(
+            x_mm=x_mm,
+            y_mm=y_mm,
+            z_mm=z_mm,
+        )
+        return self._base_backend.plan_to_base_pose(x_mm, y_mm, z_mm, yaw_deg)
+
+    def move_to_base_pose(
+        self,
+        x_mm: float,
+        y_mm: float,
+        z_mm: float,
+        yaw_deg: float | None = None,
+    ) -> object:
+        plan = self.plan_to_base_pose(x_mm, y_mm, z_mm, yaw_deg)
+        return self._base_backend.execute_base_plan(plan)
+
+    def plan_to_observation(
+        self,
+        observation: VisionTargetObservation,
+        grasp_offset: RigidTransform,
+    ) -> object:
+        target = self._resolve_tool_goal(observation, grasp_offset)
+        x_mm, y_mm, z_mm, yaw_deg = self._base_pose_arguments(target)
+        return self.plan_to_base_pose(x_mm, y_mm, z_mm, yaw_deg)
+
+    def move_to_observation(
+        self,
+        observation: VisionTargetObservation,
+        grasp_offset: RigidTransform,
+    ) -> object:
+        target = self._resolve_tool_goal(observation, grasp_offset)
+        x_mm, y_mm, z_mm, yaw_deg = self._base_pose_arguments(target)
+        return self.move_to_base_pose(x_mm, y_mm, z_mm, yaw_deg)
+
+    def return_to_startup(self) -> object:
+        return self._base_backend.return_to_startup()
+
+    def stop(self) -> object:
+        return self._base_backend.stop()
+
+    def enable_joints(self) -> object:
+        return self._base_backend.enable_joints()
+
+    def disable_joints(self) -> object:
+        return self._base_backend.disable_joints()
+
+    def suction_grip(self) -> object:
+        return self._base_backend.suction_grip()
+
+    def suction_release(self) -> object:
+        return self._base_backend.suction_release()
+
+    def get_status(self) -> MushroomRobotStatus:
+        return MushroomRobotStatus(
+            capabilities=self.capabilities,
+            backend_status=self._base_backend.get_status(),
+        )
+
+    def shutdown(self) -> object:
+        return self._base_backend.shutdown()
+
+    def _resolve_tool_goal(
+        self,
+        observation: VisionTargetObservation,
+        grasp_offset: RigidTransform,
+    ) -> RigidTransform:
+        if self._target_resolver is None:
+            raise HandEyeCalibrationUnavailable(
+                "Hand-eye calibration is missing or not validated. "
+                "Base-frame manual motion remains available. "
+                "Camera-target motion is disabled."
+            )
+        return self._target_resolver.resolve_tool_goal_in_base(
+            observation,
+            grasp_offset,
+        )
+
+    def _base_pose_arguments(
+        self,
+        target: RigidTransform,
+    ) -> tuple[float, float, float, float]:
+        roll_deg, pitch_deg, yaw_deg = (float(value) for value in target.rpy_deg)
+        tolerance = self._orientation_tolerance_deg
+        if abs(roll_deg) > tolerance or abs(pitch_deg) > tolerance:
+            raise UnsupportedToolGoalOrientationError(
+                "resolved base_T_tool_goal contains roll/pitch outside the current "
+                "xyz+yaw Base-frame motion contract: "
+                f"roll={roll_deg:.9g} deg, pitch={pitch_deg:.9g} deg"
+            )
+        x_mm, y_mm, z_mm = (float(value) for value in target.translation_mm)
+        return x_mm, y_mm, z_mm, yaw_deg
+
+
+def _finite(name: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{name} must be a finite real number")
+    converted = float(value)
+    if not math.isfinite(converted):
+        raise ValueError(f"{name} must be finite")
+    return converted
+
+
+__all__ = [
+    "BaseFrameRobotBackend",
+    "MushroomRobotController",
+    "MushroomRobotStatus",
+    "RobotCapabilities",
+    "UnsupportedToolGoalOrientationError",
+]

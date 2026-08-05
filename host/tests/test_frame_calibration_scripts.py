@@ -456,6 +456,8 @@ class CalibrationScriptTests(unittest.TestCase):
             np.testing.assert_allclose(document.transforms.base_T_slide_zero.matrix, base.matrix)
             self.assertIsNotNone(document.transforms.tool_T_camera)
             self.assertEqual(document.metadata["keep"], "yes")
+            self.assertIs(document.metadata["tool_camera_validated"], False)
+            self.assertEqual(document.metadata["tool_camera_source"], "manual_entry")
 
     def _provider_module(self):
         test_case = self

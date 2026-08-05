@@ -76,6 +76,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 {
                     "tool_camera_set_at": datetime.now(timezone.utc).isoformat(),
                     "tool_camera_method": "manual_fixed_extrinsic_entry",
+                    "tool_camera_source": "manual_entry",
+                    "tool_camera_validated": False,
                     "tool_camera_notes": args.notes,
                 }
             )

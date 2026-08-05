@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "frame": "base",
+  "x_min_mm": null,
+  "x_max_mm": null,
+  "y_min_mm": null,
+  "y_max_mm": null,
+  "z_min_mm": null,
+  "z_max_mm": null,
+  "boundary_tolerance_mm": 0.000001,
+  "metadata": {
+    "validated": false,
+    "source": "TODO: replace null values with user-confirmed cultivation-tray boundaries"
+  }
+}
