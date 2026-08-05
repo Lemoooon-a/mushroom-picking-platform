@@ -1,0 +1,43 @@
+from __future__ import annotations
+
+import json
+import unittest
+
+from vision.observation import Quaternion, Vector3
+from vision.protocol import (
+    CaptureRequest, NoTarget, TargetDetection, VisionError, VisionProtocolError,
+    decode_message, encode_message,
+)
+
+
+class VisionProtocolTests(unittest.TestCase):
+    def test_request_encode_round_trip(self) -> None:
+        request = CaptureRequest("capture-1", "camera_optical", 12.5)
+        self.assertEqual(decode_message(encode_message(request)), request)
+
+    def test_detection_decode_with_optional_orientation(self) -> None:
+        detection = TargetDetection(
+            "capture-1", "camera_optical", 12.5, "mushroom-1", 0.95,
+            Vector3(1, 2, 3), Quaternion(0, 0, 0, 1),
+        )
+        self.assertEqual(decode_message(encode_message(detection)), detection)
+        without_orientation = json.loads(encode_message(detection))
+        without_orientation["orientation"] = None
+        self.assertIsNone(decode_message(json.dumps(without_orientation)).orientation)
+
+    def test_no_target_and_error(self) -> None:
+        self.assertEqual(decode_message(encode_message(NoTarget("capture-1", "no_detection"))), NoTarget("capture-1", "no_detection"))
+        error = VisionError("capture-1", "INVALID_DEPTH", "bad depth")
+        self.assertEqual(decode_message(encode_message(error)), error)
+
+    def test_malformed_json_and_invalid_schema_are_rejected(self) -> None:
+        with self.assertRaisesRegex(VisionProtocolError, "malformed JSON"):
+            decode_message("{")
+        with self.assertRaisesRegex(VisionProtocolError, "invalid fields"):
+            decode_message('{"protocol_version":1,"type":"no_target","request_id":"x","reason":"none","extra":1}')
+        with self.assertRaisesRegex(VisionProtocolError, "depth must be positive"):
+            TargetDetection("x", "camera", 0, None, None, Vector3(0, 0, 0))
+
+
+if __name__ == "__main__":
+    unittest.main()
