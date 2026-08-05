@@ -67,8 +67,8 @@ Negative: local_x in [50, 450] mm, local_y in [-350, -150] mm, center_y=-250 mm
 ```
 
 边界包含在内；中心空白区和矩形外部均为 `OUTSIDE`。最终普通五轴解必须位于正偏置区或负偏置
-区。参数、边界容差、Base Z=150 mm 跨区安全平面与 10 mm fallback 步长集中在
-`config/workspace_planning.py`。
+区。局部边界、容差和 10 mm fallback 步长集中在 `config/workspace_planning.py`；该配置不再
+包含 startup 或 Base-frame clearance。
 
 该 arm-local 偏置区只回答当前 Slide 下肩肘解是否有效以及是否需要重新分配 Slide；它不是
 Base frame 中的培养槽任务许可。最终用户目标另由应用层 `TrayWorkspace` 在调用本求解器前检查，
@@ -167,13 +167,17 @@ The Base–Slide-zero transform is provisional and has not passed an independent
 clearance_base_z = max(current_tcp_base_z, target_tcp_base_z, 150 mm)
 ```
 
-150 mm 是培养槽边框对应的 Base 绝对安全高度，不是相对当前位置再抬升 150 mm。先在 Base frame
+150 mm 来自 `config/robot_motion_envelope.py` 的当前项目软件安全阶段策略，是 Base 绝对最低高度，
+不是相对当前位置再抬升 150 mm。先在 Base frame
 构造该高度，再通过正式几何 helper 求 Z 逻辑位置，不使用固定轴增量。若当前或目标已经高于
 150 mm，则保持两者中较高高度；当前 TCP 已在最高点且高于 150 mm 时，`LIFT` 是零位移验证，
 随后可直接 `TRANSIT`。要求的安全高度超出 Z 逻辑范围时拒绝整个计划。
 
 150 mm 不是培养槽正常作业 Z 上限。应用层只检查最终任务目标；`LIFT`/`TRANSIT` 可高于培养槽
 Z 上限，但仍必须通过本节已有的轴软限位、阶段约束与完整 FK 验证。
+
+`BaseMoveTransitionPlanner` 由装配处显式注入 `RobotMotionEnvelopeConfig`；solver 只持有
+`OffsetWorkspaceConfig`。planner 不加载 local 文件、不访问硬件，也不从 Demo 脚本读取常量。
 
 ### OUTSIDE Conservative Policy
 
@@ -193,6 +197,8 @@ Z 上限，但仍必须通过本节已有的轴软限位、阶段约束与完整
 - 不检查自碰撞、环境碰撞、线缆、奇异邻域速度、路径连续性或动态可达性；
 - 候选优选不是数学唯一解，也不是碰撞或路径意义下的全局最优解；
 - 离线 FK/IK 和软限位通过不等于真实机构已安全验证。
+- `RobotMotionEnvelopeConfig` 仅集中 startup 和 side-switch 阶段策略，不包含完整机械包络、
+  自碰撞、环境碰撞或动态障碍。
 
 ## 15. Future real-motion integration
 

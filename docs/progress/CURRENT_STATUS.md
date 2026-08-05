@@ -8,9 +8,13 @@
 
 项目已从“跨层功能散落在脏工作树”推进到“依赖顺序明确、可在本地 Git 中复现的 Host 子系统集成”阶段。STM32 Slide/Z、物理开关归零和 machine protocol 仍是硬件证据最成熟的部分；Host 已形成五轴点到点控制、关节 holding 生命周期、吸盘语义、Base frame（基座坐标系）偏移规划、安全过渡、培养槽门限、应用控制器与视觉能力门禁。
 
-本轮按 S1、R1–R6 固化了全部目标变更，Host 517 项离线测试通过。该结果证明接口、数学和 fake/mock 集成可复现，不证明真实五轴、培养槽作业、吸附、视觉抓取或完整采摘流程已经完成硬件验证。
+S1、R1–R6 已固化功能基线；本轮 C1/C2 又把 TrayWorkspace、arm-local OffsetWorkspace 和
+RobotMotionEnvelope 分离为明确配置概念。Host 524 项离线测试通过。该结果证明接口、数学和
+fake/mock 集成可复现，不证明真实五轴、培养槽作业、吸附、视觉抓取或完整采摘流程已经完成硬件验证。
 
-当前最大缺口是完整机械系统验证：缺少可复核的五轴阶段运动日志、独立 Robot motion envelope（机器人机械运动包络）、真空反馈、已验证 `tool_T_camera` 手眼外参、视觉抓取与故障恢复证据。下一主要里程碑应是受控的子系统硬件回归，而不是移动配置或测试目录。
+当前最大缺口是完整机械系统验证：新增的 Robot motion envelope（机器人运动包络）只集中
+startup 与中间安全阶段策略，不是完整碰撞/物理包络；仍缺五轴阶段运动日志、真空反馈、已验证
+`tool_T_camera` 手眼外参、视觉抓取与故障恢复证据。下一主要里程碑应是受控的子系统硬件回归。
 
 ## 2. 总体进度矩阵
 
@@ -26,7 +30,7 @@
 | Rotation | Implemented | RS-485 协议、位置换算、`-150..150°`、torque 生命周期 | 无已验证独立 stop；负载速度未验收 | Offline tested；历史小角度证据 |
 | 五轴运动学 | Implemented | FK/IK、偏移工作区、关节限位过滤、确定性候选选择 | 真实几何与多姿态机械复核 | Mathematical/offline tested |
 | 多执行器协调 | Implemented | 五轴点到点提交、到位稳定窗、timeout、peer stop、startup/return | 不是轨迹同步；无碰撞/扫掠模型 | Offline integrated |
-| 坐标与托盘门限 | Implemented | Base/Slide/Arm/Tool 链、最终 TCP 培养槽门限 | 独立机械包络尚未建模 | Mathematical/offline tested |
+| 坐标与工作区策略 | Implemented | Base/Slide/Arm/Tool 链、Tray 最终 TCP、arm-local offset、startup/clearance envelope | 完整机械/碰撞包络尚未建模 | Mathematical/offline tested |
 | 视觉到机器人 | Implemented with gate | observation、Camera→Tool→Base 解析、未验证外参 fail-closed | `tool_T_camera` 当前缺失/未验证 | Offline tested；真实运动 blocked |
 | 完整采摘任务 | Not verified | 应用 API、startup、Base 目标、吸盘与返回接口已具备 | 感知、吸附确认、搬运/释放策略、恢复状态机 | 尚未 system validated |
 
@@ -36,10 +40,10 @@
 
 | 仓库 | 关系 | 分支 / upstream | 当前提交序列 | 最终工作树 | 可复现性 |
 | --- | --- | --- | --- | --- | --- |
-| `/Users/sd/Projects/mushroom-picking-platform` | 根仓库 | `main` / `origin/main` | R1–R6；R5 为 `78ccb62`，R6 为本报告提交 | R6 后 clean | 本地可复现；尚未 push |
+| `/Users/sd/Projects/mushroom-picking-platform` | 根仓库 | `main` / `origin/main` | R1–R6、C1 `bca3443`、C2 本报告提交 | C2 后 clean | 本地可复现；尚未 push |
 | `firmware/stm32_motion_controller` | `.gitmodules` + root gitlink 正式子模块 | `refactor/generic-stepper-driver` / 无 upstream | S1 `6ee9a62b210e798e6199a97889cde424afca6b8f` | clean | root 已锁定 S1；跨机器取用前需先发布子模块提交 |
 
-根仓库只有一个 worktree。相对本地已有的 `origin/main` 引用，R6 后预计 `ahead 21, behind 0`；本轮未 fetch，因此不把该数字解释为远端实时状态。
+根仓库只有一个 worktree。相对本地已有的 `origin/main` 引用，C2 后预计 `ahead 23, behind 0`；本轮未 fetch，因此不把该数字解释为远端实时状态。
 
 ### 3.2 本轮提交
 
@@ -51,11 +55,13 @@
 | R3 | `0da9633` | `feat(host): add offset workspace planning and safe transitions` | 偏移规划与阶段过渡 |
 | R4 | `62d5011` | `feat(host): add tray-gated application and vision capability boundary` | 托盘、应用、手眼与视觉门禁 |
 | R5 | `78ccb62` | `feat(host): integrate startup demo with application safety lifecycle` | demo/application 安全生命周期 |
-| R6 | 本报告所在提交 | `docs: synchronize repository status and interface evidence` | 当前状态与交接证据同步 |
+| R6 | `cd95ea9` | `docs: synchronize repository status and interface evidence` | 上一轮状态与交接证据同步 |
+| C1 | `bca3443` | `refactor(host): separate workspace and motion envelope config` | 配置模型、注入、CLI 输出与测试 |
+| C2 | 本报告所在提交 | `docs(host): clarify configuration and workspace roles` | 配置职责与工作区文档同步 |
 
 ### 3.3 未提交与本机配置
 
-R6 终检目标是根仓库、根 index 和子模块工作树均 clean。以下本机文件继续由 Git ignore 保护，未进入任何提交：
+C2 终检目标是根仓库、根 index 和子模块工作树均 clean。以下本机文件继续由 Git ignore 保护，未进入任何提交：
 
 - `host/config/hardware_local.py`
 - `host/config/motion_local.py`
@@ -88,6 +94,8 @@ Feetech Rotation axis ──────────────┘        ├�
 - `host/application/`、`host/vision/`：应用边界、培养槽门禁与视觉能力 fail-closed。
 - `host/scripts/`：人工入口；真实动作需显式授权/确认，import 不应产生硬件 I/O。
 - `host/config/*.local.*`：机器专属配置；被忽略且不会随提交分发。
+- `host/config/workspace_planning.py`：arm-local 偏置求解策略；不含 Base clearance。
+- `host/config/robot_motion_envelope.py`：startup/return 与中间安全阶段策略；不是碰撞模型。
 - `host/tests/`：当前保留 flat layout 的离线测试；目录整理延后。
 - CubeMX/Core 等生成代码与手写 `App/` 代码在子模块中保持原有边界，本轮未重构。
 
@@ -166,10 +174,16 @@ machine protocol v2 提供带 command id 的接受响应与终态 event；Host c
 | 每个 R1–R5 提交后 | `.venv/bin/python -m unittest discover -s tests -q` | 每次 exit 0；Ran 517；OK |
 | R6 文档守卫 | `.venv/bin/python -m unittest tests.test_script_cleanup -q` | exit 0；Ran 6；OK |
 | R6 提交前全量 | `.venv/bin/python -m unittest discover -s tests -q` | exit 0；Ran 517；OK |
+| C1 提交前/后全量 | `.venv/bin/python -m unittest discover -s tests -q` | exit 0；Ran 524；OK |
+| C1 编译检查 | `.venv/bin/python -m py_compile config/workspace_planning.py config/robot_motion_envelope.py kinematics/base_move_transition_planner.py application/demo_backend.py scripts/run_motion_demo.py scripts/manual_motion.py` | exit 0 |
+| C2 文档守卫 | `.venv/bin/python -m unittest tests.test_script_cleanup -q` | exit 0；Ran 6；OK |
+| C2 提交前全量 | `.venv/bin/python -m unittest discover -s tests -q` | exit 0；Ran 524；OK |
 
 ### 9.3 Mathematical Tests
 
-五轴 FK/IK、Base solver、offset workspace、transition planner、RigidTransform、frame chain、tray boundary 和 vision transform 均包含在 517 项测试中。输入为合成值或本地 example，不读取真实机器标定来证明精度。
+五轴 FK/IK、Base solver、offset workspace、motion envelope 注入、transition planner、RigidTransform、
+frame chain、tray boundary 和 vision transform 均包含在 524 项测试中。输入为合成值或本地
+example，不读取真实机器标定来证明精度。
 
 ### 9.4 Electrical Bench Tests
 
@@ -185,7 +199,7 @@ Host 离线集成通过；没有真实五轴、托盘、视觉、吸附或完整
 
 ## 10. 资源与性能
 
-- Host 全量 517 项测试单次约 0.70–0.85 秒，进程 wall 约 1 秒。
+- Host 全量 524 项测试单次约 0.72–0.83 秒，进程 wall 约 1 秒。
 - STM32 protocol 最大 frame 为 96 bytes；UART 日志流量仍可能影响 machine protocol 压力边界。
 - CAN transport 有 timeout/retry 与锁；真实双电机长期吞吐和错误恢复未验收。
 - 没有本轮可信的新 FLASH/RAM、ISR timing 或机械节拍数据，不能猜测。
@@ -208,7 +222,7 @@ Host 离线集成通过；没有真实五轴、托盘、视觉、吸附或完整
 1. `tool_T_camera` 没有已验证值，视觉目标运动不可用。
 2. 无真空传感器，无法从软件确认吸附成功。
 3. Rotation 无已验证独立 stop；统一 stop 只能 best-effort。
-4. 独立 Robot motion envelope 与碰撞/扫掠路径模型尚不存在。
+4. Robot motion envelope 配置已集中 startup/clearance，但完整机械包络与碰撞/扫掠路径模型尚不存在。
 5. 仓库没有本轮 Host 组合能力的真实硬件日志，离线通过不能升级为 hardware-tested。
 6. S1 与根提交尚未 push；root gitlink 在其他机器可获取之前，必须先发布子模块提交。
 
@@ -227,16 +241,16 @@ Host 离线集成通过；没有真实五轴、托盘、视觉、吸附或完整
 - Shoulder/Elbow/Rotation 最终负载速度、标定证据与安全失能策略。
 - vacuum sensor、阈值、吸附成功定义和 emergency release policy。
 - `tool_T_camera`、Camera frame/内参/深度、抓取 offset 与独立验证阈值。
-- Robot motion envelope、碰撞区、阶段轨迹和跨执行器故障传播策略。
+- 是否扩展 Robot motion envelope 以表达经硬件验证的机械范围；碰撞区、阶段轨迹和跨执行器故障传播策略仍待设计。
 - 是否将单机 tracked 参数迁移为多机器 profile；该决定不得与当前功能提交混合。
 
 ## 14. 下一阶段建议
 
 ### P0 — 发布本地可复现基线
 
-- 目标：经人工 review 后先 push 子模块 S1，再 push 根仓库 R1–R6，保证 gitlink 可获取。
+- 目标：经人工 review 后先 push 子模块 S1，再 push 根仓库 R1–R6、C1–C2，保证 gitlink 可获取。
 - 文件：无新增源文件；只发布现有提交。
-- 验收：新 clone 能初始化子模块并运行 517 项测试。
+- 验收：新 clone 能初始化子模块并运行 524 项测试。
 - 安全：发布不等于硬件验收；本轮未执行 push。
 
 ### P1 — Z/Slide 与 holding 受控硬件回归
@@ -256,13 +270,14 @@ Host 离线集成通过；没有真实五轴、托盘、视觉、吸附或完整
 - 目标：完成 hand-eye、目标质量门限、抓取 offset、真空确认、搬运/释放和恢复状态机。
 - 验收：独立验证集通过，Camera target 才从 unavailable 升级；完整流程需重复成功与失败恢复证据。
 
-配置与测试目录整理应在上述功能基线稳定后单独进行，保持纯机械提交并确保 517 项数量不变。
+本轮仅新增配置职责说明和一个 flat test 文件，没有移动配置/local 路径或测试目录。未来目录移动仍应
+作为独立机械提交，并确保 524 项测试数量不减少。
 
 ## 15. 交接信息
 
 - 当前阶段：Host 子系统离线集成已固化；真实完整采摘未验证。
-- 当前任务：S1 与 R1–R6 本地提交完成，等待终检与人工 review；未 push。
-- 首读文件：本报告、`host/scripts/run_motion_demo.py`、`host/motion/unified_controller.py`、`host/kinematics/base_move_transition_planner.py`、`host/application/controller.py`、子模块 `App/README.md`。
+- 当前任务：C1 已提交，C2 为本报告所在提交；等待终检与人工 review，未 push。
+- 首读文件：本报告、`host/config/README.md`、`host/config/robot_motion_envelope.py`、`host/scripts/run_motion_demo.py`、`host/kinematics/base_move_transition_planner.py`、`host/application/controller.py`。
 - 首跑命令：
 
 ```bash
@@ -276,5 +291,5 @@ cd host
 
 - 已确认并提交的关键语义：Z Home `0 mm`、向下负坐标、Z `-190..0 mm`；Shoulder `[-65,65]°`；Elbow `[-160,160]°`；Rotation `[-150,150]°`。
 - 不得猜测：真实 link/外参、最终行程、碰撞包络、真空阈值、抓取 offset、急停与失能机械后果。
-- 非忽略未提交变更：R6 终检目标为无；5 份机器专属 local 配置继续 ignored。
+- 非忽略未提交变更：C2 终检目标为无；5 份机器专属 local 配置继续 ignored。
 - 下一里程碑：先发布可获取的子模块/root 提交，再执行有硬件急停保障的 P1 回归。

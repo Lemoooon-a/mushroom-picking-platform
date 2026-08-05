@@ -16,6 +16,10 @@ Vision Observation → VisionTargetResolver → Base TCP Goal ┘
 控制器只维护应用层培养槽任务门限，不复制机械臂局部正负偏置区、IK、Slide 选择、跨区规划或
 轴执行。
 
+装配层明确区分三份配置：`TrayWorkspaceConfig` 检查 Base 最终任务 TCP，
+`OffsetWorkspaceConfig` 注入 solver 的 arm-local 策略，`RobotMotionEnvelopeConfig` 注入 planner
+和 startup/return 专用流程。
+
 ## 2. 正式可用接口
 
 以下接口通过 `BaseFrameRobotBackend` 转发现有 `DemoMotionFlow` 和统一运动链：
@@ -116,6 +120,11 @@ robot = create_mushroom_robot_controller(
 )
 ```
 
+工厂使用 tracked `DEFAULT_OFFSET_WORKSPACE_CONFIG` 与
+`DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG`，并只从显式路径加载 Tray local 配置。相同 envelope 实例
+同时提供 startup pose 和 planner side-switch clearance，CLI、controller、solver 与 planner
+不会各自创建第二份数值。
+
 仓库不提供推测边界或可执行默认值。本机已按用户 2026-08-05 的明确输入配置 Base X
 `[20, 480] mm`、Base Y `[20, 700] mm`、Base Z `[0, 180] mm`，并设置
 `metadata.validated=true`。其他机器应复制 `config/tray_workspace.example.json` 为被 Git 忽略的
@@ -128,7 +137,8 @@ Base Z `[0, 180] mm` 是最终 TCP 的绝对任务许可高度。上限 `180 mm`
 构造本身不打开硬件。显式 `startup()` 才由原流程打开 Runtime 并执行对应 READ_ONLY 或 MOTION
 模式；`shutdown()` 关闭通信资源。真实执行仍必须由调用者显式传入 `execute=True`，沿用现有运动
 授权规则。正常 CLI 的 `move` 命令调用 `MushroomRobotController.move_to_base_pose()`；`workspace`
-命令只读显示 Base-frame 培养槽边界、arm-local 正负偏置区及启动例外。
+命令只读显示 Base-frame 培养槽边界、arm-local 正负偏置区、Robot motion envelope、startup、
+side-switch clearance 和轴/关节限位，并明确 envelope 不是碰撞模型。
 
 ## 6. 明确不提供的接口
 
