@@ -150,7 +150,12 @@ cd host
 python scripts/maintenance/mg4010_joint.py basic-parameters --joint shoulder
 python scripts/maintenance/mg4010_joint.py initialize --joint shoulder
 python scripts/maintenance/mg4010_joint.py state --joint shoulder
+python scripts/maintenance/mg4010_joint.py logical-angle --joint elbow --watch --interval 0.5
 ```
+
+`logical-angle` 是只读诊断入口：它绕过软件限位拒绝，按正式减速比、逻辑零点和方向持续显示
+相对逻辑零点的有符号最短角差（范围 `[-180, 180)` 度），并通过 `within_limits` 标明当前位置
+是否位于配置的软件限位内。它不会执行初始化、使能或运动；按 `Ctrl+C` 停止持续读取。
 
 单关节 move 默认只预览；真实动作必须显式双确认：
 
@@ -172,8 +177,8 @@ python scripts/maintenance/mg4010_joint.py software-stop \
 
 当前 `shoulder` 为 ID 1、`elbow` 为 ID 2，两者均使用 36:1 减速比。肩关节以
 OA=100 度为逻辑零点，逻辑范围为
--60 到 +70 度；肘关节以 OA=158 度为逻辑零点并反向，逻辑范围为
--152 到 +152 度。两者当前最大逻辑关节速度都是每秒 50 度。机械安装或编码器对应关系变化
+-65 到 +65 度；肘关节以 OA=158 度为逻辑零点并反向，逻辑范围为
+-160 到 +160 度。两者当前最大逻辑关节速度都是每秒 50 度。机械安装或编码器对应关系变化
 后必须重新标定零点、方向和限位。
 
 ## 肩肘联合控制
@@ -423,7 +428,7 @@ Rotation 时同样执行该门禁，timeout 不会被描述为已停止，也不
 
 到位容差、稳定窗口、轮询周期、timeout、默认速度、默认加速度以及 Slide/Z 的 Host 位置、
 速度和加速度上限统一来自被 Git 忽略的 `config/motion_local.py`。当前本机线性范围同步 STM32
-firmware 的临时软限位：Slide `0..799.988 mm`、Z `0..190 mm`；固件仍独立执行同一底层保护。
+firmware 软限位：Slide `0..799.988 mm`、Z `-190..0 mm`；固件仍独立执行同一底层保护。
 当前实测运行默认值为 Slide `60 mm/s`、`180 mm/s²`，Z `8 mm/s`、`25 mm/s²`；它们
 不等于允许上限。完成整机有效行程验收后，应同时更新 firmware 与本地配置，避免 Host 和
 下位机范围不一致。
@@ -495,7 +500,7 @@ cd host
   --confirm-home-motion
 ```
 
-Z 使用 `--axis z`，默认 timeout 为 60 秒；Slide 默认 15 秒，也可用正数 `--timeout` 覆盖。
+Z 使用 `--axis z`，默认 timeout 为 120 秒；Slide 默认 15 秒，也可用正数 `--timeout` 覆盖。
 程序通过 `controller.home_reference()` 调用统一接口，只有结果为 `ARRIVED`，且最终
 `homed=True`、`position_valid=True`、`busy=False`、`faulted=False` 才返回成功。controller
 返回 terminal timeout/fault/abort 后 CLI 不重复 stop；仅在提交可能已发生但尚无 terminal result

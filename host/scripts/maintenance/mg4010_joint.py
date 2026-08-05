@@ -11,6 +11,7 @@ from collections.abc import Sequence
 import math
 from pathlib import Path
 import sys
+import time
 
 
 HOST_ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +36,16 @@ def build_parser() -> argparse.ArgumentParser:
     for command in ("raw-status", "basic-parameters", "initialize", "state"):
         sub = commands.add_parser(command)
         sub.add_argument("--joint", choices=tuple(JOINT_CONFIGS), required=True)
+
+    logical_angle = commands.add_parser(
+        "logical-angle",
+        help="read the signed angle from the calibrated logical zero without limit rejection",
+    )
+    logical_angle.add_argument(
+        "--joint", choices=tuple(JOINT_CONFIGS), required=True
+    )
+    logical_angle.add_argument("--watch", action="store_true")
+    logical_angle.add_argument("--interval", type=positive_float, default=0.5)
 
     move = commands.add_parser("move")
     move.add_argument("--joint", choices=tuple(JOINT_CONFIGS), required=True)
@@ -75,6 +86,40 @@ def _print_raw_report(joint: object, *, emit=print) -> None:
     emit(f"fault={fault}")
 
 
+def _read_diagnostic_logical_angle_deg(joint: object) -> tuple[float, float, bool]:
+    """Read a signed angle from logical zero without applying software limits.
+
+    The 0x94 absolute position covers one configured output-shaft revolution, so
+    the limit-independent interpretation is the shortest signed offset from the
+    calibrated logical zero, in ``[-180, 180)`` degrees.
+    """
+
+    single = joint.driver.read_single_turn_position()
+    config = joint.config
+    output_abs_deg = (single.motor_cycle_deg / config.gear_ratio) % 360.0
+    output_delta_deg = (
+        output_abs_deg - (config.encoder_zero_output_deg % 360.0) + 180.0
+    ) % 360.0 - 180.0
+    logical_deg = config.direction_sign * output_delta_deg
+    minimum_deg = math.degrees(config.min_position_rad)
+    maximum_deg = math.degrees(config.max_position_rad)
+    return logical_deg, output_abs_deg, minimum_deg <= logical_deg <= maximum_deg
+
+
+def _print_diagnostic_logical_angle(joint: object, *, emit=print) -> None:
+    logical_deg, output_abs_deg, within_limits = _read_diagnostic_logical_angle_deg(
+        joint
+    )
+    emit(
+        f"time={time.strftime('%H:%M:%S')} joint={joint.config.name} "
+        f"logical_position_deg={logical_deg:.6f} "
+        f"output_abs_deg={output_abs_deg:.6f} "
+        f"within_limits={str(within_limits).lower()} "
+        f"limits_deg=[{math.degrees(joint.config.min_position_rad):.6f},"
+        f"{math.degrees(joint.config.max_position_rad):.6f}]"
+    )
+
+
 def run(args: argparse.Namespace, *, runtime_factory=None, emit=print) -> int:
     runtime_factory = runtime_factory or create_configured_runtime
     write = args.command in ("move", "software-stop") and args.execute
@@ -102,6 +147,12 @@ def run(args: argparse.Namespace, *, runtime_factory=None, emit=print) -> int:
         elif args.command == "basic-parameters":
             _print_raw_report(joint, emit=emit)
             emit(f"formal_joint_config={joint.config}")
+        elif args.command == "logical-angle":
+            while True:
+                _print_diagnostic_logical_angle(joint, emit=emit)
+                if not args.watch:
+                    break
+                time.sleep(args.interval)
         elif args.command == "initialize":
             emit(
                 "initialize reads stable absolute position into this process; "

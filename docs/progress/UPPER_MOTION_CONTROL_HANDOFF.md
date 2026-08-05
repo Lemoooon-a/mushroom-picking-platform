@@ -82,8 +82,8 @@ motion timeout 或严格同步轨迹。
 
 | 关节 | CAN ID | ratio | logical zero | direction | limits | max velocity |
 | --- | ---: | ---: | --- | ---: | --- | --- |
-| shoulder | 1 | 36:1 | output absolute 100° | +1 | -60°..+70° | 50°/s |
-| elbow | 2 | 36:1 | output absolute 158° | -1 | -152°..+152° | 50°/s |
+| shoulder | 1 | 36:1 | output absolute 100° | +1 | -65°..+65° | 50°/s |
+| elbow | 2 | 36:1 | output absolute 158° | -1 | -160°..+160° | 50°/s |
 
 这些值由代码注释声明来自上机测量，但 `docs/calibration/` 没有独立校准记录。因此其
 软件来源可追踪，原始测量证据和机械复验记录不足。Planar 2R 的真实 `L1/L2` 也未写入
@@ -150,9 +150,9 @@ machine position；成功归零后 `homed` 和 `valid` 才成立，`DI`、`SA` �
 `host/tests/test_stm32_motion.py` 读取 submodule 当前 header/README，锁定 version、最大
 行长和命令集合，发生漂移时离线测试失败。
 
-发现一处文档漂移：固件 `App/README.md` 仍有“临时 `0..200 step`”说明，而当前
-`motion_platform_config.c` 是 Z `0..60800 step`、Slide `0..35555 step`。本轮未修改验收
-固件，只记录风险；最终机械全行程仍需实测。
+当前 `motion_platform_config.c` 是 Z `-60800..0 step`、Slide `0..33333 step`。Z 已按
+最高点归零、向下为负和 `-190..0 mm` 实测行程同步固件、Host 配置及协议示例；重新烧录后
+仍需执行一次归零与软限位复验。Slide 最终机械全行程仍需实测。
 
 ## 5. `feetech_arm.zip` 审查
 
@@ -204,7 +204,7 @@ machine position；成功归零后 `homed` 和 `valid` 才成立，`DI`、`SA` �
 - `host/config/feetech.py`
   - `SM45BL_C001_PROFILE` 固化型号、协议、RS-485、115200、4096 counts 和寄存器表；
   - `END_EFFECTOR_ROTATION_CONFIG` 固化 ID 1、`zero_raw=2130`、`direction_sign=+1`、
-    `±45°` 调试限位和 500 raw 调试速度上限；逻辑正方向记录为 `+X`；
+    `-150°..+150°` 当前限位和 500 raw 调试速度上限；逻辑正方向记录为 `+X`；
 - `host/scripts/maintenance/feetech_rotation.py`
   - 通过 runtime 复用正式 Feetech 配置、VID/PID 设备发现、bus 和 Rotation axis；
   - 提供 ping/state/feedback/move/torque/register maintenance 子命令；

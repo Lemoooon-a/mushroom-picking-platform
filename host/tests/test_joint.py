@@ -211,18 +211,18 @@ class ConfiguredJointTests(unittest.TestCase):
         self.assertEqual(SHOULDER_JOINT_CONFIG.encoder_zero_output_deg, 100.0)
         self.assertEqual(SHOULDER_JOINT_CONFIG.direction_sign, 1)
         self.assertAlmostEqual(
-            SHOULDER_JOINT_CONFIG.min_position_rad, math.radians(-60)
+            SHOULDER_JOINT_CONFIG.min_position_rad, math.radians(-65)
         )
         self.assertAlmostEqual(
-            SHOULDER_JOINT_CONFIG.max_position_rad, math.radians(70)
+            SHOULDER_JOINT_CONFIG.max_position_rad, math.radians(65)
         )
         self.assertEqual(ELBOW_JOINT_CONFIG.encoder_zero_output_deg, 158.0)
         self.assertEqual(ELBOW_JOINT_CONFIG.direction_sign, -1)
         self.assertAlmostEqual(
-            ELBOW_JOINT_CONFIG.min_position_rad, math.radians(-152)
+            ELBOW_JOINT_CONFIG.min_position_rad, math.radians(-160)
         )
         self.assertAlmostEqual(
-            ELBOW_JOINT_CONFIG.max_position_rad, math.radians(152)
+            ELBOW_JOINT_CONFIG.max_position_rad, math.radians(160)
         )
 
     def test_calibrated_velocity_limit_conversion(self) -> None:
@@ -234,28 +234,28 @@ class ConfiguredJointTests(unittest.TestCase):
     def test_shoulder_calibration_maps_measured_angles(self) -> None:
         config = SHOULDER_JOINT_CONFIG
         self.assertAlmostEqual(
-            resolve_output_angle_to_joint_position(40, config), math.radians(-60)
+            resolve_output_angle_to_joint_position(35, config), math.radians(-65)
         )
         self.assertAlmostEqual(resolve_output_angle_to_joint_position(100, config), 0.0)
         self.assertAlmostEqual(
-            resolve_output_angle_to_joint_position(170, config), math.radians(70)
+            resolve_output_angle_to_joint_position(165, config), math.radians(65)
         )
 
     def test_reversed_elbow_calibration_crosses_encoder_wrap(self) -> None:
         config = ELBOW_JOINT_CONFIG
         self.assertAlmostEqual(
-            resolve_output_angle_to_joint_position(310, config), math.radians(-152)
+            resolve_output_angle_to_joint_position(318, config), math.radians(-160)
         )
         self.assertAlmostEqual(resolve_output_angle_to_joint_position(158, config), 0.0)
         self.assertAlmostEqual(
-            resolve_output_angle_to_joint_position(6, config), math.radians(152)
+            resolve_output_angle_to_joint_position(358, config), math.radians(160)
         )
 
     def test_calibrated_limits_reject_outside_output_angles(self) -> None:
         with self.assertRaises(JointPositionOutOfRangeError):
             resolve_output_angle_to_joint_position(180, SHOULDER_JOINT_CONFIG)
         with self.assertRaises(JointPositionOutOfRangeError):
-            resolve_output_angle_to_joint_position(0, ELBOW_JOINT_CONFIG)
+            resolve_output_angle_to_joint_position(350, ELBOW_JOINT_CONFIG)
 
 
 class InitializationTests(unittest.TestCase):

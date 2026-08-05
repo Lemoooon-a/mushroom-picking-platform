@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     home = commands.add_parser("home")
     home.add_argument("--axis", choices=_AXES, required=True)
-    home.add_argument("--event-timeout", type=positive_float, default=60.0)
+    home.add_argument("--event-timeout", type=positive_float, default=120.0)
     home.add_argument("--execute", action="store_true")
     home.add_argument("--confirm-home-motion", action="store_true")
 

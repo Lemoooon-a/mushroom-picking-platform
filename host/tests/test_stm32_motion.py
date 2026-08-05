@@ -307,8 +307,8 @@ class FirmwareContractTests(unittest.TestCase):
             "FAULT V <protocol_error>",
         ):
             self.assertIn(wire_format, document)
-        self.assertIn("@4 MA Z 35000 5000 10000", vectors)
-        self.assertIn("@45 MA Z -35000 5000 10000", vectors)
+        self.assertIn("@4 MA Z -35000 5000 10000", vectors)
+        self.assertIn("@45 MA Z 35000 5000 10000", vectors)
 
 
 if __name__ == "__main__":
