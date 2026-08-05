@@ -96,7 +96,7 @@ class MotionClientInterfaceTests(unittest.TestCase):
         self.assertIs(kinematics_wait["return"], MultiAxisCommandResult)
 
     def test_interface_module_has_no_transport_or_driver_imports(self) -> None:
-        source_path = Path(__file__).parents[2] / "motion" / "client_interfaces.py"
+        source_path = Path(__file__).parents[3] / "motion" / "client_interfaces.py"
         tree = ast.parse(source_path.read_text(encoding="utf-8"))
         imported_modules: set[str] = set()
         for node in ast.walk(tree):
@@ -114,7 +114,7 @@ class MotionClientInterfaceTests(unittest.TestCase):
         )
 
     def test_handoff_documents_contain_required_boundary_terms(self) -> None:
-        docs_dir = Path(__file__).parents[3] / "docs" / "handoffs"
+        docs_dir = Path(__file__).parents[4] / "docs" / "handoffs"
         for filename in (
             "FRONTEND_MOTION_INTERFACE_HANDOFF.md",
             "KINEMATICS_MOTION_INTERFACE_HANDOFF.md",

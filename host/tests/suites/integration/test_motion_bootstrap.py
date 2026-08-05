@@ -553,7 +553,7 @@ class BootstrapImportTests(unittest.TestCase):
         can_open: Mock,
         feetech_open: Mock,
     ) -> None:
-        path = Path(__file__).resolve().parents[2] / "bootstrap.py"
+        path = Path(__file__).resolve().parents[3] / "bootstrap.py"
         spec = importlib.util.spec_from_file_location("bootstrap_side_effect_test", path)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)

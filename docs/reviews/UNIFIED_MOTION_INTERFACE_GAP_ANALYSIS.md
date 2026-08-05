@@ -72,11 +72,11 @@
  M host/README.md
  M host/config/__init__.py
  M host/scripts/test_feetech_rotation.py
- M host/tests/motion/test_feetech_rotation.py
+ M host/tests/suites/motion/test_feetech_rotation.py
 ?? docs/interfaces/
 ?? docs/progress/项目进度_2026-07-31.md
 ?? host/config/project/feetech.py
-?? host/tests/config/test_feetech_config.py
+?? host/tests/suites/config/test_feetech_config.py
 ```
 
 这些改动均视为用户已有工作并被保留。本轮只新增本报告。
@@ -103,7 +103,7 @@ OK
 - skips：0；
 - 硬件参与：无。
 
-无硬件 I/O 的依据：测试为 `FakeTransport`、fake CAN bus、fake serial、`MagicMock` 或 CLI dry-run；例如 `host/tests/protocol/test_stm32_motion.py:19-32`、`host/tests/integration/test_upper_motion_smoke.py:14-26`、`host/tests/kinematics/test_planar_arm.py:123-143`、`host/tests/motion/test_feetech_rotation.py:117-131`。本轮没有调用任何真实脚本的 `--execute`、`--enable-motion`、串口 `open()`、CAN `open()`、torque enable、home 或位置命令。
+无硬件 I/O 的依据：测试为 `FakeTransport`、fake CAN bus、fake serial、`MagicMock` 或 CLI dry-run；例如 `host/tests/suites/protocol/test_stm32_motion.py:19-32`、`host/tests/suites/integration/test_upper_motion_smoke.py:14-26`、`host/tests/suites/kinematics/test_planar_arm.py:123-143`、`host/tests/suites/motion/test_feetech_rotation.py:117-131`。本轮没有调用任何真实脚本的 `--execute`、`--enable-motion`、串口 `open()`、CAN `open()`、torque enable、home 或位置命令。
 
 测试通过只证明离线逻辑和 fake 交互，不证明最终机械行程、方向、负载速度、到位精度或真实通信稳定性。
 
@@ -194,7 +194,7 @@ Host 目前没有协议要求的 mm 适配器。
 - `CanMotorBus` 构造不扫描或打开 CAN，只有 `open()` 才扫描/创建 bus（`host/drivers/can_bus.py:66-99,112-161`）；
 - `FeetechBus` 构造不打开串口，只有 `open()` 或 context manager 才打开（`host/drivers/feetech_protocol.py:139-184`）；
 - 三类 axis/joint 对象构造均不 enable、不归零、不发位置命令；
-- 真实运动脚本均要求显式开关，默认 dry-run/preview（`host/scripts/test_planar_2r_motion.py:40-67,179-199`、`host/tests/motion/test_feetech_rotation.py:117-131`）。
+- 真实运动脚本均要求显式开关，默认 dry-run/preview（`host/scripts/test_planar_2r_motion.py:40-67,179-199`、`host/tests/suites/motion/test_feetech_rotation.py:117-131`）。
 
 未发现 import 或普通对象构造时自动扫描端口、ping、enable、torque enable、home、clear fault 或运动。
 
@@ -207,10 +207,10 @@ Host 目前没有协议要求的 mm 适配器。
 | §2 | `UnifiedMotionController` + 三类 adapter | 只有后端对象聚合和静态能力表，不分发调用 | `MISSING` | `host/motion/capabilities.py:75-94` | 新增统一控制器；adapter 可先作为统一控制器私有类，避免文件爆炸 |
 | §3 | 稳定 `slide/z/shoulder/elbow/rotation`，隐藏底层 ID | 聚合字典已有五个名称，但无 `AxisName`；Rotation 配置名仍为 `end_effector_rotation` | `PARTIAL` | `host/motion/capabilities.py:86-93`；`host/config/project/feetech.py:75-77` | 定义唯一 `AxisName`；描述符和分发只使用该枚举 |
 | §4.1 | Linear 使用 mm，rotary 使用 deg，不暴露 µm/rad/raw | STM32 API 为 integer µm；关节为 rad；Rotation 为 rad + raw speed/acceleration | `NON_COMPLIANT` | `host/drivers/stm32_motion.py:372-405`；`host/robot/joint.py:349-353`；`host/robot/feetech_rotation.py:203-210` | adapter 边界完成 mm/deg 转换；不改变底层内部单位 |
-| §4.2/§14.2 | 肩肘逻辑零点、方向、减速比、软限位在关节层 | 已集中在 `JointConfig` 并由转换函数和命令链应用 | `COMPLIANT` | `host/robot/joint.py:52-70,149-221,433-445`；`host/config/project/joints.py:20-45`；`host/tests/motion/test_joint.py:394-417,465-472` | 保留现有 `CanRotaryJoint`；统一 adapter 仅做 deg↔rad |
+| §4.2/§14.2 | 肩肘逻辑零点、方向、减速比、软限位在关节层 | 已集中在 `JointConfig` 并由转换函数和命令链应用 | `COMPLIANT` | `host/robot/joint.py:52-70,149-221,433-445`；`host/config/project/joints.py:20-45`；`host/tests/suites/motion/test_joint.py:394-417,465-472` | 保留现有 `CanRotaryJoint`；统一 adapter 仅做 deg↔rad |
 | §4.2/§14.3 | Rotation 逻辑零点、方向、软限位隐藏 raw count | 位置转换已完成；但速度/加速度仍是 raw，最终机械配置未验收 | `PARTIAL` | `host/robot/feetech_rotation.py:93-151,203-233`；`host/config/project/feetech.py:73-85` | adapter 输出 deg；在物理速度映射确认前拒绝非空 deg/s、deg/s² 或明确声明不可配置 |
 | §4.3/§11.3 | 只有 Slide/Z home；其他轴明确 `UNSUPPORTED_COMMAND` | 后端能力表正确声明肩肘/旋转无 home，但没有统一方法和统一错误结果 | `PARTIAL` | `host/motion/capabilities.py:22-58` | 在统一控制器按 capability 拒绝，绝不调用旋转轴逻辑零点重设 |
-| §4.3 | Home 区分接受、DONE、ABORT、FAULT；成功后 homed/valid | STM32 客户端区分同步错误、FAULT、ABORT、DONE；状态能读取 homed/valid | `COMPLIANT` | `host/drivers/stm32_motion.py:309-338,410-417`；`host/tests/protocol/test_stm32_motion.py:70-83` | adapter 在 DONE 后再 `query_axis()`，把最终状态写入 `MotionResult.final_state` |
+| §4.3 | Home 区分接受、DONE、ABORT、FAULT；成功后 homed/valid | STM32 客户端区分同步错误、FAULT、ABORT、DONE；状态能读取 homed/valid | `COMPLIANT` | `host/drivers/stm32_motion.py:309-338,410-417`；`host/tests/suites/protocol/test_stm32_motion.py:70-83` | adapter 在 DONE 后再 `query_axis()`，把最终状态写入 `MotionResult.final_state` |
 | §5 | `startup_position` 不进入坐标换算、软限位、FK/IK 或普通命令 | Host 可执行代码完全没有该字段或等价计算 | `COMPLIANT` | 全仓库关键词检索；`host/kinematics/planar_2r.py:21-128`；`host/robot/joint.py:183-193,433-445` | 用静态测试继续锁定；不要把缺少初始化层误报为完整初始化支持 |
 | §5.4/§12 | 独立 `SystemStartupConfig` 和初始化协调器 | 无对应文件、类型或协调器 | `MISSING` | `host/motion/__init__.py:1`；全仓库无 `SystemStartupConfig` | P3 新增 `system_startup.py`；只通过普通绝对位置接口执行一次性目标 |
 | §6 | `AxisDescriptor` 提供单位、限位和能力，不含 startup | 无该类型或等价描述对象 | `MISSING` | 全仓库无 `AxisDescriptor` | 在协议类型文件中定义，并由控制器只读返回 |
@@ -225,9 +225,9 @@ Host 目前没有协议要求的 mm 适配器。
 | §12 | 初始化状态、顺序、失败边界独立于运动学 | 无系统初始化接口或状态 | `MISSING` | `host/motion/` 仅两个极小文件 | P3 单独实现；安全顺序必须来自经验证配置，不写入 FK/IK |
 | §13.1/§13.2 | `ArmJointState`/`ArmJointTarget` 使用 deg 且不含 startup | 当前只有 rad 制 `JointAngles`、`JointState`、`PlanarArmTarget` | `MISSING` | `host/kinematics/planar_2r.py:21-35`；`host/robot/planar_arm.py:29-35` | 新增共享 DTO；数学算法内部可继续使用 rad |
 | §13.3 | `KinematicsMotionInterface` 只依赖统一层 | 当前 `PositionJoint` 要求具体 `JointConfig`、rad 方法和 `JointState` | `MISSING` | `host/robot/planar_arm.py:37-55` | 先提供 Protocol/fake；保留现有桥接器供 CLI，逐步适配而非重写算法 |
-| §13/§21 | FK/IK 使用逻辑关节角，不读取零点、方向、减速比或 startup | 纯数学层只读取连杆长度和逻辑 rad | `COMPLIANT` | `host/kinematics/planar_2r.py:37-128`；`host/tests/kinematics/test_planar_2r_kinematics.py:141-148` | 继续保持算法层硬件无关；共享 DTO 边界转换 deg↔rad |
-| §13.2 | IK 可达性检查并按肩肘逻辑软限位筛选 | 已实现并有测试 | `COMPLIANT` | `host/robot/planar_arm.py:57-124`；`host/tests/kinematics/test_planar_arm.py:24-74` | 保留现有筛选函数；统一层仍二次校验 |
-| §13.3 | 不声称严格同步；部分下发失败尽力停止 | 代码注释明确背靠背而非同步，异常时停止两关节 | `COMPLIANT` | `host/robot/planar_arm.py:127-131,178-205`；`host/tests/kinematics/test_planar_arm.py:102-119` | 修改错误文案为“submission failed”，避免 `complete` 一词造成到位歧义 |
+| §13/§21 | FK/IK 使用逻辑关节角，不读取零点、方向、减速比或 startup | 纯数学层只读取连杆长度和逻辑 rad | `COMPLIANT` | `host/kinematics/planar_2r.py:37-128`；`host/tests/suites/kinematics/test_planar_2r_kinematics.py:141-148` | 继续保持算法层硬件无关；共享 DTO 边界转换 deg↔rad |
+| §13.2 | IK 可达性检查并按肩肘逻辑软限位筛选 | 已实现并有测试 | `COMPLIANT` | `host/robot/planar_arm.py:57-124`；`host/tests/suites/kinematics/test_planar_arm.py:24-74` | 保留现有筛选函数；统一层仍二次校验 |
+| §13.3 | 不声称严格同步；部分下发失败尽力停止 | 代码注释明确背靠背而非同步，异常时停止两关节 | `COMPLIANT` | `host/robot/planar_arm.py:127-131,178-205`；`host/tests/suites/kinematics/test_planar_arm.py:102-119` | 修改错误文案为“submission failed”，避免 `complete` 一词造成到位歧义 |
 | §13.3 | 返回每轴独立 `MotionResult`，accepted/completed 准确 | 当前返回两个 `JointState`；失败抛单个异常 | `MISSING` | `host/robot/planar_arm.py:159-205` | 新 `KinematicsMotionInterface` 通过统一单轴接口返回逐轴结果 |
 | §14.1 | Slide/Z adapter 做 mm↔µm、状态/动作/事件映射 | 后端动作齐全，但 adapter 不存在，客户端运动 API 总是等终态 | `PARTIAL` | `host/drivers/stm32_motion.py:325-432` | 扩展公开 submit/wait 边界，支持 `wait=False`；不要调用私有 `_send/_wait` |
 | §14.2 | Shoulder/Elbow adapter 做 deg↔rad 和 stop 映射 | 关节层安全语义齐全，但 adapter、统一结果和物理加速度语义缺失 | `PARTIAL` | `host/robot/joint.py:349-476` | adapter 只做单位/结果/错误映射；不要重写关节换算 |
@@ -237,7 +237,7 @@ Host 目前没有协议要求的 mm 适配器。
 | §18 | 不扩展为严格同步、连续轨迹、急停或抓取状态机 | 当前代码明确只做背靠背下发和软件停止 | `COMPLIANT` | `host/robot/planar_arm.py:127-131`；`host/README.md:247-248` | 保持本轮范围；协议实现不要夹带轨迹/抓取状态机 |
 | §20 | 最终方向、限位、速度、L1/L2、启动位置来自真实配置/标定 | 多项参数仍只有调试值或无正式配置 | `NOT_VERIFIABLE` | `docs/progress/CURRENT_STATUS.md:220-229`；`host/config/project/feetech.py:73-85` | 明确保留待配置；不得从脚本示例猜测生产值 |
 | §21 | 静态/单元测试锁定 startup 隔离和 unsupported home | 尚无统一类型，因而也无协议边界测试 | `MISSING` | `host/tests/` 无 unified/startup tests | 新增静态字段检查、fake dispatcher、错误/状态/完成矩阵测试 |
-| 专项 5.13 | import/构造无自动 I/O 或运动副作用 | 三类 transport 都显式 open；smoke test 证明 fake 可装配 | `COMPLIANT` | `host/tests/integration/test_upper_motion_smoke.py:25-63`；各 transport 生命周期源码 | 保持依赖注入和显式 open；统一控制器构造也不得连接硬件 |
+| 专项 5.13 | import/构造无自动 I/O 或运动副作用 | 三类 transport 都显式 open；smoke test 证明 fake 可装配 | `COMPLIANT` | `host/tests/suites/integration/test_upper_motion_smoke.py:25-63`；各 transport 生命周期源码 | 保持依赖注入和显式 open；统一控制器构造也不得连接硬件 |
 
 ## 5. Per-Axis Capability Matrix
 
@@ -317,7 +317,7 @@ Host 目前没有协议要求的 mm 适配器。
 - 异步 `ABORT/FAULT`：`STM32CommandEventError`；
 - 等待超时：`STM32MotionTimeoutError`。
 
-证据为 `host/drivers/stm32_motion.py:300-323,410-417` 和 `host/tests/protocol/test_stm32_motion.py:70-83,100-102`。但 `home()` 返回 DONE event 后没有自动查询 `AxisStatus`，所以协议层适配必须再读一次状态，才能用证据保证 `homed=True`、`position_valid=True`，而不是只相信 event。
+证据为 `host/drivers/stm32_motion.py:300-323,410-417` 和 `host/tests/suites/protocol/test_stm32_motion.py:70-83,100-102`。但 `home()` 返回 DONE event 后没有自动查询 `AxisStatus`，所以协议层适配必须再读一次状态，才能用证据保证 `homed=True`、`position_valid=True`，而不是只相信 event。
 
 肩、肘和 Rotation 没有 home 方法；现有绝对位置初始化只读取稳定样本，不重写零点（`host/robot/joint.py:254-305`）。未发现“用当前位置重设肩肘逻辑零点”的代码。
 
@@ -391,7 +391,7 @@ Host 目前没有协议要求的 mm 适配器。
 
 #### Shoulder / Elbow
 
-`MG4010Driver.command_position()` 只确认 `0xA4` 通信应答，不等机械到位（`host/drivers/mg4010_driver.py:89-99`）；`CanRotaryJoint.command_position()` 注释和测试也明确非阻塞（`host/robot/joint.py:349-354`；`host/tests/motion/test_joint.py:457-463`）。统一结果应为：
+`MG4010Driver.command_position()` 只确认 `0xA4` 通信应答，不等机械到位（`host/drivers/mg4010_driver.py:89-99`）；`CanRotaryJoint.command_position()` 注释和测试也明确非阻塞（`host/robot/joint.py:349-354`；`host/tests/suites/motion/test_joint.py:457-463`）。统一结果应为：
 
 ```text
 accepted=True
@@ -485,9 +485,9 @@ completed=None
 | `host/motion/unified_protocol.py` | 是 | `AxisName`、descriptor/capability/state/result/error、SingleAxis/Kinematics Protocol、Arm DTO |
 | `host/motion/unified_controller.py` | 是 | 依赖注入、轴分发、adapter、单位/状态/错误/结果映射 |
 | `host/motion/system_startup.py` | P3 必要 | 启动目标、初始化状态、协调器；严格隔离 startup position |
-| `host/tests/motion/test_unified_protocol.py` | 是 | 字段、枚举、单位、startup 禁止字段静态边界 |
-| `host/tests/motion/test_unified_controller.py` | 是 | 五轴 fake、能力、转换、错误和 accepted/completed 矩阵 |
-| `host/tests/integration/test_system_startup.py` | P3 必要 | 顺序、home 门禁、失败停止、初始化后隔离 |
+| `host/tests/suites/motion/test_unified_protocol.py` | 是 | 字段、枚举、单位、startup 禁止字段静态边界 |
+| `host/tests/suites/motion/test_unified_controller.py` | 是 | 五轴 fake、能力、转换、错误和 accepted/completed 矩阵 |
+| `host/tests/suites/integration/test_system_startup.py` | P3 必要 | 顺序、home 门禁、失败停止、初始化后隔离 |
 
 ### 10.2 可避免的过度设计
 
@@ -543,7 +543,7 @@ completed=None
 ### P0：冻结接口类型和单位
 
 - 修改目标：定义统一枚举、DTO、错误码和 Protocol；冻结 deg/mm 与 accepted/completed 语义。
-- 涉及文件：新增 `host/motion/unified_protocol.py`、`host/tests/motion/test_unified_protocol.py`；更新 `host/motion/__init__.py`。
+- 涉及文件：新增 `host/motion/unified_protocol.py`、`host/tests/suites/motion/test_unified_protocol.py`；更新 `host/motion/__init__.py`。
 - 是否阻塞运动学：**是，短期唯一阻塞项**；完成后运动学可用 fake 并行开发。
 - 验收条件：五轴名称固定；普通 DTO 无 startup 字段；rotary 公共角度全为 deg；Protocol 可由 fake 实现；静态边界测试通过。
 - 不能声称：真实后端已接入、运动完成可确认、系统已初始化。
@@ -551,7 +551,7 @@ completed=None
 ### P1：实现统一单轴分发
 
 - 修改目标：实现 list/describe/get_state/command dispatcher、capability 拒绝和依赖注入。
-- 涉及文件：新增 `host/motion/unified_controller.py`、`host/tests/motion/test_unified_controller.py`；适配 `host/motion/capabilities.py`。
+- 涉及文件：新增 `host/motion/unified_controller.py`、`host/tests/suites/motion/test_unified_controller.py`；适配 `host/motion/capabilities.py`。
 - 是否阻塞运动学：不阻塞；运动学可继续使用 Protocol/fake。
 - 验收条件：纯 fake 下五轴分发正确；未知轴/unsupported/limit/invalid 参数返回稳定错误；构造零 I/O。
 - 不能声称：真实 transport、机械方向、限位或到位已验证。
@@ -567,7 +567,7 @@ completed=None
 ### P3：增加系统上电初始化边界
 
 - 修改目标：独立 startup config、状态与协调器；Slide/Z home 门禁；安全顺序配置化。
-- 涉及文件：新增 `host/motion/system_startup.py`、`host/tests/integration/test_system_startup.py`；必要时新增独立 config 文件。
+- 涉及文件：新增 `host/motion/system_startup.py`、`host/tests/suites/integration/test_system_startup.py`；必要时新增独立 config 文件。
 - 是否阻塞运动学：不阻塞算法；只阻塞真实运动学任务进入运行态。
 - 验收条件：fake 流程验证 home→valid→startup targets；任一步失败有明确状态；正常 DTO/FK/IK/目标换算不引用 startup config。
 - 不能声称：安全顺序已机械验收、初始化失败自动恢复完成。

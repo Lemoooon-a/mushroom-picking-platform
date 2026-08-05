@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 
-HOST_ROOT = Path(__file__).resolve().parents[2]
+HOST_ROOT = Path(__file__).resolve().parents[3]
 REPO_ROOT = HOST_ROOT.parent
 
 
@@ -48,13 +48,13 @@ class ScriptCleanupTests(unittest.TestCase):
             "scripts/verify_base_slide_frame.py",
             "scripts/set_tool_camera_transform.py",
             "kinematics/planar_2r.py",
-            "tests/kinematics/test_planar_2r_kinematics.py",
+            "tests/suites/kinematics/test_planar_2r_kinematics.py",
         ):
             self.assertTrue((HOST_ROOT / relative).is_file(), relative)
 
-        automated_tests = tuple((HOST_ROOT / "tests").glob("test_*.py"))
+        automated_tests = tuple((HOST_ROOT / "tests" / "suites").rglob("test_*.py"))
         self.assertTrue(automated_tests)
-        self.assertTrue(all(path.parent == HOST_ROOT / "tests" for path in automated_tests))
+        self.assertFalse(tuple((HOST_ROOT / "tests" / "helpers").rglob("test_*.py")))
 
     def test_python_sources_do_not_import_removed_control_modules(self) -> None:
         removed_modules = (

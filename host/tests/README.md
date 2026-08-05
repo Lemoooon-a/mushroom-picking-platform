@@ -4,18 +4,21 @@
 
 ## 目录分类
 
-- `config/`：配置模型、加载器和安全包络。
-- `geometry/`：刚体变换和坐标链。
-- `kinematics/`：运动学、工作区和规划器。
-- `calibration/`：标定算法、状态模型和脚本适配。
-- `protocol/`：CAN、舵机及 STM32 协议和驱动。
-- `motion/`：轴抽象、统一控制器和吸盘控制。
-- `application/`：应用控制器和培养槽工作区。
-- `vision/`：视觉目标解析。
-- `cli/`：维护与调试命令行入口。
-- `hardware_adapter/`：设备发现与硬件适配。
-- `integration/`：离线启动和演示编排。
+- `suites/config/`：配置模型、加载器和安全包络。
+- `suites/geometry/`：刚体变换和坐标链。
+- `suites/kinematics/`：运动学、工作区和规划器。
+- `suites/calibration/`：标定算法、状态模型和脚本适配。
+- `suites/protocol/`：CAN、舵机及 STM32 协议和驱动。
+- `suites/motion/`：轴抽象、统一控制器和吸盘控制。
+- `suites/application/`：应用控制器和培养槽工作区。
+- `suites/vision/`：视觉目标解析。
+- `suites/cli/`：维护与调试命令行入口。
+- `suites/hardware_adapter/`：设备发现与硬件适配。
+- `suites/integration/`：离线启动和演示编排。
 - `helpers/`：共享测试辅助代码；运动 CLI helper 位于 `tests/helpers/motion_cli_test_support.py`。
+
+领域目录统一放在 `suites/` 包下，避免 `unittest discover -s tests` 将
+`tests/config/`、`tests/kinematics/` 等同名测试包置于生产包之前。
 
 ## 命令格式
 
@@ -29,8 +32,8 @@
 
 ```bash
 .venv/bin/python -m unittest \
-  tests.kinematics.test_base_frame_solver \
-  tests.motion.test_unified_controller \
+  tests.suites.kinematics.test_base_frame_solver \
+  tests.suites.motion.test_unified_controller \
   -q
 ```
 

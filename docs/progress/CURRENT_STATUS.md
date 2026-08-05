@@ -2,15 +2,13 @@
 
 更新时间：2026-08-06（Asia/Shanghai）
 
-证据范围：当前源码、配置、提交历史、STM32 子模块文档以及整理前最近一次 Host 离线测试记录；本轮目录重组未执行测试、编译、网络同步、固件构建或真实硬件命令。
+证据范围：当前源码、配置、提交历史、STM32 子模块文档，以及本轮目录迁移后的 Host 编译、纯导入、local loader、524 项离线测试和 CLI `--help` 结果；本轮未执行网络同步、固件构建或真实硬件命令。
 
 ## 1. 技术结论
 
 项目已从“跨层功能散落在脏工作树”推进到“依赖顺序明确、可在本地 Git 中复现的 Host 子系统集成”阶段。STM32 Slide/Z、物理开关归零和 machine protocol 仍是硬件证据最成熟的部分；Host 已形成五轴点到点控制、关节 holding 生命周期、吸盘语义、Base frame（基座坐标系）偏移规划、安全过渡、培养槽门限、应用控制器与视觉能力门禁。
 
-S1、R1–R6、C1/C2 已固化功能基线；O1/O2 又将配置来源和离线测试按职责分层，O3 同步当前文档。
-目录迁移前最近一次已知结果为 524 项 Host 测试通过；迁移后按明确指令没有重新运行测试。因此
-当前结构是否仍满足全部断言尚需后续独立验证，也不能据此证明真实五轴、培养槽作业、吸附、视觉抓取或完整采摘流程已完成硬件验证。
+S1、R1–R6、C1/C2 已固化功能基线；O1/O2 将配置来源和离线测试按职责分层，O3 同步文档，O4 修复测试包遮蔽生产包和迁移后相对路径问题。本轮迁移后 524 项 Host 离线测试全部通过，数量未低于迁移前基线；核心模块、local 配置正式 loader 与三个零硬件 CLI 帮助检查也通过。该结果恢复了可复现的离线基线，但不能据此证明真实五轴、培养槽作业、吸附、视觉抓取或完整采摘流程已完成硬件验证。
 
 当前最大缺口是完整机械系统验证：新增的 Robot motion envelope（机器人运动包络）只集中
 startup 与中间安全阶段策略，不是完整碰撞/物理包络；仍缺五轴阶段运动日志、真空反馈、已验证
@@ -40,7 +38,7 @@ startup 与中间安全阶段策略，不是完整碰撞/物理包络；仍缺�
 
 | 仓库 | 关系 | 分支 / upstream | 当前提交序列 | 最终工作树 | 可复现性 |
 | --- | --- | --- | --- | --- | --- |
-| `/Users/sd/Projects/mushroom-picking-platform` | 根仓库 | `main` / `origin/main` | R1–R6、C1/C2、O1 `e55b628`、O2 `c9274db`、O3 本报告提交 | O3 后目标为 clean | 本地提交可追溯；尚未 push |
+| `/Users/sd/Projects/mushroom-picking-platform` | 根仓库 | `main` / `origin/main` | R1–R6、C1/C2、O1 `e55b628`、O2 `c9274db`、O3 `b554ebc`、O4 本报告提交 | O4 后目标为 clean | 本地提交可追溯；尚未 push |
 | `firmware/stm32_motion_controller` | `.gitmodules` + root gitlink 正式子模块 | `refactor/generic-stepper-driver` / 无 upstream | S1 `6ee9a62b210e798e6199a97889cde424afca6b8f` | clean | root 已锁定 S1；跨机器取用前需先发布子模块提交 |
 
 根仓库只有一个 worktree。本轮未 fetch，也未 push，因此不把本地 upstream 计数解释为远端实时状态。
@@ -60,11 +58,12 @@ startup 与中间安全阶段策略，不是完整碰撞/物理包络；仍缺�
 | C2 | `022879a` | `docs(host): clarify configuration and workspace roles` | 配置职责与工作区文档同步 |
 | O1 | `e55b628` | `refactor(host): organize project and local configuration layout` | project/examples/local 分层、loader 与 import 路径同步 |
 | O2 | `c9274db` | `refactor(host): group offline tests by domain` | 41 个测试文件按领域分组并集中 helper |
-| O3 | 本报告所在提交 | `docs: synchronize configuration and test layout` | README、进度、handoff、标定及接口路径同步 |
+| O3 | `b554ebc` | `docs: synchronize configuration and test layout` | README、进度、handoff、标定及接口路径同步 |
+| O4 | 本报告所在提交 | `fix(host): restore imports after layout reorganization` | discovery 包隔离、测试相对路径、README 与迁移后验证证据 |
 
 ### 3.3 未提交与本机配置
 
-C2 后以 `022879a` clean 为本轮起点；O3 终检目标是根仓库、根 index 和子模块工作树均 clean。以下本机文件已逐字节迁移，继续由 Git ignore 保护，未进入任何提交：
+本轮以 `b554ebc` clean 为起点；O4 终检目标是根仓库、根 index 和子模块工作树均 clean。以下本机文件已逐字节迁移，继续由 Git ignore 保护，未进入任何提交：
 
 - `host/config/local/hardware.py`
 - `host/config/local/motion.py`
@@ -72,7 +71,7 @@ C2 后以 `022879a` clean 为本轮起点；O3 终检目标是根仓库、根 in
 - `host/config/local/frame_transforms.json`
 - `host/config/local/tray_workspace.json`
 
-五个 local 文件移动前后 SHA-256 逐项一致；没有使用 `git add -f`。本轮执行了受控 `git mv`，没有 stash、reset、rebase、force checkout、硬件 I/O 或 push。
+五个 local 文件当前 SHA-256 与移动后记录及 `/tmp/mushroom-config-backup.WlyNLd` 逐项一致；正式 loader 读取成功，读取前后哈希不变，没有发生写回。没有使用 `git add -f`；本轮执行了受控 `git mv`，没有 stash、reset、rebase、force checkout、硬件 I/O 或 push。
 
 ## 4. 系统架构
 
@@ -172,15 +171,19 @@ machine protocol v2 提供带 command id 的接受响应与终态 event；Host c
 
 | 阶段 | 命令 | 结果 |
 | --- | --- | --- |
-| 最近一次目录迁移前全量 | `.venv/bin/python -m unittest discover -s tests -q` | exit 0；Ran 524；OK；无真实硬件 I/O |
-| O1–O3 目录整理 | 未运行测试或编译命令 | 按明确指令未执行；不得写成迁移后 tests pass |
-| 新目录指定模块格式 | `.venv/bin/python -m unittest tests.kinematics.test_base_frame_solver tests.motion.test_unified_controller -q` | 仅更新命令格式；本轮未执行 |
+| 目录迁移前全量 | `.venv/bin/python -m unittest discover -s tests -q` | exit 0；Ran 524；OK；无真实硬件 I/O |
+| O4 修复前 discovery | `.venv/bin/python -m unittest discover -s tests -p "test_*.py" -v` | exit 1；Ran 130；1 failure、35 errors；同名测试包遮蔽生产包，无硬件 I/O |
+| O4 修复后 discovery | `.venv/bin/python -m unittest discover -s tests -p "test_*.py" -v` | exit 0；Ran 524；OK；test time 0.841s、process real 1.00s；无真实硬件 I/O |
+| 核心编译与导入 | 任务指定 `py_compile` 与核心纯导入命令 | exit 0；`core imports: OK`；无硬件 I/O |
+| local 配置加载 | hardware、motion、five-axis、frame transforms、tray workspace 正式 loader | exit 0；`local config loading: OK`；读取前后 SHA-256 不变 |
+| 零硬件 CLI | `run_motion_demo.py --help`、`manual_motion.py --help`、`robot_capabilities.py --help` | 三项 exit 0；未执行任何子命令或动作 |
+| 新目录指定模块格式 | `.venv/bin/python -m unittest tests.suites.kinematics.test_base_frame_solver tests.suites.motion.test_unified_controller -q` | 路径格式已同步；全量 discovery 已覆盖对应模块 |
 
 ### 9.3 Mathematical Tests
 
 五轴 FK/IK、Base solver、offset workspace、motion envelope 注入、transition planner、RigidTransform、
-frame chain、tray boundary 和 vision transform 均包含在迁移前最近一次 524 项测试记录中。输入为合成值或本地
-example，不读取真实机器标定来证明精度；本轮未复跑。
+frame chain、tray boundary 和 vision transform 均包含在本轮通过的 524 项测试中。输入为合成值或本地
+example，不读取真实机器标定来证明精度。
 
 ### 9.4 Electrical Bench Tests
 
@@ -192,11 +195,11 @@ example，不读取真实机器标定来证明精度；本轮未复跑。
 
 ### 9.6 Integrated System Tests
 
-迁移前最近一次 Host 离线集成记录通过；本轮未运行集成测试，也没有真实五轴、托盘、视觉、吸附或完整采摘系统测试。
+本轮 Host 离线集成测试随 524 项 discovery 通过；没有真实五轴、托盘、视觉、吸附或完整采摘系统测试。
 
 ## 10. 资源与性能
 
-- 历史记录中 Host 全量 524 项测试单次约 0.72–0.83 秒，进程 wall 约 1 秒；本轮未重新测量。
+- 本轮 Host 全量 524 项测试用时 0.841 秒，进程 real 1.00 秒。
 - STM32 protocol 最大 frame 为 96 bytes；UART 日志流量仍可能影响 machine protocol 压力边界。
 - CAN transport 有 timeout/retry 与锁；真实双电机长期吞吐和错误恢复未验收。
 - 没有本轮可信的新 FLASH/RAM、ISR timing 或机械节拍数据，不能猜测。
@@ -245,7 +248,7 @@ example，不读取真实机器标定来证明精度；本轮未复跑。
 
 ### P0 — 发布本地可复现基线
 
-- 目标：经人工 review 和独立测试后，先 push 子模块 S1，再 push 根仓库 R1–R6、C1/C2、O1–O3，保证 gitlink 可获取。
+- 目标：经人工 review 后，先 push 子模块 S1，再 push 根仓库 R1–R6、C1/C2、O1–O4，保证 gitlink 可获取。
 - 文件：无新增源文件；只发布现有提交。
 - 验收：新 clone 能初始化子模块并运行 524 项测试。
 - 安全：发布不等于硬件验收；本轮未执行 push。
@@ -267,13 +270,12 @@ example，不读取真实机器标定来证明精度；本轮未复跑。
 - 目标：完成 hand-eye、目标质量门限、抓取 offset、真空确认、搬运/释放和恢复状态机。
 - 验收：独立验证集通过，Camera target 才从 unavailable 升级；完整流程需重复成功与失败恢复证据。
 
-本轮已完成配置和测试目录迁移，但按明确指令未运行测试。后续独立验证应确认 discovery、指定模块路径和
-524 项历史测试数量没有回退，且不得连接真实硬件。
+本轮已完成配置和测试目录迁移验证：discovery 恢复 524 项并全部通过，指定模块路径已更新，local 配置加载未写回；仍需在独立环境复核可移植性，且不得把离线结果解释为真实硬件验收。
 
 ## 15. 交接信息
 
 - 当前阶段：Host 子系统离线集成已固化；真实完整采摘未验证。
-- 当前任务：O1/O2 已提交，O3 为本报告所在提交；等待静态终检与人工 review，未 push。
+- 当前任务：O1–O3 已提交，O4 修复并验证目录迁移；等待最终提交与人工 review，未 push。
 - 首读文件：本报告、`host/config/README.md`、`host/tests/README.md`、`host/config/project/robot_motion_envelope.py`、`host/scripts/run_motion_demo.py`、`host/kinematics/base_move_transition_planner.py`、`host/application/controller.py`。
 - 首跑命令：
 
@@ -288,5 +290,5 @@ cd host
 
 - 已确认并提交的关键语义：Z Home `0 mm`、向下负坐标、Z `-190..0 mm`；Shoulder `[-65,65]°`；Elbow `[-160,160]°`；Rotation `[-150,150]°`。
 - 不得猜测：真实 link/外参、最终行程、碰撞包络、真空阈值、抓取 offset、急停与失能机械后果。
-- 非忽略未提交变更：O3 终检目标为无；5 份机器专属 local 配置继续 ignored。
+- 非忽略未提交变更：O4 终检目标为无；5 份机器专属 local 配置继续 ignored。
 - 下一里程碑：先发布可获取的子模块/root 提交，再执行有硬件急停保障的 P1 回归。

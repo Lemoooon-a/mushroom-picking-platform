@@ -26,9 +26,9 @@
 - 本轮开始前工作树已有修改：
   - modified：`host/README.md`、`host/motion/README.md`、
     `host/robot/__init__.py`、`host/robot/joint.py`、
-    `host/scripts/test_joint_position.py`、`host/tests/motion/test_joint.py`；
+    `host/scripts/test_joint_position.py`、`host/tests/suites/motion/test_joint.py`；
   - untracked：`feetech_arm.zip`、`host/robot/planar_arm.py`、
-    `host/scripts/test_planar_2r_motion.py`、`host/tests/kinematics/test_planar_arm.py`。
+    `host/scripts/test_planar_2r_motion.py`、`host/tests/suites/kinematics/test_planar_arm.py`。
 - 上述已有修改未 stash、未丢弃；本轮在 `host/README.md` 和
   `host/robot/__init__.py` 上做了必要的增量编辑。
 
@@ -147,7 +147,7 @@ machine position；成功归零后 `homed` 和 `valid` 才成立，`DI`、`SA` �
 - `suction_start/suction_release/suction_stop`。
 
 采用根 Host 正式 client，而非直接复制子模块示例。协议常量仍不可自动共享，因此通过
-`host/tests/protocol/test_stm32_motion.py` 读取 submodule 当前 header/README，锁定 version、最大
+`host/tests/suites/protocol/test_stm32_motion.py` 读取 submodule 当前 header/README，锁定 version、最大
 行长和命令集合，发生漂移时离线测试失败。
 
 当前 `motion_platform_config.c` 是 Z `-60800..0 step`、Slide `0..33333 step`。Z 已按

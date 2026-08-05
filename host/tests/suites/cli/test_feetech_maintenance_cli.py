@@ -95,7 +95,7 @@ class FeetechMaintenanceTests(unittest.TestCase):
         with redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
                 build_parser().parse_args(["stop"])
-        source = Path(__file__).resolve().parents[2] / "scripts/maintenance/feetech_rotation.py"
+        source = Path(__file__).resolve().parents[3] / "scripts/maintenance/feetech_rotation.py"
         source_text = source.read_text(encoding="utf-8")
         self.assertNotRegex(source_text, r"/dev/(?:cu|tty)\.")
         self.assertNotIn("FeetechBus(", source_text)

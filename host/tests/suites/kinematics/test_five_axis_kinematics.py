@@ -18,7 +18,7 @@ from kinematics.five_axis import (
 from kinematics.frame_chain import RobotAxisState
 
 
-HOST_ROOT = Path(__file__).resolve().parents[2]
+HOST_ROOT = Path(__file__).resolve().parents[3]
 
 
 def geometry(

@@ -133,7 +133,7 @@ class MG4010MaintenanceTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 main(["--disable"])
         create.assert_not_called()
-        source = Path(__file__).resolve().parents[2] / "scripts/maintenance/mg4010_joint.py"
+        source = Path(__file__).resolve().parents[3] / "scripts/maintenance/mg4010_joint.py"
         source_text = source.read_text(encoding="utf-8")
         self.assertNotIn('add_argument("--disable"', source_text)
         self.assertNotIn("CanMotorBus(", source_text)

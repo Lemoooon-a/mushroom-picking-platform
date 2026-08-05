@@ -139,7 +139,7 @@ class ValidationAndIsolationTests(unittest.TestCase):
                     Planar2RKinematics(link1, link2)
 
     def test_importing_kinematics_does_not_import_can_stack(self) -> None:
-        host_root = Path(__file__).resolve().parents[2]
+        host_root = Path(__file__).resolve().parents[3]
         command = (
             "import sys; import kinematics; "
             "assert 'can' not in sys.modules; "

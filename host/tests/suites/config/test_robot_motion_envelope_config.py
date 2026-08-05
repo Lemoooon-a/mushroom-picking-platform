@@ -60,7 +60,7 @@ assert not any(name == 'drivers' or name.startswith('drivers.') for name in sys.
 """
         result = subprocess.run(
             [sys.executable, "-c", script],
-            cwd=Path(__file__).parents[2],
+            cwd=Path(__file__).parents[3],
             check=False,
             capture_output=True,
             text=True,
@@ -69,7 +69,7 @@ assert not any(name == 'drivers' or name.startswith('drivers.') for name in sys.
 
     def test_demo_script_does_not_define_a_second_startup_config(self) -> None:
         source = (
-            Path(__file__).parents[2] / "scripts" / "run_motion_demo.py"
+            Path(__file__).parents[3] / "scripts" / "run_motion_demo.py"
         ).read_text(encoding="utf-8")
         for removed_name in (
             "class StartupSafePose:",
