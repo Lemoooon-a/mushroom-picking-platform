@@ -24,7 +24,7 @@ from config.frame_transforms import (  # noqa: E402
     FrameTransformsDocument,
     load_frame_transforms_document,
 )
-from config.robot_motion_envelope import (  # noqa: E402
+from config.project.robot_motion_envelope import (  # noqa: E402
     DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
     RobotMotionEnvelopeConfig,
     StartupSafePoseConfig,
@@ -39,7 +39,7 @@ from config.tray_workspace import (  # noqa: E402
     TrayWorkspaceConfigError,
     load_tray_workspace_config,
 )
-from config.workspace_planning import (  # noqa: E402
+from config.project.workspace_planning import (  # noqa: E402
     DEFAULT_OFFSET_WORKSPACE_CONFIG,
     OffsetWorkspaceConfig,
     OffsetWorkspaceSide,
@@ -96,9 +96,9 @@ STARTUP_FK_YAW_TOLERANCE_DEG = 2.0
 _AXIS_ORDER = tuple(AxisName)
 _ROTARY_AXES = (AxisName.SHOULDER, AxisName.ELBOW, AxisName.ROTATION)
 _STOPPABLE_OR_REPORTED_AXES = _AXIS_ORDER
-_DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "frame_transforms.local.json"
+_DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "local" / "frame_transforms.json"
 _DEFAULT_TRAY_WORKSPACE_CONFIG = (
-    HOST_ROOT / "config" / "tray_workspace.local.json"
+    HOST_ROOT / "config" / "local" / "tray_workspace.json"
 )
 
 

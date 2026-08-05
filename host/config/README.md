@@ -10,32 +10,32 @@
 | --- | --- | ---: | ---: | ---: | --- |
 | `__init__.py` | 惰性导出 | 是 | 否 | 否 | 暴露稳定配置类型/项目常量，不触发 local loader |
 | `hardware.py` | typed model + loader | 是 | 否 | 是 | 硬件设备发现与端口/CAN 配置模型 |
-| `hardware_local.example.py` | template | 是 | 否 | 否 | `hardware_local.py` 的占位模板 |
-| `hardware_local.py` | local Python | 否，ignored | 是 | 是 | 当前机器端口、VID/PID、CAN 等硬件选择 |
+| `examples/hardware.py` | template | 是 | 否 | 否 | `local/hardware.py` 的占位模板 |
+| `local/hardware.py` | local Python | 否，ignored | 是 | 是 | 当前机器端口、VID/PID、CAN 等硬件选择 |
 | `motion_runtime.py` | typed model + loader | 是 | 否 | 是 | 到位、timeout、速度/加速度和线性轴范围模型 |
-| `motion_local.example.py` | template | 是 | 否 | 否 | `motion_local.py` 的占位模板 |
-| `motion_local.py` | local Python | 否，ignored | 是 | 是 | 当前机器的 motion runtime 参数 |
+| `examples/motion.py` | template | 是 | 否 | 否 | `local/motion.py` 的占位模板 |
+| `local/motion.py` | local Python | 否，ignored | 是 | 是 | 当前机器的 motion runtime 参数 |
 | `frame_transforms.py` | typed JSON loader | 是 | 否 | 按 Base/视觉入口加载 | Base/Slide-zero 与 Tool/Camera 外参文档模型 |
-| `frame_transforms.example.json` | template | 是 | 否 | 否 | 未验证的 frame transform 模板 |
-| `frame_transforms.local.json` | local JSON | 否，ignored | 是 | 按入口默认路径加载 | 当前机器 Base 与手眼外参及独立 validation metadata |
-| `five_axis_geometry.example.json` | template | 是 | 否 | 否 | 五轴几何占位模板 |
-| `five_axis_geometry.local.json` | local JSON | 否，ignored | 是 | 五轴 Base 规划时加载 | 当前机构连杆、轴方向和 Tool 固定几何 |
+| `examples/frame_transforms.json` | template | 是 | 否 | 否 | 未验证的 frame transform 模板 |
+| `local/frame_transforms.json` | local JSON | 否，ignored | 是 | 按入口默认路径加载 | 当前机器 Base 与手眼外参及独立 validation metadata |
+| `examples/five_axis_geometry.json` | template | 是 | 否 | 否 | 五轴几何占位模板 |
+| `local/five_axis_geometry.json` | local JSON | 否，ignored | 是 | 五轴 Base 规划时加载 | 当前机构连杆、轴方向和 Tool 固定几何 |
 | `tray_workspace.py` | typed JSON loader | 是 | 否 | 按应用入口加载 | Base-frame 普通最终任务 TCP 门限模型 |
-| `tray_workspace.example.json` | template | 是 | 否 | 否 | 不含可执行边界的模板，不是通用默认值 |
-| `tray_workspace.local.json` | local JSON | 否，ignored | 是 | Demo/application 默认路径 | 用户确认的 Base-frame 绝对最终任务工作区 |
-| `joints.py` | 项目正式参数 | 是 | 当前单台项目机器人 | 是 | Shoulder/Elbow ID、零点、方向、36:1 与软限位 |
-| `feetech.py` | 项目正式参数 | 是 | 当前单台项目机器人 | 是 | Rotation 型号、协议、零点、方向与软限位 |
-| `workspace_planning.py` | 项目规划策略 | 是 | 当前机器人策略 | 是 | arm-local 正负偏置区、Slide 候选、fallback 与数值容差 |
-| `robot_motion_envelope.py` | 软件安全阶段策略 | 是 | 当前机器人策略 | 是 | startup/return pose 与跨区绝对 Base Z clearance |
+| `examples/tray_workspace.json` | template | 是 | 否 | 否 | 不含可执行边界的模板，不是通用默认值 |
+| `local/tray_workspace.json` | local JSON | 否，ignored | 是 | Demo/application 默认路径 | 用户确认的 Base-frame 绝对最终任务工作区 |
+| `project/joints.py` | 项目正式参数 | 是 | 当前单台项目机器人 | 是 | Shoulder/Elbow ID、零点、方向、36:1 与软限位 |
+| `project/feetech.py` | 项目正式参数 | 是 | 当前单台项目机器人 | 是 | Rotation 型号、协议、零点、方向与软限位 |
+| `project/workspace_planning.py` | 项目规划策略 | 是 | 当前机器人策略 | 是 | arm-local 正负偏置区、Slide 候选、fallback 与数值容差 |
+| `project/robot_motion_envelope.py` | 软件安全阶段策略 | 是 | 当前机器人策略 | 是 | startup/return pose 与跨区绝对 Base Z clearance |
 
 ## 配置来源规则
 
-- `*.local.*` 是 machine-specific（机器专属）配置，必须保持 ignored，不得强制暂存或复制到文档。
-- `*.example.*` 只用于说明 schema 和必填字段，绝不自动视为 validated runtime configuration。
-- `joints.py` / `feetech.py` 是当前单台项目机器的正式参数，不是设备系列的通用出厂默认值。
-- `workspace_planning.py` 只描述 arm-local 逆运动学（Inverse Kinematics, IK）规划约束。
-- `robot_motion_envelope.py` 只描述已知 startup 与中间安全阶段策略，不是碰撞模型或安全认证。
-- `tray_workspace.local.json` 只描述 Base frame 中普通最终任务 TCP 的绝对允许范围，不是机械极限。
+- `local/` 除 `__init__.py` 外均为 machine-specific（机器专属）配置，必须保持 ignored。
+- `examples/` 只用于说明 schema 和必填字段，绝不自动视为 validated runtime configuration。
+- `project/joints.py` / `project/feetech.py` 是当前单台项目机器的正式参数，不是设备系列默认值。
+- `project/workspace_planning.py` 只描述 arm-local 逆运动学（Inverse Kinematics, IK）规划约束。
+- `project/robot_motion_envelope.py` 只描述 startup 与中间安全阶段策略，不是碰撞模型或安全认证。
+- `local/tray_workspace.json` 只描述 Base frame 中普通最终任务 TCP 的绝对允许范围，不是机械极限。
 
 ## 三类工作区与安全策略
 

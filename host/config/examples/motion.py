@@ -2,7 +2,7 @@
 运动 Runtime 本地配置结构示例。
 
 以下数值全部是 EXAMPLE / BENCH-TEST PLACEHOLDER，NOT PRODUCTION-CALIBRATED。
-复制为 motion_local.py 后，必须用当前机构已经确认的参数替换。
+复制到 ``config/local/motion.py`` 后，必须用当前机构已经确认的参数替换。
 """
 
 from .motion_runtime import (

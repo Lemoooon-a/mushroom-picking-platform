@@ -18,7 +18,7 @@ HOST_ROOT = Path(__file__).resolve().parents[2]
 if str(HOST_ROOT) not in sys.path:
     sys.path.insert(0, str(HOST_ROOT))
 
-from config.joints import JOINT_CONFIGS  # noqa: E402
+from config.project.joints import JOINT_CONFIGS  # noqa: E402
 from motion.authorization import RuntimeMode  # noqa: E402
 from scripts._motion_cli_common import create_configured_runtime, positive_float  # noqa: E402
 

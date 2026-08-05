@@ -185,9 +185,9 @@ class MotionConfigLoadingTests(unittest.TestCase):
         can_open: Mock,
         feetech_open: Mock,
     ) -> None:
-        path = Path(__file__).resolve().parents[1] / "config/motion_local.example.py"
+        path = Path(__file__).resolve().parents[1] / "config/examples/motion.py"
         spec = importlib.util.spec_from_file_location(
-            "config.motion_local_example",
+            "config.motion_example",
             path,
         )
         assert spec is not None and spec.loader is not None
@@ -201,25 +201,25 @@ class MotionConfigLoadingTests(unittest.TestCase):
         can_open.assert_not_called()
         feetech_open.assert_not_called()
 
-    @patch("config.motion_runtime.import_module")
+    @patch("config.motion_runtime._load_local_module")
     def test_missing_local_config_has_copy_instruction(self, importer: Mock) -> None:
         importer.side_effect = ModuleNotFoundError(
             "missing",
-            name="config.motion_local",
+            name="config.local.motion",
         )
         with self.assertRaisesRegex(
             MotionRuntimeConfigLoadError,
-            "motion_local.example.py.*motion_local.py",
+            "config/examples/motion.py.*config/local/motion.py",
         ):
             load_local_motion_config()
 
-    @patch("config.motion_runtime.import_module")
+    @patch("config.motion_runtime._load_local_module")
     def test_local_config_requires_expected_type(self, importer: Mock) -> None:
         importer.return_value = SimpleNamespace(MOTION=object())
         with self.assertRaisesRegex(MotionRuntimeConfigLoadError, "MotionRuntimeConfig"):
             load_local_motion_config()
 
-    @patch("config.motion_runtime.import_module")
+    @patch("config.motion_runtime._load_local_module")
     def test_valid_local_config_is_returned(self, importer: Mock) -> None:
         expected = motion_config()
         importer.return_value = SimpleNamespace(MOTION=expected)

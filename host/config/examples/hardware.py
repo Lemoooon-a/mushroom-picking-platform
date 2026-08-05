@@ -1,4 +1,4 @@
-"""本机硬件配置模板；复制为 hardware_local.py 后按需调整。"""
+"""本机硬件配置模板；复制到 ``config/local/hardware.py`` 后按需调整。"""
 
 from .hardware import (
     GsUsbDeviceConfig,

@@ -43,7 +43,7 @@ from kinematics.frame_chain import RobotAxisState, SlideZeroKinematics  # noqa: 
 from motion.authorization import RuntimeMode  # noqa: E402
 
 
-DEFAULT_LOCAL_PATH = HOST_ROOT / "config" / "frame_transforms.local.json"
+DEFAULT_LOCAL_PATH = HOST_ROOT / "config" / "local" / "frame_transforms.json"
 DEFAULT_FK_PROVIDER = "kinematics.five_axis:load_local_five_axis_kinematics"
 
 

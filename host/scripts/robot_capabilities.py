@@ -24,7 +24,7 @@ from config.frame_transforms import (  # noqa: E402
 )
 
 
-DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "frame_transforms.local.json"
+DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "local" / "frame_transforms.json"
 
 
 def load_capabilities(frame_config: Path) -> RobotCapabilities:

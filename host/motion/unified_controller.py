@@ -9,8 +9,8 @@ import time
 from collections.abc import Callable, Mapping
 from uuid import uuid4
 
-from config.feetech import END_EFFECTOR_ROTATION_CONFIG
-from config.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
+from config.project.feetech import END_EFFECTOR_ROTATION_CONFIG
+from config.project.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from drivers.can_bus import CanBusNotOpenError, MotorCommunicationError
 from drivers.feetech_protocol import (
     FeetechDeviceError,

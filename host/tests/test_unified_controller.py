@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from config.feetech import END_EFFECTOR_ROTATION_CONFIG
-from config.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
+from config.project.feetech import END_EFFECTOR_ROTATION_CONFIG
+from config.project.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from drivers.stm32_motion import AxisStatus, STM32CommandSubmission, STM32Message
 from drivers.stm32_motion import STM32MotionTimeoutError
 from motion.authorization import MotionAuthorization, RuntimeMode

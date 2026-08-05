@@ -41,11 +41,8 @@ logs/
 # Local configuration
 config/robot.yaml
 host/config/robot.yaml
-/host/config/hardware_local.py
-/host/config/motion_local.py
-/host/config/frame_transforms.local.json
-/host/config/five_axis_geometry.local.json
-/host/config/tray_workspace.local.json
+/host/config/local/*
+!/host/config/local/__init__.py
 .env
 
 # Recorded data

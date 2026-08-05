@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from motion.authorization import RuntimeMode
-from config.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
+from config.project.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from scripts.maintenance.mg4010_joint import main
 
 

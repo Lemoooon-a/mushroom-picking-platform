@@ -10,12 +10,12 @@ from application.controller import MushroomRobotController
 from application.tray_workspace import TrayWorkspace
 from calibration.hand_eye import hand_eye_from_frame_document
 from config.frame_transforms import load_frame_transforms_document
-from config.robot_motion_envelope import (
+from config.project.robot_motion_envelope import (
     DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
     RobotMotionEnvelopeConfig,
 )
 from config.tray_workspace import load_tray_workspace_config
-from config.workspace_planning import (
+from config.project.workspace_planning import (
     DEFAULT_OFFSET_WORKSPACE_CONFIG,
     OffsetWorkspaceConfig,
 )

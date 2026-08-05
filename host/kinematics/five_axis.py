@@ -24,7 +24,8 @@ SCHEMA_VERSION = 1
 DEFAULT_LOCAL_GEOMETRY_PATH = (
     Path(__file__).resolve().parents[1]
     / "config"
-    / "five_axis_geometry.local.json"
+    / "local"
+    / "five_axis_geometry.json"
 )
 
 
@@ -226,8 +227,8 @@ def load_five_axis_geometry(path: Path) -> FiveAxisGeometry:
     except OSError as exc:
         raise FiveAxisGeometryError(
             f"cannot read five-axis geometry {path}: {exc}; copy "
-            "host/config/five_axis_geometry.example.json to "
-            "host/config/five_axis_geometry.local.json and fill measured values"
+            "host/config/examples/five_axis_geometry.json to "
+            "host/config/local/five_axis_geometry.json and fill measured values"
         ) from exc
     if not isinstance(root, dict):
         raise FiveAxisGeometryError("five-axis geometry document must be an object")

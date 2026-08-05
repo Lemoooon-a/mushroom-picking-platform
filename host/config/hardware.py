@@ -3,11 +3,33 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from importlib import import_module
+import importlib.util
+from pathlib import Path
+import sys
 
 
 class HardwareConfigLoadError(RuntimeError):
     """本地硬件配置缺失或内容无效。"""
+
+
+def _load_local_module(module_name: str) -> object:
+    """按新模块名加载 byte-for-byte 迁移的旧相对导入配置。"""
+
+    path = Path(__file__).with_name("local") / "hardware.py"
+    if not path.is_file():
+        raise ModuleNotFoundError(name=module_name)
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot create module spec for {path}")
+    module = importlib.util.module_from_spec(spec)
+    module.__package__ = __package__
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
+    return module
 
 
 def _validate_usb_id(value: int, name: str) -> None:
@@ -88,11 +110,11 @@ class HardwareConfig:
 
 
 def load_local_hardware_config() -> HardwareConfig:
-    """加载同一包内被 Git 忽略的 ``hardware_local.py``。"""
+    """加载 ``config/local/hardware.py`` 中被 Git 忽略的机器配置。"""
 
-    module_name = f"{__package__}.hardware_local"
+    module_name = f"{__package__}.local.hardware"
     try:
-        module = import_module(module_name)
+        module = _load_local_module(module_name)
     except ModuleNotFoundError as exc:
         if exc.name != module_name:
             raise HardwareConfigLoadError(
@@ -100,8 +122,8 @@ def load_local_hardware_config() -> HardwareConfig:
             ) from exc
         raise HardwareConfigLoadError(
             "未找到本地硬件配置。请复制 "
-            "host/config/hardware_local.example.py 为 "
-            "host/config/hardware_local.py 后填写本机纯数据配置。"
+            "host/config/examples/hardware.py 为 "
+            "host/config/local/hardware.py 后填写本机纯数据配置。"
         ) from exc
     except Exception as exc:
         raise HardwareConfigLoadError(

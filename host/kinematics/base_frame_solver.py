@@ -8,7 +8,7 @@ import math
 
 import numpy as np
 
-from config.workspace_planning import (
+from config.project.workspace_planning import (
     DEFAULT_OFFSET_WORKSPACE_CONFIG,
     OffsetWorkspaceConfig,
     OffsetWorkspaceSide,

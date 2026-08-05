@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from config.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
+from config.project.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from drivers.stm32_motion import STM32MotionClient
 from motion.capabilities import UpperMotionBackends
 from robot.feetech_rotation import FeetechRotationAxis, FeetechRotationConfig

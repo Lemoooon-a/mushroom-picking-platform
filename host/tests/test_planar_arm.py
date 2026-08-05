@@ -6,7 +6,7 @@ import math
 import unittest
 from unittest.mock import MagicMock
 
-from config.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
+from config.project.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from kinematics import Planar2RKinematics
 from robot import (
     NoJointLimitSolutionError,

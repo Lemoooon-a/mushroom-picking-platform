@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import unittest
 
-from config.feetech import (
+from config.project.feetech import (
     END_EFFECTOR_ROTATION_CONFIG,
     END_EFFECTOR_ROTATION_DEFAULT_SPEED_RAW,
     END_EFFECTOR_ROTATION_POSITIVE_DIRECTION,

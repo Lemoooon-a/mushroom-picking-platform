@@ -16,14 +16,14 @@ from bootstrap import (
     UpperMotionRuntime,
     create_upper_motion_runtime,
 )
-from config.feetech import END_EFFECTOR_ROTATION_CONFIG
+from config.project.feetech import END_EFFECTOR_ROTATION_CONFIG
 from config.hardware import (
     GsUsbDeviceConfig,
     HardwareConfig,
     UsbSerialDeviceConfig,
     UsbVidPid,
 )
-from config.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
+from config.project.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from config.motion_runtime import (
     AxisMotionProfile,
     LinearAxisMotionLimits,

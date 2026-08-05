@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from enum import Enum
 import math
 
-from config.robot_motion_envelope import RobotMotionEnvelopeConfig
-from config.workspace_planning import OffsetWorkspaceSide, SlideSelectionReason
+from config.project.robot_motion_envelope import RobotMotionEnvelopeConfig
+from config.project.workspace_planning import OffsetWorkspaceSide, SlideSelectionReason
 from geometry.rigid_transform import RigidTransform, angular_difference_deg
 from kinematics.base_frame_solver import (
     BaseFrameFiveAxisSolver,

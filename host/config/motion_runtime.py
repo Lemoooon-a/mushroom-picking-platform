@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from importlib import import_module
+import importlib.util
 import math
+from pathlib import Path
+import sys
 from typing import Mapping
 
 from motion.unified_protocol import ArrivalConfig, AxisName
@@ -12,6 +14,26 @@ from motion.unified_protocol import ArrivalConfig, AxisName
 
 class MotionRuntimeConfigLoadError(RuntimeError):
     """本地运动 Runtime 配置缺失或内容无效。"""
+
+
+def _load_local_module(module_name: str) -> object:
+    """按新模块名加载 byte-for-byte 迁移的旧相对导入配置。"""
+
+    path = Path(__file__).with_name("local") / "motion.py"
+    if not path.is_file():
+        raise ModuleNotFoundError(name=module_name)
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot create module spec for {path}")
+    module = importlib.util.module_from_spec(spec)
+    module.__package__ = __package__
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
+    return module
 
 
 def _validate_positive(value: object, name: str) -> None:
@@ -176,11 +198,11 @@ class MotionRuntimeConfig:
 
 
 def load_local_motion_config() -> MotionRuntimeConfig:
-    """加载被 Git 忽略的同包 ``motion_local.py``。"""
+    """加载 ``config/local/motion.py`` 中被 Git 忽略的机器配置。"""
 
-    module_name = f"{__package__}.motion_local"
+    module_name = f"{__package__}.local.motion"
     try:
-        module = import_module(module_name)
+        module = _load_local_module(module_name)
     except ModuleNotFoundError as exc:
         if exc.name != module_name:
             raise MotionRuntimeConfigLoadError(
@@ -188,8 +210,8 @@ def load_local_motion_config() -> MotionRuntimeConfig:
             ) from exc
         raise MotionRuntimeConfigLoadError(
             "未找到本地运动配置。请复制 "
-            "host/config/motion_local.example.py 为 "
-            "host/config/motion_local.py，并仅填写经过当前台架确认的参数。"
+            "host/config/examples/motion.py 为 "
+            "host/config/local/motion.py，并仅填写经过当前台架确认的参数。"
         ) from exc
     except Exception as exc:
         raise MotionRuntimeConfigLoadError(

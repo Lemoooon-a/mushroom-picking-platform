@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from config.feetech import END_EFFECTOR_ROTATION_CONFIG
+from config.project.feetech import END_EFFECTOR_ROTATION_CONFIG
 from config.hardware import HardwareConfig
-from config.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
+from config.project.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from config.motion_runtime import MotionRuntimeConfig
 from drivers.can_bus import CanMotorBus
 from drivers.device_discovery import ResolvedHardware, resolve_hardware

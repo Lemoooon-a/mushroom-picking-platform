@@ -22,7 +22,7 @@ from config.frame_transforms import (  # noqa: E402
     FrameTransformsDocument,
     load_frame_transforms_document,
 )
-from config.robot_motion_envelope import (  # noqa: E402
+from config.project.robot_motion_envelope import (  # noqa: E402
     DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
 )
 from geometry.rigid_transform import RigidTransform  # noqa: E402
@@ -67,7 +67,7 @@ _AXIS_ORDER = tuple(AxisName)
 _LINEAR_AXES = (AxisName.SLIDE, AxisName.Z)
 _STOPPABLE_AXES = (AxisName.SLIDE, AxisName.Z, AxisName.SHOULDER, AxisName.ELBOW)
 _HOME_TIMEOUTS_S = {AxisName.SLIDE: 15.0, AxisName.Z: 120.0}
-_DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "frame_transforms.local.json"
+_DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "local" / "frame_transforms.json"
 
 
 def finite_float(value: str) -> float:

@@ -11,13 +11,13 @@ from unittest.mock import patch
 from application.controller import MushroomRobotController
 from application.demo_backend import DemoFlowApplicationBackend
 from application.tray_workspace import TrayWorkspace
-from config.robot_motion_envelope import (
+from config.project.robot_motion_envelope import (
     DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
     RobotMotionEnvelopeConfig,
     StartupSafePoseConfig,
 )
 from config.tray_workspace import TrayWorkspaceConfig
-from config.workspace_planning import OffsetWorkspaceSide
+from config.project.workspace_planning import OffsetWorkspaceSide
 from geometry.rigid_transform import RigidTransform
 from kinematics.base_frame_solver import BaseFrameFiveAxisSolver, FiveAxisNoSolutionError
 from kinematics.base_move_transition_planner import BaseMoveTransitionPlanner

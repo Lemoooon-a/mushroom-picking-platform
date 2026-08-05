@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import unittest
 
-from config.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
+from config.project.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from drivers.mg4010_protocol import MotorFault, MotorSingleTurnPosition, MotorStatus
 from robot.joint import (
     CanRotaryJoint,

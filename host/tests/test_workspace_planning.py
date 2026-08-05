@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from config.workspace_planning import OffsetWorkspaceConfig, OffsetWorkspaceSide
+from config.project.workspace_planning import OffsetWorkspaceConfig, OffsetWorkspaceSide
 
 
 class OffsetWorkspaceClassificationTests(unittest.TestCase):

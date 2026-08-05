@@ -6,9 +6,9 @@ import sys
 import unittest
 
 import config
-import config.robot_motion_envelope as robot_motion_envelope
-import config.workspace_planning as workspace_planning
-from config.robot_motion_envelope import (
+import config.project.robot_motion_envelope as robot_motion_envelope
+import config.project.workspace_planning as workspace_planning
+from config.project.robot_motion_envelope import (
     DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
     RobotMotionEnvelopeConfig,
     SideSwitchClearanceConfig,
@@ -51,11 +51,11 @@ def blocked(*args, **kwargs):
     raise AssertionError(f'unexpected file read: {args!r}')
 Path.open = blocked
 import config
-import config.robot_motion_envelope
-import config.workspace_planning
+import config.project.robot_motion_envelope
+import config.project.workspace_planning
 assert 'bootstrap' not in sys.modules
-assert 'config.hardware_local' not in sys.modules
-assert 'config.motion_local' not in sys.modules
+assert 'config.local.hardware' not in sys.modules
+assert 'config.local.motion' not in sys.modules
 assert not any(name == 'drivers' or name.startswith('drivers.') for name in sys.modules)
 """
         result = subprocess.run(

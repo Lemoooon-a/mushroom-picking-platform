@@ -4,11 +4,11 @@ import math
 import unittest
 from unittest.mock import patch
 
-from config.robot_motion_envelope import (
+from config.project.robot_motion_envelope import (
     RobotMotionEnvelopeConfig,
     SideSwitchClearanceConfig,
 )
-from config.workspace_planning import OffsetWorkspaceSide, SlideSelectionReason
+from config.project.workspace_planning import OffsetWorkspaceSide, SlideSelectionReason
 from geometry.rigid_transform import RigidTransform, angular_difference_deg
 from kinematics.base_frame_solver import BaseFrameFiveAxisSolver, FiveAxisNoSolutionError
 from kinematics.base_move_transition_planner import (

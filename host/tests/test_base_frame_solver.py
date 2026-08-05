@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from config.workspace_planning import (
+from config.project.workspace_planning import (
     OffsetWorkspaceSide,
     SlideSelectionReason,
 )
@@ -154,8 +154,8 @@ class BaseFrameTransformAndGateTests(unittest.TestCase):
         command = (
             "import sys; import kinematics.base_frame_solver; "
             "assert 'drivers.can_bus' not in sys.modules; "
-            "assert 'config.hardware_local' not in sys.modules; "
-            "assert 'config.motion_local' not in sys.modules"
+            "assert 'config.local.hardware' not in sys.modules; "
+            "assert 'config.local.motion' not in sys.modules"
         )
         result = subprocess.run(
             [sys.executable, "-c", command],

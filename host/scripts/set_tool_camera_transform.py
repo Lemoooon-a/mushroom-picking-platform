@@ -25,7 +25,7 @@ from config.frame_transforms import (  # noqa: E402
 from geometry.rigid_transform import RigidTransform  # noqa: E402
 
 
-DEFAULT_LOCAL_PATH = HOST_ROOT / "config" / "frame_transforms.local.json"
+DEFAULT_LOCAL_PATH = HOST_ROOT / "config" / "local" / "frame_transforms.json"
 
 
 def _build_parser() -> argparse.ArgumentParser:

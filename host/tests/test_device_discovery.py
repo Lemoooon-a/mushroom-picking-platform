@@ -447,9 +447,9 @@ class HardwareConfigTests(unittest.TestCase):
     def test_example_config_import_has_no_hardware_side_effects(
         self, comports: Mock, scan: Mock
     ) -> None:
-        path = Path(__file__).resolve().parents[1] / "config/hardware_local.example.py"
+        path = Path(__file__).resolve().parents[1] / "config/examples/hardware.py"
         spec = importlib.util.spec_from_file_location(
-            "config.hardware_local_example", path
+            "config.hardware_example", path
         )
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
@@ -459,17 +459,18 @@ class HardwareConfigTests(unittest.TestCase):
         comports.assert_not_called()
         scan.assert_not_called()
 
-    @patch("config.hardware.import_module")
+    @patch("config.hardware._load_local_module")
     def test_missing_local_config_has_copy_instruction(self, importer: Mock) -> None:
         importer.side_effect = ModuleNotFoundError(
-            "missing", name="config.hardware_local"
+            "missing", name="config.local.hardware"
         )
         with self.assertRaisesRegex(
-            HardwareConfigLoadError, "hardware_local.example.py.*hardware_local.py"
+            HardwareConfigLoadError,
+            "config/examples/hardware.py.*config/local/hardware.py",
         ):
             load_local_hardware_config()
 
-    @patch("config.hardware.import_module")
+    @patch("config.hardware._load_local_module")
     def test_local_config_requires_hardware_config_instance(self, importer: Mock) -> None:
         importer.return_value = SimpleNamespace(HARDWARE=object())
         with self.assertRaisesRegex(HardwareConfigLoadError, "HardwareConfig"):
