@@ -18,7 +18,9 @@ from motion.unified_protocol import (
     MultiAxisCommandHandle,
     MultiAxisCommandResult,
     MultiAxisTarget,
+    RotaryJointEnableStatus,
 )
+from motion.suction import SuctionStatus
 
 
 @runtime_checkable
@@ -61,6 +63,22 @@ class FrontendMotionInterface(Protocol):
         *,
         timeout_s: float | None = None,
     ) -> MotionCommandResult: ...
+
+    def suction_grip(self) -> SuctionStatus: ...
+
+    def suction_release(self) -> SuctionStatus: ...
+
+    def suction_idle(self) -> SuctionStatus: ...
+
+    def get_suction_status(self) -> SuctionStatus: ...
+
+    def enable_rotary_joints(self) -> RotaryJointEnableStatus: ...
+
+    def disable_rotary_joints(self) -> RotaryJointEnableStatus: ...
+
+    def rotary_joints_enabled(self) -> bool: ...
+
+    def get_rotary_joint_enable_status(self) -> RotaryJointEnableStatus: ...
 
 
 @runtime_checkable

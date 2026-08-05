@@ -2,7 +2,7 @@
 
 > 文档状态：Draft v0.2  
 > 适用范围：Host 上层运动控制、前端单轴控制、平面二连杆运动学调用  
-> 更新日期：2026-08-03  
+> 更新日期：2026-08-05
 > 关键修订：严格限制“工作零点”只用于上电初始化，不参与后续运动学、坐标换算或常规控制。
 
 ---
@@ -23,7 +23,8 @@
 | `elbow` | 肘关节 | Rotary | deg | MG4010E |
 | `rotation` | 末端旋转轴 | Rotary | deg | Feetech |
 
-吸盘不属于位置轴，不纳入本协议，应保留为独立执行器接口。
+吸盘不属于位置轴，不进入 `MultiAxisTarget`；它以独立离散能力挂接到同一个
+`UnifiedMotionController`。
 
 ---
 
@@ -250,7 +251,7 @@ startup work position
 
 ```text
 肩关节逻辑零点：0 deg
-肩关节逻辑限位：-60 deg ~ +70 deg
+肩关节逻辑限位：-65 deg ~ +65 deg
 肩关节上电工作初始位置：+20 deg
 ```
 
@@ -1168,7 +1169,7 @@ class SystemStartupConfig:
 - 硬件急停；
 - 碰撞检测；
 - 自动抓取流程；
-- 吸盘状态机；
+- 自动吸盘任务状态机；
 - 视觉坐标到机器人坐标变换；
 - 运行阶段一键回到初始姿态；
 - 初始化失败后的自动恢复策略。
@@ -1206,7 +1207,7 @@ class SystemStartupConfig:
 | Elbow 逻辑正方向 | 由现有关节配置提供，需运动学方确认 |
 | Rotation 逻辑正方向 | 待 Feetech 标定 |
 | Slide 软限位 | 待最终机械实测 |
-| Z 软限位 | 待最终机械实测 |
+| Z 软限位 | `-190..0 mm`；最高点归零，向下为负，行程已实测 |
 | Shoulder 软限位 | 使用现有配置，需机械复验 |
 | Elbow 软限位 | 使用现有配置，需机械复验 |
 | Rotation 软限位 | 待 Feetech 标定 |
@@ -1264,3 +1265,96 @@ class SystemStartupConfig:
 | 到位确认 | Arrival Confirmation | 无常用缩写 |
 | 逻辑关节角 | Logical Joint Angle | 无常用缩写 |
 | 任务协调器 | Task Coordinator | 无常用缩写 |
+
+---
+
+## 23. Suction Capability
+
+吸盘通过 `SuctionControl` 访问，正式公开入口只有：
+
+```python
+controller.suction_grip()
+controller.suction_release()
+controller.suction_idle()
+controller.get_suction_status()
+```
+
+`STM32SuctionControl` 复用 Slide/Z 已使用的同一个 `STM32MotionClient` 和串口 transport，
+不会打开第二串口或建立第二个客户端。写动作要求 Runtime 处于运动模式；状态查询允许只读调用。
+未配置该 capability 时抛出明确的 `suction capability is unavailable`，不会出现模糊的
+`AttributeError`。吸盘不参与正运动学（Forward Kinematics, FK）、逆运动学（Inverse
+Kinematics, IK）、工作区判断或路径阶段规划。
+
+## 24. Suction Command Semantics
+
+当前 STM32 firmware 与 Host 的固定映射为：
+
+| 高级动作 | STM32 命令 | 泵 | 释放阀 | 固件行为 |
+| --- | --- | --- | --- | --- |
+| `GRIP` | `SU` | ON | CLOSED | 30 ms 互锁后进入吸附状态 |
+| `RELEASE` | `SR` | OFF | OPEN | 30 ms 互锁；默认释放 500 ms 后自动回到 IDLE |
+| `IDLE` | `SX` | OFF | CLOSED | 立即进入安全空闲输出 |
+| 状态查询 | `SQ` | 读取命令输出 | 读取命令输出 | 返回 state/busy/fault |
+
+`suction_release()` 会等待固件现有 `DONE/FAULT`。由于固件在 500 ms 释放完成后自动进入
+IDLE，紧接着读取到的当前模式可能已经是 `IDLE`；这不代表 `SR` 未执行。
+
+## 25. Commanded State vs Physical Vacuum State
+
+`SQ` 返回的是固件命令的泵/阀输出状态，不含真空传感器、阈值判断或吸附成功反馈。因此统一状态
+固定区分：
+
+```text
+command_acknowledged = true   # SQ 查询得到有效响应
+physically_verified = false   # 当前硬件协议无法验证物理真空
+vacuum_detected = None        # 未提供传感器状态
+```
+
+不得根据最后一次 `GRIP` 命令声称已经抓牢物体。
+
+## 26. Rotary Joint Enable Lifecycle
+
+旋转关节组固定包含 Shoulder、Elbow、Rotation。公开组级入口为：
+
+```python
+controller.enable_rotary_joints()
+controller.disable_rotary_joints()
+controller.rotary_joints_enabled()
+controller.get_rotary_joint_enable_status()
+```
+
+使能顺序为 Shoulder → Elbow → Rotation；每步等待协议确认并读取真实状态。Rotation 在 Torque
+Enable 前先把当前反馈角写成目标，避免追逐旧目标。任一步失败时，对本次刚使能的关节执行反序
+best-effort rollback。完成使能后重新初始化 Shoulder/Elbow 的 `0x94` 绝对位置，并重新读取
+Rotation 反馈；MG4010 的 `0x80` 会清除旧运行命令/圈数，禁止沿用失能前缓存。
+
+启动顺序固定为：打开硬件 → 读取状态 → `suction idle` → 使能并验证旋转关节 → Z Home →
+Slide Home → startup safe pose。Movement completion does not disable rotary joints.
+
+## 27. Stop vs Disable
+
+- `stop`：停止可停止轴的当前运动，保留电机使能与位置保持力。
+- `disable_rotary_joints`：先确认静止，再按 Rotation → Elbow → Shoulder 移除保持力。
+- Rotation 没有已验证的独立 stop；若反馈仍在 moving，失能请求必须拒绝。
+
+Stop does not remove joint holding torque. Joint torque is removed only by an explicit disable
+command. 支撑好机构后才能执行 `joints disable`。
+
+## 28. Motion Gate While Joints Are Disabled
+
+任何包含 Shoulder、Elbow 或 Rotation 的统一运动提交，都会先读取三个关节的真实使能状态。
+只要其中一个不为 `true`，拒绝提交且不自动使能：
+
+```text
+Rotary joints are disabled. Run "joints enable" before motion.
+```
+
+Slide/Z 的单独状态查询与 Homing 保持原有接口语义；完整启动流程仍要求在 Homing 前先使能旋转
+关节。重新 `joints enable` 后必须重新读取三关节位置并重新计算 FK。
+
+## 29. Runtime Exit Behavior
+
+`quit` 和 `UpperMotionRuntime.close()` 只停止当前可停止运动并关闭 Host 通信资源，不发送
+MG4010 `0x80` 或 Feetech Torque Disable。普通阶段完成、`stop`、吸盘动作和普通命令异常也不
+失能。Host 关闭通信后无法继续软件确认硬件状态，因此操作员仍应按现场支撑和驱动供电状态判断
+实际保持力；只有显式 `joints disable` 才是本接口定义的移除保持力动作。

@@ -12,6 +12,7 @@ from robot.joint import (
     JointConfig,
     JointConfigurationError,
     JointInitializationError,
+    JointEnableStateError,
     JointLimitError,
     JointMotorDisabledError,
     JointMotorFaultError,
@@ -81,6 +82,8 @@ class FakeDriver:
         self.commands: list[tuple[float, float]] = []
         self.stop_calls = 0
         self.multi_reads = 0
+        self.enable_calls = 0
+        self.disable_calls = 0
 
     def read_single_turn_position(self) -> MotorSingleTurnPosition:
         if self.single_samples:
@@ -104,6 +107,26 @@ class FakeDriver:
 
     def stop(self) -> None:
         self.stop_calls += 1
+
+    def enable(self) -> None:
+        self.enable_calls += 1
+        self.fault = MotorFault(
+            self.fault.temperature_c,
+            self.fault.bus_voltage_v,
+            self.fault.bus_current_a,
+            0x00,
+            self.fault.error_state,
+        )
+
+    def disable(self) -> None:
+        self.disable_calls += 1
+        self.fault = MotorFault(
+            self.fault.temperature_c,
+            self.fault.bus_voltage_v,
+            self.fault.bus_current_a,
+            0x10,
+            self.fault.error_state,
+        )
 
 
 def initialized_joint(driver: FakeDriver, config: JointConfig) -> CanRotaryJoint:
@@ -311,6 +334,23 @@ class InitializationTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
+    def test_enable_disable_and_state_use_protocol_defined_values(self) -> None:
+        driver = FakeDriver(motor_state=0x10)
+        joint = CanRotaryJoint(driver, make_config())  # type: ignore[arg-type]
+        self.assertFalse(joint.is_enabled())
+        joint.enable()
+        self.assertTrue(joint.is_enabled())
+        joint.disable()
+        self.assertFalse(joint.is_enabled())
+        self.assertEqual((driver.enable_calls, driver.disable_calls), (1, 1))
+
+    def test_unknown_enable_state_is_not_coerced_to_false(self) -> None:
+        joint = CanRotaryJoint(
+            FakeDriver(motor_state=0x22), make_config()
+        )  # type: ignore[arg-type]
+        with self.assertRaises(JointEnableStateError):
+            joint.is_enabled()
+
     def test_target_boundaries_are_allowed(self) -> None:
         config = make_config()
         for target in (config.min_position_rad, config.max_position_rad):

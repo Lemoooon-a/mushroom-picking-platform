@@ -25,7 +25,9 @@ MG_CURRENT_AMPS_PER_LSB = 66.0 / 4096.0
 class Command(IntEnum):
     """首版正式驱动使用的 V2.36 命令字。"""
 
+    MOTOR_OFF = 0x80
     STOP = 0x81
+    MOTOR_RUN = 0x88
     READ_MULTI_TURN_POSITION = 0x92
     READ_SINGLE_TURN_POSITION = 0x94
     READ_FAULT = 0x9A
@@ -158,6 +160,18 @@ def build_stop_request() -> bytes:
     """构造 0x81 电机停止数据域。"""
 
     return _build_command_request(Command.STOP)
+
+
+def build_motor_off_request() -> bytes:
+    """构造 0x80 电机失能数据域；该命令不同于 0x81 停止。"""
+
+    return _build_command_request(Command.MOTOR_OFF)
+
+
+def build_motor_run_request() -> bytes:
+    """构造 0x88 电机使能数据域。"""
+
+    return _build_command_request(Command.MOTOR_RUN)
 
 
 def build_position_command_2(

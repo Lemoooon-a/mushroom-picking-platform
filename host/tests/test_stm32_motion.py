@@ -238,6 +238,22 @@ class ClientTests(unittest.TestCase):
         client.stop_suction()
         self.assertEqual(client.wait_for_command(pending_release).kind, "ABORT")
 
+    def test_semantic_suction_aliases_use_su_sr_and_sx(self) -> None:
+        transport = FakeTransport(
+            [
+                "=0 OK",
+                "!0 DONE V 1",
+                "=1 OK",
+                "!1 DONE V 0",
+                "=2 OK",
+            ]
+        )
+        client = STM32MotionClient(transport)
+        client.suction_grip()
+        client.suction_release()
+        client.suction_idle()
+        self.assertEqual(transport.writes, ["@0 SU", "@1 SR", "@2 SX"])
+
     def test_mm_conversion_rounds_signed_values_and_checks_ranges(self) -> None:
         transport = FakeTransport(["=0 ERR 8"])
         with self.assertRaises(ProtocolCommandError):

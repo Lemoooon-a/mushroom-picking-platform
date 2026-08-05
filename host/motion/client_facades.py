@@ -14,7 +14,9 @@ from motion.unified_protocol import (
     MultiAxisCommandHandle,
     MultiAxisCommandResult,
     MultiAxisTarget,
+    RotaryJointEnableStatus,
 )
+from motion.suction import SuctionStatus
 
 if TYPE_CHECKING:
     from motion.unified_controller import UnifiedMotionController
@@ -72,6 +74,30 @@ class FrontendMotionFacade:
         timeout_s: float | None = None,
     ) -> MotionCommandResult:
         return self._controller.home_reference(axis, timeout_s=timeout_s)
+
+    def suction_grip(self) -> SuctionStatus:
+        return self._controller.suction_grip()
+
+    def suction_release(self) -> SuctionStatus:
+        return self._controller.suction_release()
+
+    def suction_idle(self) -> SuctionStatus:
+        return self._controller.suction_idle()
+
+    def get_suction_status(self) -> SuctionStatus:
+        return self._controller.get_suction_status()
+
+    def enable_rotary_joints(self) -> RotaryJointEnableStatus:
+        return self._controller.enable_rotary_joints()
+
+    def disable_rotary_joints(self) -> RotaryJointEnableStatus:
+        return self._controller.disable_rotary_joints()
+
+    def rotary_joints_enabled(self) -> bool:
+        return self._controller.rotary_joints_enabled()
+
+    def get_rotary_joint_enable_status(self) -> RotaryJointEnableStatus:
+        return self._controller.get_rotary_joint_enable_status()
 
 
 class KinematicsMotionFacade:

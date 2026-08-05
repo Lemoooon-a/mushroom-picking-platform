@@ -974,6 +974,20 @@ class STM32MotionClient:
     def suction_stop(self, timeout: float = 2.0) -> None:
         self._expect_ok(self._sync("SX", timeout))
 
+    def suction_grip(
+        self, *, sync_timeout: float = 2.0, event_timeout: float = 2.0
+    ) -> STM32Message:
+        """执行 SU：泵开启、释放阀关闭，并等待现有 DONE/FAULT。"""
+
+        return self.suction_start(
+            sync_timeout=sync_timeout, event_timeout=event_timeout
+        )
+
+    def suction_idle(self, timeout: float = 2.0) -> None:
+        """执行 SX：泵关闭、释放阀关闭，并等待 OK。"""
+
+        self.suction_stop(timeout)
+
     def suction(
         self, *, sync_timeout: float = 2.0, event_timeout: float = 2.0
     ) -> STM32Message:

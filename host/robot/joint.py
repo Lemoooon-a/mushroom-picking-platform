@@ -49,6 +49,10 @@ class JointMotorMovingError(JointError):
     """电机仍在运动，无法安全建立一致的位置命令快照。"""
 
 
+class JointEnableStateError(JointError):
+    """MG4010 使能/失能命令后的 0x9A 状态与目标不一致。"""
+
+
 @dataclass(frozen=True)
 class JointConfig:
     """已标定有限行程旋转关节的不可变配置。
@@ -345,6 +349,39 @@ class CanRotaryJoint:
         """按配置的关节速度阈值判断电机是否在运动。"""
 
         return self.get_state().moving
+
+    def is_enabled(self) -> bool:
+        """通过 0x9A 读取协议定义的实时运行状态。"""
+
+        state = self.driver.read_fault().motor_state
+        if state == 0x00:
+            return True
+        if state == 0x10:
+            return False
+        raise JointEnableStateError(
+            f"joint {self.config.name} motor ID {self.config.motor_id}: "
+            f"unknown motor state 0x{state:02X}; expected 0x00 or 0x10"
+        )
+
+    def enable(self) -> None:
+        """发送 0x88，并通过 0x9A 确认保持使能。"""
+
+        self.driver.enable()
+        if not self.is_enabled():
+            raise JointEnableStateError(
+                f"joint {self.config.name} motor ID {self.config.motor_id}: "
+                "0x88 was acknowledged but motor state remains disabled"
+            )
+
+    def disable(self) -> None:
+        """发送 0x80，并通过 0x9A 确认已经移除保持力。"""
+
+        self.driver.disable()
+        if self.is_enabled():
+            raise JointEnableStateError(
+                f"joint {self.config.name} motor ID {self.config.motor_id}: "
+                "0x80 was acknowledged but motor state remains enabled"
+            )
 
     def command_position(
         self,

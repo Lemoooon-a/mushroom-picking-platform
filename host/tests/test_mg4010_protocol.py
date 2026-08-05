@@ -16,6 +16,8 @@ from drivers.mg4010_protocol import (  # noqa: E402
     CommandMismatchError,
     InvalidDlcError,
     build_position_command_2,
+    build_motor_off_request,
+    build_motor_run_request,
     build_read_fault_request,
     build_read_multi_turn_request,
     build_read_single_turn_request,
@@ -104,6 +106,16 @@ class RequestBuilderTests(unittest.TestCase):
             build_stop_request(), bytes.fromhex("81 00 00 00 00 00 00 00")
         )
         self.assertNotIn(0x80, build_stop_request())
+
+    def test_enable_and_disable_are_distinct_protocol_commands(self) -> None:
+        self.assertEqual(
+            build_motor_run_request(),
+            bytes.fromhex("88 00 00 00 00 00 00 00"),
+        )
+        self.assertEqual(
+            build_motor_off_request(),
+            bytes.fromhex("80 00 00 00 00 00 00 00"),
+        )
 
 
 class ResponseParserTests(unittest.TestCase):

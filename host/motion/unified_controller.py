@@ -29,6 +29,7 @@ from drivers.stm32_motion import (
     STM32MotionTimeoutError,
 )
 from motion.authorization import MotionAuthorization
+from motion.suction import SuctionStatus
 from motion.unified_protocol import (
     ArrivalConfig,
     AxisCapabilities,
@@ -44,6 +45,7 @@ from motion.unified_protocol import (
     MultiAxisCommandHandle,
     MultiAxisCommandResult,
     MultiAxisTarget,
+    RotaryJointEnableStatus,
 )
 from robot.feetech_rotation import (
     FeetechRotationError,
@@ -65,6 +67,7 @@ from robot.joint import (
 _AXIS_ORDER = tuple(AxisName)
 _LINEAR_AXES = frozenset((AxisName.SLIDE, AxisName.Z))
 _CAN_AXES = frozenset((AxisName.SHOULDER, AxisName.ELBOW))
+_ROTARY_AXES = (AxisName.SHOULDER, AxisName.ELBOW, AxisName.ROTATION)
 _TERMINAL_STATUSES = frozenset(
     (
         MotionCommandStatus.ARRIVED,
@@ -151,6 +154,7 @@ class UnifiedMotionController:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         max_command_history: int = 1024,
+        suction: object | None = None,
     ) -> None:
         if max_command_history < 1:
             raise ValueError("max_command_history must be positive")
@@ -176,6 +180,7 @@ class UnifiedMotionController:
         self._clock = clock
         self._sleep = sleep
         self._max_command_history = max_command_history
+        self._suction = suction
         self._records: dict[str, _CommandRecord] = {}
         self._active_by_axis: dict[AxisName, str] = {}
         self._lock = threading.RLock()
@@ -256,11 +261,12 @@ class UnifiedMotionController:
                         else None
                     ),
                 )
+            enabled = backend.torque_enabled()
             feedback = backend.read_feedback()
             return AxisState(
                 axis=axis,
                 connected=True,
-                enabled=None,
+                enabled=enabled,
                 busy=(
                     feedback.moving
                     if isinstance(getattr(feedback, "moving", None), bool)
@@ -296,12 +302,247 @@ class UnifiedMotionController:
             )
         return tuple(self.get_state(axis) for axis in selected)
 
+    def suction_grip(self) -> SuctionStatus:
+        """执行吸附并返回 STM32 已确认的输出命令状态。"""
+
+        self.authorization.require_motion()
+        suction = self._require_suction()
+        try:
+            return suction.grip()
+        except Exception as exc:
+            raise UnifiedMotionError(self._map_exception(exc), str(exc)) from exc
+
+    def suction_release(self) -> SuctionStatus:
+        """执行固件定义的定时释放并返回输出命令状态。"""
+
+        self.authorization.require_motion()
+        suction = self._require_suction()
+        try:
+            return suction.release()
+        except Exception as exc:
+            raise UnifiedMotionError(self._map_exception(exc), str(exc)) from exc
+
+    def suction_idle(self) -> SuctionStatus:
+        """关闭泵和释放阀并返回输出命令状态。"""
+
+        self.authorization.require_motion()
+        suction = self._require_suction()
+        try:
+            return suction.idle()
+        except Exception as exc:
+            raise UnifiedMotionError(self._map_exception(exc), str(exc)) from exc
+
+    def get_suction_status(self) -> SuctionStatus:
+        """读取 commanded output state；不声称检测到物理真空。"""
+
+        suction = self._require_suction()
+        try:
+            return suction.get_status()
+        except Exception as exc:
+            raise UnifiedMotionError(self._map_exception(exc), str(exc)) from exc
+
+    def get_rotary_joint_enable_status(self) -> RotaryJointEnableStatus:
+        """读取 Shoulder、Elbow 和 Rotation 的真实使能状态。"""
+
+        shoulder = self._backends[AxisName.SHOULDER]
+        elbow = self._backends[AxisName.ELBOW]
+        rotation = self._backends[AxisName.ROTATION]
+        try:
+            if shoulder is None or elbow is None or rotation is None:
+                return RotaryJointEnableStatus(
+                    None if shoulder is None else self._joint_enabled(shoulder),
+                    None if elbow is None else self._joint_enabled(elbow),
+                    None if rotation is None else self._rotation_enabled(rotation),
+                )
+            return RotaryJointEnableStatus(
+                self._joint_enabled(shoulder),
+                self._joint_enabled(elbow),
+                self._rotation_enabled(rotation),
+            )
+        except Exception as exc:
+            raise UnifiedMotionError(self._map_exception(exc), str(exc)) from exc
+
+    def rotary_joints_enabled(self) -> bool:
+        """仅当三个旋转关节都明确报告使能时返回 True。"""
+
+        return self.get_rotary_joint_enable_status().all_enabled
+
+    def enable_rotary_joints(self) -> RotaryJointEnableStatus:
+        """按 Shoulder→Elbow→Rotation 使能并重新建立真实位置。"""
+
+        self.authorization.require_motion()
+        backends = self._require_rotary_backends()
+        newly_enabled: list[AxisName] = []
+        try:
+            for axis in _ROTARY_AXES:
+                backend = backends[axis]
+                enabled = (
+                    self._rotation_enabled(backend)
+                    if axis is AxisName.ROTATION
+                    else self._joint_enabled(backend)
+                )
+                if enabled:
+                    continue
+                if axis is AxisName.ROTATION:
+                    # Torque OFF 时先写入当前角目标，避免使能后追逐旧目标。
+                    feedback = backend.read_feedback()
+                    backend.command_position(
+                        feedback.position_rad,
+                        backend.config.max_speed_raw,
+                    )
+                    newly_enabled.append(axis)
+                    backend.enable_torque()
+                    if not self._rotation_enabled(backend):
+                        raise FeetechRotationError(
+                            "Rotation torque enable was acknowledged but is not active"
+                        )
+                else:
+                    newly_enabled.append(axis)
+                    backend.enable()
+                    if not self._joint_enabled(backend):
+                        raise JointMotorDisabledError(
+                            f"{axis.value} enable was acknowledged but is not active"
+                        )
+            # 0x80 会清除 MG4010 运行圈数/旧命令；每次显式 enable 后都重新
+            # 读取有限行程绝对位置。Rotation 同样读取实时反馈，不使用缓存。
+            backends[AxisName.SHOULDER].initialize()
+            backends[AxisName.ELBOW].initialize()
+            backends[AxisName.ROTATION].read_feedback()
+            status = self.get_rotary_joint_enable_status()
+            if not status.all_enabled:
+                raise UnifiedMotionError(
+                    MotionErrorCode.BACKEND_ERROR,
+                    "one or more rotary joints did not confirm enabled state",
+                )
+            return status
+        except Exception as exc:
+            for axis in reversed(newly_enabled):
+                backend = backends[axis]
+                try:
+                    if axis is AxisName.ROTATION:
+                        backend.disable_torque()
+                    else:
+                        backend.disable()
+                except Exception:
+                    pass
+            if isinstance(exc, UnifiedMotionError):
+                raise
+            raise UnifiedMotionError(
+                self._map_exception(exc),
+                f"failed to enable rotary joints; best-effort rollback attempted: {exc}",
+            ) from exc
+
+    def disable_rotary_joints(
+        self,
+        *,
+        stop_timeout_s: float = 2.0,
+    ) -> RotaryJointEnableStatus:
+        """确认静止后按 Rotation→Elbow→Shoulder 移除保持力。"""
+
+        self.authorization.require_motion()
+        if not math.isfinite(stop_timeout_s) or stop_timeout_s <= 0:
+            raise UnifiedMotionError(
+                MotionErrorCode.INVALID_REQUEST,
+                "stop_timeout_s must be finite and positive",
+            )
+        backends = self._require_rotary_backends()
+        try:
+            current = self.get_rotary_joint_enable_status()
+            if current == RotaryJointEnableStatus(False, False, False):
+                return current
+
+            rotation_feedback = backends[AxisName.ROTATION].read_feedback()
+            if rotation_feedback.moving:
+                raise UnifiedMotionError(
+                    MotionErrorCode.BUSY,
+                    "Rotation is moving and has no verified independent stop; "
+                    "refusing to disable joint torque",
+                    axis=AxisName.ROTATION,
+                )
+
+            moving_linear: list[AxisName] = []
+            for axis in (AxisName.Z, AxisName.SLIDE):
+                state = self.get_state(axis)
+                if state.busy is None:
+                    raise UnifiedMotionError(
+                        MotionErrorCode.BUSY,
+                        f"cannot confirm {axis.value} is stationary before "
+                        "disabling rotary-joint torque",
+                        axis=axis,
+                    )
+                if state.busy:
+                    self._require_backend(axis).stop(axis.value)
+                    moving_linear.append(axis)
+
+            moving_can: list[AxisName] = []
+            for axis in _CAN_AXES:
+                backend = backends[axis]
+                if self._joint_enabled(backend) and backend.is_moving():
+                    backend.stop()
+                    moving_can.append(axis)
+
+            deadline = self._clock() + stop_timeout_s
+            while moving_linear or moving_can:
+                moving_linear = [
+                    axis
+                    for axis in moving_linear
+                    if self.get_state(axis).busy is not False
+                ]
+                moving_can = [
+                    axis
+                    for axis in moving_can
+                    if backends[axis].is_moving()
+                ]
+                if not moving_linear and not moving_can:
+                    break
+                if self._clock() >= deadline:
+                    names = ", ".join(
+                        axis.value for axis in (*moving_linear, *moving_can)
+                    )
+                    raise UnifiedMotionError(
+                        MotionErrorCode.BUSY,
+                        f"cannot confirm stationary rotary joints: {names}",
+                    )
+                self._sleep(0.02)
+
+            for axis in reversed(_ROTARY_AXES):
+                backend = backends[axis]
+                enabled = (
+                    self._rotation_enabled(backend)
+                    if axis is AxisName.ROTATION
+                    else self._joint_enabled(backend)
+                )
+                if not enabled:
+                    continue
+                if axis is AxisName.ROTATION:
+                    backend.disable_torque()
+                    if self._rotation_enabled(backend):
+                        raise FeetechRotationError(
+                            "Rotation torque disable was acknowledged but remains active"
+                        )
+                else:
+                    backend.disable()
+                    if self._joint_enabled(backend):
+                        raise JointMotorDisabledError(
+                            f"{axis.value} disable was acknowledged but remains active"
+                        )
+            return self.get_rotary_joint_enable_status()
+        except UnifiedMotionError:
+            raise
+        except Exception as exc:
+            raise UnifiedMotionError(
+                self._map_exception(exc),
+                f"failed to disable rotary joints safely: {exc}",
+            ) from exc
+
     def submit_absolute(self, target: AxisTarget) -> MotionCommandHandle:
         if isinstance(target, AxisTarget):
             self.authorization.require_axis_motion(target.axis)
         else:
             self.authorization.require_motion()
         target = self._validate_target(target)
+        if target.axis in _ROTARY_AXES:
+            self._require_rotary_motion_enabled()
         with self._lock:
             self._ensure_axis_idle(target.axis)
             return self._submit_validated(target)
@@ -311,6 +552,8 @@ class UnifiedMotionController:
         validated = self._validate_positions(target)
         for item in target.targets:
             self.authorization.require_axis_motion(item.axis)
+        if any(item.axis in _ROTARY_AXES for item in validated):
+            self._require_rotary_motion_enabled()
         group_id = uuid4().hex
         with self._lock:
             for item in validated:
@@ -1231,6 +1474,50 @@ class UnifiedMotionController:
                 axis=axis,
             )
         return backend
+
+    def _require_suction(self) -> object:
+        if self._suction is None:
+            raise UnifiedMotionError(
+                MotionErrorCode.BACKEND_UNAVAILABLE,
+                "suction capability is unavailable",
+            )
+        return self._suction
+
+    def _require_rotary_backends(self) -> dict[AxisName, object]:
+        result: dict[AxisName, object] = {}
+        for axis in _ROTARY_AXES:
+            backend = self._backends[axis]
+            if backend is None:
+                raise UnifiedMotionError(
+                    MotionErrorCode.BACKEND_UNAVAILABLE,
+                    f"rotary joint {axis.value} backend is unavailable",
+                    axis=axis,
+                )
+            result[axis] = backend
+        return result
+
+    @staticmethod
+    def _joint_enabled(backend: object) -> bool:
+        method = getattr(backend, "is_enabled", None)
+        if not callable(method):
+            raise JointError("CAN joint backend has no enable-state capability")
+        return bool(method())
+
+    @staticmethod
+    def _rotation_enabled(backend: object) -> bool:
+        method = getattr(backend, "torque_enabled", None)
+        if not callable(method):
+            raise FeetechRotationError(
+                "Rotation backend has no torque-enable state capability"
+            )
+        return bool(method())
+
+    def _require_rotary_motion_enabled(self) -> None:
+        if not self.rotary_joints_enabled():
+            raise UnifiedMotionError(
+                MotionErrorCode.BACKEND_ERROR,
+                'Rotary joints are disabled. Run "joints enable" before motion.',
+            )
 
     @staticmethod
     def _require_axis(axis: AxisName) -> AxisName:

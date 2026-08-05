@@ -99,6 +99,21 @@ class AxisTests(unittest.TestCase):
             [(1, 0x28, b"\x01", True), (1, 0x28, b"\x00", True)],
         )
 
+    def test_torque_state_is_read_from_the_hardware_register(self) -> None:
+        bus = FakeBus(b"\x01")
+        axis = FeetechRotationAxis(bus, make_config())  # type: ignore[arg-type]
+        self.assertTrue(axis.torque_enabled())
+        self.assertEqual(bus.last_read, (1, 0x28, 1))
+
+        bus.read_data = b"\x00"
+        self.assertFalse(axis.torque_enabled())
+
+    def test_unknown_torque_register_value_is_rejected(self) -> None:
+        bus = FakeBus(b"\x02")
+        axis = FeetechRotationAxis(bus, make_config())  # type: ignore[arg-type]
+        with self.assertRaisesRegex(Exception, "expected 00 or 01"):
+            axis.torque_enabled()
+
     def test_feedback_decoding(self) -> None:
         data = bytes.fromhex("a0 0f 34 12 78 56 78 1e 01 00")
         bus = FakeBus(data)

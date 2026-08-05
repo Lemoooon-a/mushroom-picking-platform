@@ -11,6 +11,12 @@ from motion.client_interfaces import (
     FrontendMotionInterface,
     KinematicsMotionInterface,
 )
+from motion.suction import (
+    STM32SuctionControl,
+    SuctionControl,
+    SuctionMode,
+    SuctionStatus,
+)
 from motion.unified_protocol import (
     ArrivalConfig,
     AxisCapabilities,
@@ -26,6 +32,7 @@ from motion.unified_protocol import (
     MultiAxisCommandHandle,
     MultiAxisCommandResult,
     MultiAxisTarget,
+    RotaryJointEnableStatus,
 )
 
 __all__ = [
@@ -51,7 +58,12 @@ __all__ = [
     "MultiAxisSubmissionError",
     "MultiAxisTarget",
     "RotationMotionAuthorizationError",
+    "RotaryJointEnableStatus",
     "RuntimeMode",
+    "STM32SuctionControl",
+    "SuctionControl",
+    "SuctionMode",
+    "SuctionStatus",
     "UnifiedMotionController",
     "UnifiedMotionError",
 ]

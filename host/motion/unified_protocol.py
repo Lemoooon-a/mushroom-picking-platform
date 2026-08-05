@@ -152,6 +152,19 @@ class AxisState:
 
 
 @dataclass(frozen=True)
+class RotaryJointEnableStatus:
+    """三个保持姿态旋转关节的真实使能状态快照。"""
+
+    shoulder: bool | None
+    elbow: bool | None
+    rotation: bool | None
+
+    @property
+    def all_enabled(self) -> bool:
+        return self.shoulder is True and self.elbow is True and self.rotation is True
+
+
+@dataclass(frozen=True)
 class MotionCommandResult:
     command_id: str
     axis: AxisName
@@ -265,4 +278,5 @@ __all__ = [
     "MultiAxisCommandHandle",
     "MultiAxisCommandResult",
     "MultiAxisTarget",
+    "RotaryJointEnableStatus",
 ]

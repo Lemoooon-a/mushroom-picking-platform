@@ -21,6 +21,7 @@ from motion.client_interfaces import (
     FrontendMotionInterface,
     KinematicsMotionInterface,
 )
+from motion.suction import STM32SuctionControl
 from motion.unified_controller import UnifiedMotionController
 from robot.feetech_rotation import FeetechRotationAxis
 from robot.joint import CanRotaryJoint
@@ -197,6 +198,7 @@ def create_upper_motion_runtime(
         )
     )
     stm32_client = STM32MotionClient(stm32_transport)
+    suction = STM32SuctionControl(stm32_client)
 
     can_bus = CanMotorBus(
         interface="gs_usb",
@@ -242,6 +244,7 @@ def create_upper_motion_runtime(
         arrival_configs=motion_config.arrival_configs(),
         default_motion_parameters=motion_config.default_motion_parameters(),
         authorization=authorization,
+        suction=suction,
     )
 
     return UpperMotionRuntime(

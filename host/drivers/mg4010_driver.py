@@ -16,6 +16,8 @@ from drivers.mg4010_protocol import (
     MotorSingleTurnPosition,
     MotorStatus,
     build_position_command_2,
+    build_motor_off_request,
+    build_motor_run_request,
     build_read_fault_request,
     build_read_multi_turn_request,
     build_read_single_turn_request,
@@ -134,6 +136,16 @@ class MG4010Driver:
         """Submit the repeat-safe 0x81 software stop command."""
 
         self._transact(build_stop_request())
+
+    def enable(self) -> None:
+        """Submit 0x88 and wait for the protocol echo response."""
+
+        self._transact(build_motor_run_request())
+
+    def disable(self) -> None:
+        """Submit 0x80 motor-off and wait for the protocol echo response."""
+
+        self._transact(build_motor_off_request())
 
     def _transact(self, payload: bytes) -> can.Message:
         """Run one request/reply transaction through the shared bus."""

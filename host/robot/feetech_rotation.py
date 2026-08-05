@@ -174,6 +174,22 @@ class FeetechRotationAxis:
             expect_status=self.config.expect_write_status,
         )
 
+    def torque_enabled(self) -> bool:
+        """读取 Torque Enable 寄存器并拒绝含糊的非 0/1 状态。"""
+
+        data = self.bus.read_registers(
+            self.config.servo_id,
+            self.config.registers.torque_enable,
+            1,
+        )
+        if len(data) != 1 or data[0] not in (0, 1):
+            rendered = data.hex(" ") if data else "<empty>"
+            raise FeetechRotationError(
+                f"rotation {self.config.name}: invalid torque-enable register "
+                f"value {rendered}; expected 00 or 01"
+            )
+        return data[0] == 1
+
     def read_position(self) -> float:
         data = self.bus.read_registers(
             self.config.servo_id,

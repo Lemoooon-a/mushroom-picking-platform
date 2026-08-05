@@ -205,6 +205,27 @@ class MG4010DriverCommandTests(unittest.TestCase):
         )
         self.assertNotIn(0x80, bytes(bus.calls[0]["data"]))
 
+    def test_enable_and_disable_wait_for_matching_echoes(self) -> None:
+        bus = FakeCanMotorBus(
+            [
+                response_message(bytes.fromhex("88 00 00 00 00 00 00 00")),
+                response_message(bytes.fromhex("80 00 00 00 00 00 00 00")),
+            ]
+        )
+        driver = MG4010Driver(bus, 1)
+
+        driver.enable()
+        driver.disable()
+
+        self.assertEqual(
+            [call["expected_command"] for call in bus.calls],
+            [0x88, 0x80],
+        )
+        self.assertEqual(
+            [call["data"][0] for call in bus.calls],
+            [0x88, 0x80],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

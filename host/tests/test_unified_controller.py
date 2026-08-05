@@ -26,6 +26,7 @@ from motion.unified_protocol import (
     MotionErrorCode,
     MultiAxisTarget,
 )
+from motion.suction import SuctionMode, SuctionStatus
 
 
 class FakeClock:
@@ -90,6 +91,9 @@ class FakeJoint:
         self.stop_calls = 0
         self.initialize_calls = 0
         self.command_error: Exception | None = None
+        self.enabled = True
+        self.enable_calls = 0
+        self.disable_calls = 0
 
     def command_position(self, position_rad: float, velocity_rad_s: float) -> object:
         if self.command_error is not None:
@@ -108,6 +112,20 @@ class FakeJoint:
     def initialize(self) -> None:
         self.initialize_calls += 1
 
+    def is_enabled(self) -> bool:
+        return self.enabled
+
+    def enable(self) -> None:
+        self.enable_calls += 1
+        self.enabled = True
+
+    def disable(self) -> None:
+        self.disable_calls += 1
+        self.enabled = False
+
+    def is_moving(self) -> bool:
+        return bool(self.get_state().moving)
+
 
 class FakeRotation:
     def __init__(self) -> None:
@@ -116,6 +134,7 @@ class FakeRotation:
         self.feedback: list[object] = []
         self.enable_calls = 0
         self.disable_calls = 0
+        self.enabled = True
 
     def command_position(self, position_rad: float, speed_raw: int) -> int:
         self.commands.append((position_rad, speed_raw))
@@ -128,9 +147,48 @@ class FakeRotation:
 
     def enable_torque(self) -> None:
         self.enable_calls += 1
+        self.enabled = True
 
     def disable_torque(self) -> None:
         self.disable_calls += 1
+        self.enabled = False
+
+    def torque_enabled(self) -> bool:
+        return self.enabled
+
+
+class FakeSuction:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def _status(self, mode: SuctionMode) -> SuctionStatus:
+        return SuctionStatus(
+            mode=mode,
+            command_acknowledged=True,
+            physically_verified=False,
+            vacuum_detected=None,
+            pump_on=mode is SuctionMode.GRIP,
+            release_open=mode is SuctionMode.RELEASE,
+            busy=False,
+            fault=0,
+            raw_state={SuctionMode.IDLE: 0, SuctionMode.GRIP: 1, SuctionMode.RELEASE: 3}[mode],
+        )
+
+    def grip(self) -> SuctionStatus:
+        self.calls.append("grip")
+        return self._status(SuctionMode.GRIP)
+
+    def release(self) -> SuctionStatus:
+        self.calls.append("release")
+        return self._status(SuctionMode.RELEASE)
+
+    def idle(self) -> SuctionStatus:
+        self.calls.append("idle")
+        return self._status(SuctionMode.IDLE)
+
+    def get_status(self) -> SuctionStatus:
+        self.calls.append("status")
+        return self._status(SuctionMode.IDLE)
 
 
 def axis_status(
@@ -215,6 +273,7 @@ class ControllerTestCase(unittest.TestCase):
         self.shoulder = FakeJoint(SHOULDER_JOINT_CONFIG)
         self.elbow = FakeJoint(ELBOW_JOINT_CONFIG)
         self.rotation = FakeRotation()
+        self.suction = FakeSuction()
         self.controller = UnifiedMotionController(
             stm32_client=self.stm32,
             shoulder_joint=self.shoulder,
@@ -232,6 +291,7 @@ class ControllerTestCase(unittest.TestCase):
             authorization=motion_authorization(),
             clock=self.clock,
             sleep=self.clock.advance,
+            suction=self.suction,
         )
 
     def submit_home_without_wait(self, axis: AxisName) -> MotionCommandHandle:
@@ -243,6 +303,190 @@ class ControllerTestCase(unittest.TestCase):
             handle = self.controller.home_reference(axis)
         self.assertIsInstance(handle, MotionCommandHandle)
         return handle  # type: ignore[return-value]
+
+
+class SuctionAndRotaryLifecycleTests(ControllerTestCase):
+    def test_suction_forwards_without_changing_joint_enable_state(self) -> None:
+        before = (
+            self.shoulder.enable_calls,
+            self.shoulder.disable_calls,
+            self.elbow.enable_calls,
+            self.elbow.disable_calls,
+            self.rotation.enable_calls,
+            self.rotation.disable_calls,
+        )
+        self.assertEqual(self.controller.suction_grip().mode, SuctionMode.GRIP)
+        self.assertEqual(self.controller.suction_release().mode, SuctionMode.RELEASE)
+        self.assertEqual(self.controller.suction_idle().mode, SuctionMode.IDLE)
+        self.assertEqual(self.controller.get_suction_status().mode, SuctionMode.IDLE)
+        self.assertEqual(self.suction.calls, ["grip", "release", "idle", "status"])
+        after = (
+            self.shoulder.enable_calls,
+            self.shoulder.disable_calls,
+            self.elbow.enable_calls,
+            self.elbow.disable_calls,
+            self.rotation.enable_calls,
+            self.rotation.disable_calls,
+        )
+        self.assertEqual(after, before)
+
+    def test_missing_suction_capability_has_explicit_error(self) -> None:
+        controller = UnifiedMotionController(
+            stm32_client=self.stm32,
+            shoulder_joint=self.shoulder,
+            elbow_joint=self.elbow,
+            rotation_axis=self.rotation,
+            linear_position_limits=linear_position_limits(),
+            linear_motion_limits=linear_motion_limits(),
+            arrival_configs=arrival_configs(),
+            authorization=motion_authorization(),
+        )
+        with self.assertRaisesRegex(UnifiedMotionError, "capability is unavailable"):
+            controller.get_suction_status()
+
+    def test_enable_group_uses_fixed_order_reloads_positions_and_is_idempotent(self) -> None:
+        self.shoulder.enabled = False
+        self.elbow.enabled = False
+        self.rotation.enabled = False
+        events: list[str] = []
+
+        def shoulder_enable() -> None:
+            events.append("enable:shoulder")
+            self.shoulder.enabled = True
+
+        def elbow_enable() -> None:
+            events.append("enable:elbow")
+            self.elbow.enabled = True
+
+        def rotation_enable() -> None:
+            events.append("enable:rotation")
+            self.rotation.enabled = True
+
+        with patch.object(self.shoulder, "enable", side_effect=shoulder_enable), patch.object(
+            self.elbow, "enable", side_effect=elbow_enable
+        ), patch.object(self.rotation, "enable_torque", side_effect=rotation_enable):
+            status = self.controller.enable_rotary_joints()
+            status_again = self.controller.enable_rotary_joints()
+
+        self.assertTrue(status.all_enabled)
+        self.assertTrue(status_again.all_enabled)
+        self.assertEqual(
+            events,
+            ["enable:shoulder", "enable:elbow", "enable:rotation"],
+        )
+        self.assertEqual(self.shoulder.initialize_calls, 2)
+        self.assertEqual(self.elbow.initialize_calls, 2)
+        self.assertEqual(len(self.rotation.commands), 1)
+
+    def test_partial_enable_failure_rolls_back_newly_enabled_joint(self) -> None:
+        self.shoulder.enabled = False
+        self.elbow.enabled = False
+        self.rotation.enabled = False
+        events: list[str] = []
+
+        def shoulder_enable() -> None:
+            events.append("enable:shoulder")
+            self.shoulder.enabled = True
+
+        def shoulder_disable() -> None:
+            events.append("disable:shoulder")
+            self.shoulder.enabled = False
+
+        with patch.object(self.shoulder, "enable", side_effect=shoulder_enable), patch.object(
+            self.shoulder, "disable", side_effect=shoulder_disable
+        ), patch.object(self.elbow, "enable", side_effect=RuntimeError("elbow failed")):
+            with self.assertRaisesRegex(UnifiedMotionError, "rollback attempted"):
+                self.controller.enable_rotary_joints()
+        self.assertEqual(events, ["enable:shoulder", "disable:shoulder"])
+        self.assertFalse(self.shoulder.enabled)
+        self.assertEqual(self.rotation.enable_calls, 0)
+
+    def test_disable_stops_moving_can_joint_then_uses_reverse_order(self) -> None:
+        self.shoulder.states = [
+            joint_state(0.0, moving=True),
+            joint_state(0.0, moving=False),
+        ]
+        events: list[str] = []
+
+        def disable_rotation() -> None:
+            events.append("disable:rotation")
+            self.rotation.enabled = False
+
+        def disable_elbow() -> None:
+            events.append("disable:elbow")
+            self.elbow.enabled = False
+
+        def disable_shoulder() -> None:
+            events.append("disable:shoulder")
+            self.shoulder.enabled = False
+
+        with patch.object(
+            self.rotation, "disable_torque", side_effect=disable_rotation
+        ), patch.object(self.elbow, "disable", side_effect=disable_elbow), patch.object(
+            self.shoulder, "disable", side_effect=disable_shoulder
+        ):
+            status = self.controller.disable_rotary_joints()
+        self.assertEqual(self.shoulder.stop_calls, 1)
+        self.assertEqual(
+            events,
+            ["disable:rotation", "disable:elbow", "disable:shoulder"],
+        )
+        self.assertFalse(status.all_enabled)
+
+    def test_disable_stops_and_confirms_moving_linear_axis_first(self) -> None:
+        self.stm32.states = [
+            axis_status("z", position_um=0, busy=True),
+            axis_status("slide", position_um=0, busy=False),
+            axis_status("z", position_um=0, busy=False),
+        ]
+        status = self.controller.disable_rotary_joints()
+        self.assertEqual(self.stm32.stop_calls, ["z"])
+        self.assertFalse(status.all_enabled)
+
+    def test_moving_rotation_refuses_disable_without_removing_torque(self) -> None:
+        self.rotation.feedback = [rotation_feedback(0.0, moving=True)]
+        with self.assertRaisesRegex(UnifiedMotionError, "no verified independent stop"):
+            self.controller.disable_rotary_joints()
+        self.assertEqual(self.rotation.disable_calls, 0)
+        self.assertEqual(self.shoulder.disable_calls, 0)
+        self.assertEqual(self.elbow.disable_calls, 0)
+
+    def test_repeated_disable_is_idempotent(self) -> None:
+        first = self.controller.disable_rotary_joints()
+        calls = (
+            self.shoulder.disable_calls,
+            self.elbow.disable_calls,
+            self.rotation.disable_calls,
+        )
+        second = self.controller.disable_rotary_joints()
+        self.assertEqual(first, second)
+        self.assertEqual(
+            (
+                self.shoulder.disable_calls,
+                self.elbow.disable_calls,
+                self.rotation.disable_calls,
+            ),
+            calls,
+        )
+
+    def test_disabled_group_rejects_rotary_motion_until_explicit_enable(self) -> None:
+        self.shoulder.enabled = False
+        with self.assertRaisesRegex(
+            UnifiedMotionError,
+            'Run "joints enable" before motion',
+        ):
+            self.controller.submit_absolute(
+                AxisTarget(AxisName.SHOULDER, 1.0, 2.0)
+            )
+        self.assertEqual(self.shoulder.commands, [])
+
+    def test_stop_never_disables_holding_torque(self) -> None:
+        self.controller.stop(AxisName.SHOULDER)
+        self.assertEqual(self.shoulder.stop_calls, 1)
+        self.assertEqual(self.shoulder.disable_calls, 0)
+        self.assertEqual(self.elbow.disable_calls, 0)
+        self.assertEqual(self.rotation.disable_calls, 0)
+        self.assertTrue(self.controller.rotary_joints_enabled())
 
 
 class DescriptorAndDispatchTests(ControllerTestCase):

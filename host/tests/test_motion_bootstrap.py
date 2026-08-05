@@ -147,6 +147,7 @@ class BootstrapAssemblyTests(unittest.TestCase):
         self.assertIs(runtime.shoulder_joint.driver.bus, runtime.can_bus)
         self.assertIs(runtime.elbow_joint.driver.bus, runtime.can_bus)
         self.assertIs(runtime.controller._backends[AxisName.SLIDE], runtime.stm32_client)
+        self.assertIs(runtime.controller._suction._client, runtime.stm32_client)
         self.assertIs(
             runtime.controller._backends[AxisName.SHOULDER],
             runtime.shoulder_joint,
@@ -386,11 +387,18 @@ class MotionAuthorizationTests(unittest.TestCase):
             moving=False,
             error_raw=0,
         )
+        rotation.torque_enabled.return_value = True
+        shoulder = Mock()
+        shoulder.config = SHOULDER_JOINT_CONFIG
+        shoulder.is_enabled.return_value = True
+        elbow = Mock()
+        elbow.config = ELBOW_JOINT_CONFIG
+        elbow.is_enabled.return_value = True
         authorization = MotionAuthorization(mode, allow_rotation)
         controller = UnifiedMotionController(
             stm32_client=stm32,
-            shoulder_joint=None,
-            elbow_joint=None,
+            shoulder_joint=shoulder,
+            elbow_joint=elbow,
             rotation_axis=rotation,
             linear_position_limits=motion_config().linear_position_limits(),
             linear_motion_limits=motion_config().linear_motion_limits(),

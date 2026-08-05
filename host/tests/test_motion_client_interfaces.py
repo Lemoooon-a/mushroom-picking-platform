@@ -51,6 +51,14 @@ class MotionClientInterfaceTests(unittest.TestCase):
                 "get_group_result",
                 "stop",
                 "home_reference",
+                "suction_grip",
+                "suction_release",
+                "suction_idle",
+                "get_suction_status",
+                "enable_rotary_joints",
+                "disable_rotary_joints",
+                "rotary_joints_enabled",
+                "get_rotary_joint_enable_status",
             },
         )
 
