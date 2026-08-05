@@ -61,11 +61,8 @@ class OffsetWorkspaceClassificationTests(unittest.TestCase):
         )
         self.assertTrue(all(150.0 <= value <= 350.0 for value in first))
 
-    def test_side_switch_clearance_is_absolute_base_z_height(self) -> None:
-        self.assertEqual(
-            self.config.side_switch_clearance_base_z_mm,
-            150.0,
-        )
+    def test_offset_workspace_has_no_base_frame_safety_policy(self) -> None:
+        self.assertFalse(hasattr(self.config, "side_switch_clearance_base_z_mm"))
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 import math
 
+from config.robot_motion_envelope import RobotMotionEnvelopeConfig
 from config.workspace_planning import OffsetWorkspaceSide, SlideSelectionReason
 from geometry.rigid_transform import RigidTransform, angular_difference_deg
 from kinematics.base_frame_solver import (
@@ -85,10 +86,18 @@ class BaseMovePlan:
 class BaseMoveTransitionPlanner:
     """不访问硬件的 DIRECT 或 LIFT/TRANSIT/LOWER 计划器。"""
 
-    def __init__(self, solver: BaseFrameFiveAxisSolver) -> None:
+    def __init__(
+        self,
+        solver: BaseFrameFiveAxisSolver,
+        *,
+        motion_envelope: RobotMotionEnvelopeConfig,
+    ) -> None:
         if not isinstance(solver, BaseFrameFiveAxisSolver):
             raise TypeError("solver must be BaseFrameFiveAxisSolver")
+        if not isinstance(motion_envelope, RobotMotionEnvelopeConfig):
+            raise TypeError("motion_envelope must be RobotMotionEnvelopeConfig")
         self.solver = solver
+        self.motion_envelope = motion_envelope
 
     def plan(
         self,
@@ -190,7 +199,7 @@ class BaseMoveTransitionPlanner:
         clearance_z = max(
             current_z,
             target_z,
-            self.solver.workspace.side_switch_clearance_base_z_mm,
+            self.motion_envelope.side_switch.clearance_base_z_mm,
         )
         clearance_lift = max(0.0, clearance_z - current_z)
         lift_target = _pose_with_z(current_base, clearance_z)

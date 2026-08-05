@@ -34,7 +34,6 @@ class OffsetWorkspaceConfig:
     negative_y_min_mm: float = -350.0
     negative_y_max_mm: float = -150.0
     negative_center_y_mm: float = -250.0
-    side_switch_clearance_base_z_mm: float = 150.0
     fallback_local_y_step_mm: float = 10.0
     boundary_tolerance_mm: float = 1e-9
     max_fallback_candidates_per_side: int = 64
@@ -49,7 +48,6 @@ class OffsetWorkspaceConfig:
             "negative_y_min_mm",
             "negative_y_max_mm",
             "negative_center_y_mm",
-            "side_switch_clearance_base_z_mm",
             "fallback_local_y_step_mm",
             "boundary_tolerance_mm",
         ):
@@ -75,8 +73,6 @@ class OffsetWorkspaceConfig:
             raise ValueError("negative workspace must be ordered below zero")
         if self.negative_y_max_mm >= self.positive_y_min_mm:
             raise ValueError("positive and negative workspaces must not overlap")
-        if self.side_switch_clearance_base_z_mm <= 0.0:
-            raise ValueError("side_switch_clearance_base_z_mm must be positive")
         if self.fallback_local_y_step_mm <= 0.0:
             raise ValueError("fallback_local_y_step_mm must be positive")
         if self.boundary_tolerance_mm < 0.0:

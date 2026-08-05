@@ -4,6 +4,10 @@ import math
 import unittest
 from unittest.mock import patch
 
+from config.robot_motion_envelope import (
+    RobotMotionEnvelopeConfig,
+    SideSwitchClearanceConfig,
+)
 from config.workspace_planning import OffsetWorkspaceSide, SlideSelectionReason
 from geometry.rigid_transform import RigidTransform, angular_difference_deg
 from kinematics.base_frame_solver import BaseFrameFiveAxisSolver, FiveAxisNoSolutionError
@@ -68,9 +72,9 @@ def planner(
     *,
     z: tuple[float, float] = (-500.0, 0.0),
     base_z_mm: float = 300.0,
+    clearance_base_z_mm: float = 150.0,
 ) -> BaseMoveTransitionPlanner:
-    return BaseMoveTransitionPlanner(
-        BaseFrameFiveAxisSolver(
+    solver = BaseFrameFiveAxisSolver(
             five_axis_kinematics=model(),
             base_T_slide_zero=RigidTransform.from_xyz_yaw_deg(
                 x_mm=0,
@@ -81,6 +85,11 @@ def planner(
             axis_descriptors=descriptors(z=z),
             base_transform_validated=True,
         )
+    return BaseMoveTransitionPlanner(
+        solver,
+        motion_envelope=RobotMotionEnvelopeConfig(
+            side_switch=SideSwitchClearanceConfig(clearance_base_z_mm)
+        ),
     )
 
 
@@ -215,6 +224,16 @@ class BaseMoveTransitionPlannerTests(unittest.TestCase):
                     - plan.current_base_T_tool.translation_mm[2],
                 )
                 self.assertGreater(plan.stages[0].solution.z_mm, current.z_mm)
+
+    def test_clearance_uses_injected_motion_envelope(self) -> None:
+        subject = planner(clearance_base_z_mm=120.0)
+        current = state_for_point(subject.solver.five_axis_kinematics, 400, 250, -250)
+        target = state_for_point(subject.solver.five_axis_kinematics, 400, -250, -350)
+        plan = subject.plan(
+            current_state=current,
+            base_T_tool_target=subject.solver.forward_kinematics_base(target),
+        )
+        self.assertEqual(plan.clearance_base_z_mm, 120.0)
 
     def test_clearance_floor_at_z_upper_limit_is_allowed_and_above_is_rejected(self) -> None:
         allowed_subject = planner(base_z_mm=150.0)

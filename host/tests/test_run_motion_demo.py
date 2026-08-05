@@ -11,6 +11,11 @@ from unittest.mock import patch
 from application.controller import MushroomRobotController
 from application.demo_backend import DemoFlowApplicationBackend
 from application.tray_workspace import TrayWorkspace
+from config.robot_motion_envelope import (
+    DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
+    RobotMotionEnvelopeConfig,
+    StartupSafePoseConfig,
+)
 from config.tray_workspace import TrayWorkspaceConfig
 from config.workspace_planning import OffsetWorkspaceSide
 from geometry.rigid_transform import RigidTransform
@@ -37,7 +42,6 @@ from motion.suction import SuctionMode, SuctionStatus
 from scripts.run_motion_demo import (
     DemoFlowError,
     DemoMotionFlow,
-    StartupSafePose,
     main,
     solve_startup_safe_pose,
 )
@@ -425,6 +429,9 @@ def _flow(
     runtime: _FakeRuntime,
     *,
     execute: bool,
+    motion_envelope: RobotMotionEnvelopeConfig = (
+        DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG
+    ),
 ) -> tuple[DemoMotionFlow, list[str]]:
     subject = _solver()
     output: list[str] = []
@@ -432,9 +439,12 @@ def _flow(
         DemoMotionFlow(
             runtime=runtime,
             solver=subject,
-            planner=BaseMoveTransitionPlanner(subject),
+            planner=BaseMoveTransitionPlanner(
+                subject,
+                motion_envelope=motion_envelope,
+            ),
             execute=execute,
-            startup_definition=StartupSafePose(),
+            motion_envelope=motion_envelope,
             emit=output.append,
         ),
         output,
@@ -496,6 +506,21 @@ class StartupSafePoseSolverTests(unittest.TestCase):
         )
         self.assertEqual(near_positive.solution.elbow_branch, "elbow-positive")
         self.assertEqual(near_negative.solution.elbow_branch, "elbow-negative")
+
+    def test_custom_startup_pose_is_injected_into_demo_flow(self) -> None:
+        startup = StartupSafePoseConfig(base_x_mm=220.0)
+        envelope = RobotMotionEnvelopeConfig(startup_pose=startup)
+        flow, _output = _flow(
+            _FakeRuntime(),
+            execute=False,
+            motion_envelope=envelope,
+        )
+        flow.startup()
+        self.assertIs(flow.startup_definition, startup)
+        self.assertAlmostEqual(
+            flow.startup_pose.base_T_tool_target.translation_mm[0],
+            220.0,
+        )
 
 
 class StartupExecutionTests(unittest.TestCase):
@@ -636,6 +661,13 @@ class StartupExecutionTests(unittest.TestCase):
         self.assertTrue(
             any("Positive offset workspace in arm-local frame:" in line for line in output)
         )
+        for message in (
+            "Tray workspace is not the robot mechanical range.",
+            "Offset workspace is not expressed in Base coordinates.",
+            "Robot motion envelope is not a collision model.",
+        ):
+            self.assertIn(message, output)
+        self.assertTrue(any("side-switch clearance Base Z: 150 mm" in line for line in output))
         self.assertFalse(
             any(item.startswith(("validate:", "submit:", "stop:")) for item in runtime.log),
             runtime.log,

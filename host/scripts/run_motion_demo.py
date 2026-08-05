@@ -24,6 +24,11 @@ from config.frame_transforms import (  # noqa: E402
     FrameTransformsDocument,
     load_frame_transforms_document,
 )
+from config.robot_motion_envelope import (  # noqa: E402
+    DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
+    RobotMotionEnvelopeConfig,
+    StartupSafePoseConfig,
+)
 from application.controller import MushroomRobotController  # noqa: E402
 from application.demo_backend import DemoFlowApplicationBackend  # noqa: E402
 from application.tray_workspace import (  # noqa: E402
@@ -35,12 +40,15 @@ from config.tray_workspace import (  # noqa: E402
     load_tray_workspace_config,
 )
 from config.workspace_planning import (  # noqa: E402
+    DEFAULT_OFFSET_WORKSPACE_CONFIG,
+    OffsetWorkspaceConfig,
     OffsetWorkspaceSide,
     SlideSelectionReason,
 )
 from drivers.stm32_motion import STM32AxisFault  # noqa: E402
 from geometry.rigid_transform import RigidTransform, angular_difference_deg  # noqa: E402
 from kinematics.base_frame_solver import (  # noqa: E402
+    BaseFrameSolverConfig,
     BaseFrameFiveAxisSolver,
     FiveAxisNoSolutionError,
     FiveAxisSolution,
@@ -77,12 +85,6 @@ from scripts._motion_cli_common import (  # noqa: E402
 )
 
 
-INITIAL_TCP_X_MM = 200.0
-INITIAL_TCP_Y_MM = 0.0
-INITIAL_Z_AXIS_MM = 0.0
-INITIAL_SLIDE_AXIS_MM = 0.0
-INITIAL_TOOL_YAW_DEG = 0.0
-
 HOME_POSITION_TOLERANCE_MM = 0.5
 STARTUP_MATCH_LINEAR_TOLERANCE_MM = 0.5
 STARTUP_MATCH_ROTARY_TOLERANCE_DEG = 1.0
@@ -113,19 +115,8 @@ class StartupPoseNoSolutionError(DemoFlowError):
 
 
 @dataclass(frozen=True)
-class StartupSafePose:
-    """仅允许启动、显式 ``init`` 和可选退出收回使用的中心姿态。"""
-
-    tcp_base_x_mm: float = INITIAL_TCP_X_MM
-    tcp_base_y_mm: float = INITIAL_TCP_Y_MM
-    z_axis_mm: float = INITIAL_Z_AXIS_MM
-    slide_axis_mm: float = INITIAL_SLIDE_AXIS_MM
-    tool_yaw_deg: float = INITIAL_TOOL_YAW_DEG
-
-
-@dataclass(frozen=True)
 class SolvedStartupPose:
-    definition: StartupSafePose
+    definition: StartupSafePoseConfig
     base_T_tool_target: RigidTransform
     solution: FiveAxisSolution
     branch_rejections: tuple[str, ...]
@@ -143,7 +134,9 @@ def solve_startup_safe_pose(
     solver: BaseFrameFiveAxisSolver,
     *,
     current_state: RobotAxisState,
-    definition: StartupSafePose = StartupSafePose(),
+    definition: StartupSafePoseConfig = (
+        DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG.startup_pose
+    ),
 ) -> SolvedStartupPose:
     """固定 Slide/Z 求解中心安全姿态，不调用普通偏置工作区搜索。"""
 
@@ -151,14 +144,14 @@ def solve_startup_safe_pose(
         raise TypeError("solver must be BaseFrameFiveAxisSolver")
     if not isinstance(current_state, RobotAxisState):
         raise TypeError("current_state must be RobotAxisState")
-    if not isinstance(definition, StartupSafePose):
-        raise TypeError("definition must be StartupSafePose")
+    if not isinstance(definition, StartupSafePoseConfig):
+        raise TypeError("definition must be StartupSafePoseConfig")
 
     target = _startup_target_with_fk_derived_base_z(solver, definition)
     slide_zero_target = solver.transform_base_target_to_slide_zero(target)
     local = solver.five_axis_kinematics.compute_arm_local_target(
         slide_zero_target,
-        definition.slide_axis_mm,
+        definition.slide_mm,
     )
     if not math.isclose(
         local.z_axis_mm,
@@ -222,7 +215,7 @@ def solve_startup_safe_pose(
         branch_accepted = False
         for rotation_deg in rotation_candidates:
             axis_state = RobotAxisState(
-                definition.slide_axis_mm,
+                definition.slide_mm,
                 definition.z_axis_mm,
                 shoulder_deg,
                 elbow_deg,
@@ -275,14 +268,17 @@ class DemoMotionFlow:
         solver: BaseFrameFiveAxisSolver,
         planner: BaseMoveTransitionPlanner,
         execute: bool,
-        startup_definition: StartupSafePose = StartupSafePose(),
+        motion_envelope: RobotMotionEnvelopeConfig,
         emit: Callable[[str], None] = print,
     ) -> None:
         self.runtime = runtime
         self.solver = solver
         self.planner = planner
         self.execute = bool(execute)
-        self.startup_definition = startup_definition
+        if not isinstance(motion_envelope, RobotMotionEnvelopeConfig):
+            raise TypeError("motion_envelope must be RobotMotionEnvelopeConfig")
+        self.motion_envelope = motion_envelope
+        self.startup_definition = motion_envelope.startup_pose
         self.emit = emit
         self.startup_pose: SolvedStartupPose | None = None
         self.virtual_state: RobotAxisState | None = None
@@ -318,7 +314,7 @@ class DemoMotionFlow:
         else:
             rotary_seed = _rotary_seed_state(initial_states)
             current_state = RobotAxisState(
-                self.startup_definition.slide_axis_mm,
+                self.startup_definition.slide_mm,
                 self.startup_definition.z_axis_mm,
                 rotary_seed.shoulder_deg,
                 rotary_seed.elbow_deg,
@@ -964,7 +960,10 @@ class DemoMotionFlow:
     def _emit_workspace(self, tray_workspace: TrayWorkspace) -> None:
         config = tray_workspace.config
         offset = self.solver.workspace
+        envelope = self.motion_envelope
+        startup = envelope.startup_pose
         self.emit("Cultivation-tray workspace in Base frame:")
+        self.emit("  target type: final task TCP")
         self.emit(f"  X: [{config.x_min_mm:g}, {config.x_max_mm:g}] mm")
         self.emit(f"  Y: [{config.y_min_mm:g}, {config.y_max_mm:g}] mm")
         self.emit(f"  Z: [{config.z_min_mm:g}, {config.z_max_mm:g}] mm")
@@ -986,8 +985,29 @@ class DemoMotionFlow:
             f"  local Y: [{offset.negative_y_min_mm:g}, "
             f"{offset.negative_y_max_mm:g}] mm"
         )
-        self.emit("Startup safe pose:")
-        self.emit("  explicit exception")
+        self.emit("Robot motion envelope (software safety-stage policy):")
+        self.emit(
+            f"  startup Base X={startup.base_x_mm:g} mm "
+            f"Y={startup.base_y_mm:g} mm yaw={startup.tool_yaw_deg:g} deg"
+        )
+        self.emit(
+            f"  startup Slide={startup.slide_mm:g} mm "
+            f"Z axis={startup.z_axis_mm:g} mm"
+        )
+        self.emit(
+            "  side-switch clearance Base Z: "
+            f"{envelope.side_switch.clearance_base_z_mm:g} mm (absolute floor)"
+        )
+        self.emit("Axis and joint soft limits:")
+        for axis in _AXIS_ORDER:
+            descriptor = self.solver.axis_descriptors[axis]
+            self.emit(
+                f"  {axis.value}: [{descriptor.minimum_position:g}, "
+                f"{descriptor.maximum_position:g}] {descriptor.position_unit}"
+            )
+        self.emit("Tray workspace is not the robot mechanical range.")
+        self.emit("Offset workspace is not expressed in Base coordinates.")
+        self.emit("Robot motion envelope is not a collision model.")
 
     def _emit_transform(self, transform: RigidTransform) -> None:
         xyz = transform.translation_mm
@@ -1058,6 +1078,10 @@ def create_demo_flow(
     *,
     execute: bool,
     frame_config: Path = _DEFAULT_FRAME_CONFIG,
+    offset_workspace_config: OffsetWorkspaceConfig = DEFAULT_OFFSET_WORKSPACE_CONFIG,
+    motion_envelope: RobotMotionEnvelopeConfig = (
+        DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG
+    ),
     emit: Callable[[str], None] = print,
 ) -> tuple[object, DemoMotionFlow]:
     mode = RuntimeMode.MOTION if execute else RuntimeMode.READ_ONLY
@@ -1066,12 +1090,21 @@ def create_demo_flow(
         allow_unverified_rotation_motion=execute,
     )
     document = load_frame_transforms_document(frame_config)
-    solver = _configured_solver(runtime, document, load_local_five_axis_kinematics())
+    solver = _configured_solver(
+        runtime,
+        document,
+        load_local_five_axis_kinematics(),
+        workspace_config=offset_workspace_config,
+    )
     return runtime, DemoMotionFlow(
         runtime=runtime,
         solver=solver,
-        planner=BaseMoveTransitionPlanner(solver),
+        planner=BaseMoveTransitionPlanner(
+            solver,
+            motion_envelope=motion_envelope,
+        ),
         execute=execute,
+        motion_envelope=motion_envelope,
         emit=emit,
     )
 
@@ -1134,6 +1167,8 @@ def _configured_solver(
     runtime: object,
     document: FrameTransformsDocument,
     model: FiveAxisKinematics,
+    *,
+    workspace_config: OffsetWorkspaceConfig,
 ) -> BaseFrameFiveAxisSolver:
     if document.metadata.get("validated") is not True:
         raise UnvalidatedBaseTransformError(
@@ -1147,24 +1182,25 @@ def _configured_solver(
         base_T_slide_zero=document.transforms.base_T_slide_zero,
         axis_descriptors=descriptors,
         base_transform_validated=True,
+        config=BaseFrameSolverConfig(workspace=workspace_config),
     )
 
 
 def _startup_target_with_fk_derived_base_z(
     solver: BaseFrameFiveAxisSolver,
-    definition: StartupSafePose,
+    definition: StartupSafePoseConfig,
 ) -> RigidTransform:
     def z_axis_for_base_z(base_z_mm: float) -> float:
         candidate = RigidTransform.from_xyz_yaw_deg(
-            x_mm=definition.tcp_base_x_mm,
-            y_mm=definition.tcp_base_y_mm,
+            x_mm=definition.base_x_mm,
+            y_mm=definition.base_y_mm,
             z_mm=base_z_mm,
             yaw_deg=definition.tool_yaw_deg,
         )
         slide_zero = solver.transform_base_target_to_slide_zero(candidate)
         return solver.five_axis_kinematics.compute_arm_local_target(
             slide_zero,
-            definition.slide_axis_mm,
+            definition.slide_mm,
         ).z_axis_mm
 
     at_zero = z_axis_for_base_z(0.0)
@@ -1176,8 +1212,8 @@ def _startup_target_with_fk_derived_base_z(
         )
     base_z = (definition.z_axis_mm - at_zero) / per_base_mm
     return RigidTransform.from_xyz_yaw_deg(
-        x_mm=definition.tcp_base_x_mm,
-        y_mm=definition.tcp_base_y_mm,
+        x_mm=definition.base_x_mm,
+        y_mm=definition.base_y_mm,
         z_mm=base_z,
         yaw_deg=definition.tool_yaw_deg,
     )

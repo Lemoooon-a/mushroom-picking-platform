@@ -15,6 +15,17 @@ _JOINT_NAMES = {
     "JOINT_CONFIGS",
     "SHOULDER_JOINT_CONFIG",
 }
+_OFFSET_WORKSPACE_NAMES = {
+    "DEFAULT_OFFSET_WORKSPACE_CONFIG",
+    "OffsetWorkspaceConfig",
+}
+_ROBOT_MOTION_ENVELOPE_NAMES = {
+    "DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG",
+    "RobotMotionEnvelopeConfig",
+    "SideSwitchClearanceConfig",
+    "StartupSafePoseConfig",
+}
+_TRAY_WORKSPACE_NAMES = {"TrayWorkspaceConfig"}
 
 
 def __getattr__(name: str) -> object:
@@ -26,7 +37,25 @@ def __getattr__(name: str) -> object:
         from . import joints
 
         return getattr(joints, name)
+    if name in _OFFSET_WORKSPACE_NAMES:
+        from . import workspace_planning
+
+        return getattr(workspace_planning, name)
+    if name in _ROBOT_MOTION_ENVELOPE_NAMES:
+        from . import robot_motion_envelope
+
+        return getattr(robot_motion_envelope, name)
+    if name in _TRAY_WORKSPACE_NAMES:
+        from . import tray_workspace
+
+        return getattr(tray_workspace, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = sorted(_FEETECH_NAMES | _JOINT_NAMES)
+__all__ = sorted(
+    _FEETECH_NAMES
+    | _JOINT_NAMES
+    | _OFFSET_WORKSPACE_NAMES
+    | _ROBOT_MOTION_ENVELOPE_NAMES
+    | _TRAY_WORKSPACE_NAMES
+)

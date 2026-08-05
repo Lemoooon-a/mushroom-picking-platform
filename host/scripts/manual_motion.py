@@ -22,6 +22,9 @@ from config.frame_transforms import (  # noqa: E402
     FrameTransformsDocument,
     load_frame_transforms_document,
 )
+from config.robot_motion_envelope import (  # noqa: E402
+    DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
+)
 from geometry.rigid_transform import RigidTransform  # noqa: E402
 from kinematics.base_frame_solver import (  # noqa: E402
     BaseFrameFiveAxisSolver,
@@ -164,7 +167,10 @@ def run_plan_base(
             axis_descriptors=descriptor_by_axis,
             base_transform_validated=base_transform_validated,
         )
-        planner = BaseMoveTransitionPlanner(solver)
+        planner = BaseMoveTransitionPlanner(
+            solver,
+            motion_envelope=DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
+        )
         emit("Current axis state:")
         for state in states:
             emit(f"  {format_axis_state(state)}")

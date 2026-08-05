@@ -10,7 +10,15 @@ from application.controller import MushroomRobotController
 from application.tray_workspace import TrayWorkspace
 from calibration.hand_eye import hand_eye_from_frame_document
 from config.frame_transforms import load_frame_transforms_document
+from config.robot_motion_envelope import (
+    DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
+    RobotMotionEnvelopeConfig,
+)
 from config.tray_workspace import load_tray_workspace_config
+from config.workspace_planning import (
+    DEFAULT_OFFSET_WORKSPACE_CONFIG,
+    OffsetWorkspaceConfig,
+)
 from vision.target_resolver import VisionTargetResolver
 
 if TYPE_CHECKING:
@@ -77,6 +85,10 @@ def create_mushroom_robot_controller(
     execute: bool,
     frame_config: Path,
     tray_workspace_config: Path,
+    offset_workspace_config: OffsetWorkspaceConfig = DEFAULT_OFFSET_WORKSPACE_CONFIG,
+    motion_envelope: RobotMotionEnvelopeConfig = (
+        DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG
+    ),
     emit: Callable[[str], None] = print,
 ) -> MushroomRobotController:
     """构造不打开硬件；只有随后显式 ``startup()`` 才进入既有流程。"""
@@ -87,6 +99,8 @@ def create_mushroom_robot_controller(
     runtime, flow = create_demo_flow(
         execute=execute,
         frame_config=frame_config,
+        offset_workspace_config=offset_workspace_config,
+        motion_envelope=motion_envelope,
         emit=emit,
     )
     document = load_frame_transforms_document(frame_config)
