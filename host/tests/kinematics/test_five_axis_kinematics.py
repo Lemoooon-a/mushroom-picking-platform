@@ -140,7 +140,7 @@ class FiveAxisGeometryConfigTests(unittest.TestCase):
     def test_example_cannot_be_used_without_confirmation(self) -> None:
         with self.assertRaisesRegex(FiveAxisGeometryError, "geometry_confirmed"):
             load_five_axis_geometry(
-                HOST_ROOT / "config" / "five_axis_geometry.example.json"
+                HOST_ROOT / "config" / "examples" / "five_axis_geometry.json"
             )
 
     def test_rejects_non_unit_direction(self) -> None:

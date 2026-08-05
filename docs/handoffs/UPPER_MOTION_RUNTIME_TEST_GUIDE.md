@@ -18,11 +18,12 @@ stop；软件 stop 也不是硬件急停。
 
 ```bash
 cd host
-cp config/hardware_local.example.py config/hardware_local.py
-cp config/motion_local.example.py config/motion_local.py
+mkdir -p config/local
+cp config/examples/hardware.py config/local/hardware.py
+cp config/examples/motion.py config/local/motion.py
 ```
 
-设备身份只使用已确认的 VID/PID；串口路径由启动时枚举得到。`motion_local.example.py` 中的
+设备身份只使用已确认的 VID/PID；串口路径由启动时枚举得到。`config/examples/motion.py` 中的
 值是 `EXAMPLE / BENCH-TEST PLACEHOLDER`，不是生产标定。Rotation 工程速度和加速度映射
 未验证时必须保持 `None`。
 

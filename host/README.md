@@ -19,14 +19,14 @@ MG4010E-i36 的只读状态查询、有限行程旋转关节位置控制和软�
 
 ```text
 host/
-├── config/       关节标定配置模板
+├── config/       模型/loader、project 参数、examples 与 ignored local 配置
 ├── drivers/      CAN 总线、MG4010 协议和电机驱动
 ├── robot/        弧度制有限行程关节
 ├── motion/       后续到位等待和运动协调
 ├── kinematics/   平面二连杆正逆运动学与后续坐标变换
 ├── tasks/        后续采摘任务状态机
 ├── scripts/      只读诊断和显式人工测试工具
-└── tests/        不连接硬件的离线单元测试
+└── tests/        按领域分组且不连接硬件的离线测试
 ```
 
 各层职责如下：
@@ -129,7 +129,7 @@ output_abs_deg = wrap_360(
 
 ## 首次标定
 
-`config/joints.py` 中的肩、肘配置已经写入当前上机测量值。机械安装、联轴器
+`config/project/joints.py` 中的肩、肘配置已经写入当前上机测量值。机械安装、联轴器
 位置或编码器对应关系变化后，必须重新执行以下标定流程：
 
 1. 只读连接电机；
@@ -228,7 +228,8 @@ python scripts/stm32_protocol_smoke.py /dev/ttyACM0
 
 ```bash
 cd host
-cp config/hardware_local.example.py config/hardware_local.py
+mkdir -p config/local
+cp config/examples/hardware.py config/local/hardware.py
 ```
 
 当前三类设备身份互不相同：
@@ -360,8 +361,8 @@ Base -> Slide-zero -> Tool / TCP -> Camera
 ```
 
 `geometry.RigidTransform` 使用 `A_T_B`（把 B 转到 A）记号；组合顺序为
-`A_T_C = A_T_B @ B_T_C`。`config/frame_transforms.example.json` 提供 schema 1 示例，
-本机生成的 `config/frame_transforms.local.json` 被 Git 忽略。Camera 外参允许完整 RPY，
+`A_T_C = A_T_B @ B_T_C`。`config/examples/frame_transforms.json` 提供 schema 1 示例，
+本机生成的 `config/local/frame_transforms.json` 被 Git 忽略。Camera 外参允许完整 RPY，
 Base–Slide-zero 标定则检查“平移 + yaw”机械假设。
 
 Frame chain 不访问硬件，只接收调用方已经提供的五轴逻辑状态和完整 Slide-zero FK：
@@ -373,7 +374,7 @@ from config.frame_transforms import load_frame_transforms
 from kinematics.frame_chain import RobotFrameChain
 
 transforms = load_frame_transforms(
-    Path("config/frame_transforms.local.json")
+    Path("config/local/frame_transforms.json")
 )
 frame_chain = RobotFrameChain(
     base_T_slide_zero=transforms.base_T_slide_zero,
@@ -390,7 +391,7 @@ base_point = frame_chain.transform_camera_point_to_base(
 
 `kinematics/five_axis.py` 已提供参数化完整五轴 FK。真实连杆尺寸、Slide/Z 方向、平面安装
 变换和 `rotation_output_T_tool` 必须写入被 Git 忽略的
-`config/five_axis_geometry.local.json`，并显式设置 `geometry_confirmed=true`；脚本默认加载该
+`config/local/five_axis_geometry.json`，并显式设置 `geometry_confirmed=true`；脚本默认加载该
 文件，不会拿 Planar 2R 示例尺寸或 startup position 猜算。高级调用仍可用
 `--fk-provider module:attribute` 替换默认模型。
 三个工具均默认预览/只读，不自动 home、move、stop、enable 或 torque enable：
@@ -427,12 +428,12 @@ STM32/Feetech port 和 gs_usb device 创建 transport、bus、肩肘关节、Rot
 Rotation 时同样执行该门禁，timeout 不会被描述为已停止，也不会以 torque disable 冒充 stop。
 
 到位容差、稳定窗口、轮询周期、timeout、默认速度、默认加速度以及 Slide/Z 的 Host 位置、
-速度和加速度上限统一来自被 Git 忽略的 `config/motion_local.py`。当前本机线性范围同步 STM32
+速度和加速度上限统一来自被 Git 忽略的 `config/local/motion.py`。当前本机线性范围同步 STM32
 firmware 软限位：Slide `0..799.988 mm`、Z `-190..0 mm`；固件仍独立执行同一底层保护。
 当前实测运行默认值为 Slide `60 mm/s`、`180 mm/s²`，Z `8 mm/s`、`25 mm/s²`；它们
 不等于允许上限。完成整机有效行程验收后，应同时更新 firmware 与本地配置，避免 Host 和
 下位机范围不一致。
-先复制 `config/motion_local.example.py`，再替换其中明确标为
+先复制 `config/examples/motion.py` 到 `config/local/motion.py`，再替换其中明确标为
 `EXAMPLE / BENCH-TEST PLACEHOLDER`、`NOT PRODUCTION-CALIBRATED` 的数值。Rotation 的工程
 速度/加速度映射尚未验证，因此示例保持 `None`。同一时刻只允许一个进程拥有这些真实硬件；
 Web 后端、运动学执行器和台架工具都应复用同一个 runtime，不再各自扫描和组装后端。
@@ -620,7 +621,7 @@ cd host
 和显式 torque enable/disable。位置命令按 Feetech 磁编码协议从 `0x2A` 连续写入
 `position/time/speed` 六字节。
 
-`config/feetech.py` 包含两层配置：`SM45BL_C001_PROFILE` 固化型号、飞特自定义串口协议、
+`config/project/feetech.py` 包含两层配置：`SM45BL_C001_PROFILE` 固化型号、飞特自定义串口协议、
 RS-485 半双工、USB 转换板自动收发切换、115200 baud、12-bit/4096 counts 磁编码器和
 C001 寄存器表；`END_EFFECTOR_ROTATION_CONFIG` 固化当前项目安装参数：ID 1、
 `zero_raw=2130`、`direction_sign=+1`（逻辑正方向为 `+X`）、`-150°..+150°` 当前限位和

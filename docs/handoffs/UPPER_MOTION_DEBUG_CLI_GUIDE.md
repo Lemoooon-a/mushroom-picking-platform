@@ -181,7 +181,7 @@ enable、自动 home、startup position、完整初始化状态机、自动标�
 ```bash
 cd host
 .venv/bin/python scripts/run_motion_demo.py --execute \
-  --tray-workspace-config config/tray_workspace.local.json
+  --tray-workspace-config config/local/tray_workspace.json
 ```
 
 执行模式启动顺序为：读取状态、`suction idle`、使能 Shoulder/Elbow/Rotation、验证使能、Z

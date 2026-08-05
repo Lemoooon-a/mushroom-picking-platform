@@ -16,10 +16,11 @@
 ## 目录结构
 
 - `docs/`：系统设计、电气连接、协议和标定文档
-- `host/`：上位机控制程序
+- `host/`：上位机控制程序；`host/config/` 分为模型/加载器、`project/`、`examples/` 和 ignored `local/`
+- `host/tests/`：按领域分组的 Host 离线测试与共享 helper
 - `firmware/`：STM32 固件
 - `tools/`：电机测试、标定和调试工具
-- `config/`：机器人配置模板
+- `config/`：仓库级机器人配置模板
 
 ## 当前阶段
 

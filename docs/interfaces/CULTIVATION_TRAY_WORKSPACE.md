@@ -7,7 +7,7 @@
 也不提交硬件命令。
 
 用户已于 2026-08-05 明确确认培养槽 Base X/Y/Z 边界，本机配置保存在被 Git 忽略的
-`host/config/tray_workspace.local.json`。实现仍不提供推测默认值；机械最大可达范围、测试点、
+`host/config/local/tray_workspace.json`。实现仍不提供推测默认值；机械最大可达范围、测试点、
 arm-local 正负偏置区与 150 mm 跨区安全高度都不是培养槽边界来源。
 
 ## 2. Workspace Layers
@@ -16,8 +16,8 @@ arm-local 正负偏置区与 150 mm 跨区安全高度都不是培养槽边界�
 | --- | --- | --- | --- |
 | Cultivation-tray workspace permission | Base frame | 最终 TCP 目标是否属于允许操作的培养槽区域 | `host/config/tray_workspace.py`、`host/application/tray_workspace.py` |
 | Kinematic reachability | Slide-zero/五轴模型 | 机器人是否能在几何、关节和轴限位内到达 | `host/kinematics/base_frame_solver.py` |
-| Offset workspace validity | arm-local frame | 当前 Slide 下局部解是否位于正/负偏置矩形，是否需要换侧 | `host/config/workspace_planning.py` |
-| Robot motion envelope policy | Base Z + 轴逻辑位置 | startup/return 与跨区中间阶段采用什么固定策略 | `host/config/robot_motion_envelope.py` |
+| Offset workspace validity | arm-local frame | 当前 Slide 下局部解是否位于正/负偏置矩形，是否需要换侧 | `host/config/project/workspace_planning.py` |
+| Robot motion envelope policy | Base Z + 轴逻辑位置 | startup/return 与跨区中间阶段采用什么固定策略 | `host/config/project/robot_motion_envelope.py` |
 
 检查结果不能相互替代。机械可达但位于培养槽外的目标必须报告
 `TargetOutsideTrayWorkspace`，而不是 `IK failed`。
@@ -37,9 +37,9 @@ arm-local 正负偏置区与 150 mm 跨区安全高度都不是培养槽边界�
 
 ## 3. Configuration Sources
 
-提交模板：`host/config/tray_workspace.example.json`。
+提交模板：`host/config/examples/tray_workspace.json`。
 
-本机文件：`host/config/tray_workspace.local.json`（被 Git 忽略）。
+本机文件：`host/config/local/tray_workspace.json`（被 Git 忽略）。
 
 当前用户确认值：
 
@@ -98,7 +98,7 @@ JSON 的 `metadata.validated` 必须明确为 `true`；模板中的 `null` 和 `
 ```bash
 cd host
 .venv/bin/python scripts/run_motion_demo.py \
-  --tray-workspace-config config/tray_workspace.local.json
+  --tray-workspace-config config/local/tray_workspace.json
 ```
 
 省略 `--execute` 仍是只读预览。`workspace` 命令显示 Tray、arm-local offset、Robot motion

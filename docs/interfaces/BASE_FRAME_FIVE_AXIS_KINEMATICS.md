@@ -67,7 +67,7 @@ Negative: local_x in [50, 450] mm, local_y in [-350, -150] mm, center_y=-250 mm
 ```
 
 边界包含在内；中心空白区和矩形外部均为 `OUTSIDE`。最终普通五轴解必须位于正偏置区或负偏置
-区。局部边界、容差和 10 mm fallback 步长集中在 `config/workspace_planning.py`；该配置不再
+区。局部边界、容差和 10 mm fallback 步长集中在 `config/project/workspace_planning.py`；该配置不再
 包含 startup 或 Base-frame clearance。
 
 该 arm-local 偏置区只回答当前 Slide 下肩肘解是否有效以及是否需要重新分配 Slide；它不是
@@ -137,7 +137,7 @@ velocity, acceleration   -> None（默认）
 
 ## 12. Base calibration gate
 
-本机 `frame_transforms.local.json` 中 `validated=false` 时，构造求解器默认报错：
+本机 `host/config/local/frame_transforms.json` 中 `validated=false` 时，构造求解器默认报错：
 
 ```text
 The Base–Slide-zero transform is provisional and has not passed an independent pose validation.
@@ -167,7 +167,7 @@ The Base–Slide-zero transform is provisional and has not passed an independent
 clearance_base_z = max(current_tcp_base_z, target_tcp_base_z, 150 mm)
 ```
 
-150 mm 来自 `config/robot_motion_envelope.py` 的当前项目软件安全阶段策略，是 Base 绝对最低高度，
+150 mm 来自 `config/project/robot_motion_envelope.py` 的当前项目软件安全阶段策略，是 Base 绝对最低高度，
 不是相对当前位置再抬升 150 mm。先在 Base frame
 构造该高度，再通过正式几何 helper 求 Z 逻辑位置，不使用固定轴增量。若当前或目标已经高于
 150 mm，则保持两者中较高高度；当前 TCP 已在最高点且高于 150 mm 时，`LIFT` 是零位移验证，

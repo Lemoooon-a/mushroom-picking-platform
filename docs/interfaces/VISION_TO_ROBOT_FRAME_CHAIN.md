@@ -38,7 +38,7 @@ A_T_C = A_T_B @ B_T_C
 
 | Transform | 含义 | 实际来源 | 当前是否存在 | 验证状态 | 使用位置 |
 | --- | --- | --- | --- | --- | --- |
-| `base_T_slide_zero` | Slide-zero 在 Base 中的位姿 | `frame_transforms.local.json`；Base 标定流程 | 是 | 本机 metadata 为 `validated=true`；本轮未重做硬件验证 | `BaseFrameFiveAxisSolver`、`RobotFrameChain` |
+| `base_T_slide_zero` | Slide-zero 在 Base 中的位姿 | `host/config/local/frame_transforms.json`；Base 标定流程 | 是 | 本机 metadata 为 `validated=true`；本轮未重做硬件验证 | `BaseFrameFiveAxisSolver`、`RobotFrameChain` |
 | `slide_zero_T_tool(q)` | 当前五轴状态下 TCP 在 Slide-zero 中的位姿 | `FiveAxisKinematics.forward_kinematics()` | 是 | 本机几何 `geometry_confirmed=true`；有离线 FK 测试 | FK、Base 求解器残差检查 |
 | `base_T_tool(q)` | 当前 TCP 在 Base 中的位姿 | 前两项组合 | 是 | 随前两项；有离线组合测试 | Base-root FK、规划当前状态 |
 | `tool_T_camera` | Camera 坐标转换到 Tool | 配置槽位、人工录入脚本 | 配置结构存在；本机值为 `null` | 缺失；不存在独立 `tool_camera_validated=true` 记录 | 旧 `RobotFrameChain` Camera helper；新 resolver 门禁 |
@@ -47,10 +47,10 @@ A_T_C = A_T_B @ B_T_C
 | `base_T_target` | 目标在 Base 中的位姿 | 预期矩阵链组合 | 有受门禁的纯计算实现 | 只有合成测试；真实能力不可用 | `resolve_object_in_base()` |
 | `base_T_tool_goal` | 最终 TCP 抓取目标 | `base_T_target @ object_T_tool_grasp` | 有受门禁的纯计算实现 | 只有合成测试；真实能力不可用 | `resolve_tool_goal_in_base()` |
 
-注意：`frame_transforms.local.json.metadata.validated` 只属于 Base–Slide-zero 标定。它绝不验证
+注意：`host/config/local/frame_transforms.json` 的 `metadata.validated` 只属于 Base–Slide-zero 标定。它绝不验证
 `tool_T_camera`。手眼状态只读取独立字段 `tool_camera_validated`。
 
-培养槽边界另由 `tray_workspace.local.json` 提供，frame 固定为 `base`。它既不是标定变换，也不
+培养槽边界另由 `host/config/local/tray_workspace.json` 提供，frame 固定为 `base`。它既不是标定变换，也不
 从机械可达范围、正负偏置区或跨区安全高度推导。本机已按用户 2026-08-05 的明确输入配置
 X `[20, 480] mm`、Y `[20, 700] mm`、Z `[0, 180] mm`，并显式标记
 `metadata.validated=true`。Z 是最终 TCP 的绝对 Base 高度，`180 mm` 是当前 Z 回零 TCP 高度的

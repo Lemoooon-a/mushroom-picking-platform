@@ -115,8 +115,8 @@ Base 与手眼标定，输出会按独立 validation 字段更新。
 ```python
 robot = create_mushroom_robot_controller(
     execute=False,
-    frame_config=Path("config/frame_transforms.local.json"),
-    tray_workspace_config=Path("config/tray_workspace.local.json"),
+    frame_config=Path("config/local/frame_transforms.json"),
+    tray_workspace_config=Path("config/local/tray_workspace.json"),
 )
 ```
 
@@ -127,8 +127,8 @@ robot = create_mushroom_robot_controller(
 
 仓库不提供推测边界或可执行默认值。本机已按用户 2026-08-05 的明确输入配置 Base X
 `[20, 480] mm`、Base Y `[20, 700] mm`、Base Z `[0, 180] mm`，并设置
-`metadata.validated=true`。其他机器应复制 `config/tray_workspace.example.json` 为被 Git 忽略的
-`config/tray_workspace.local.json`，填入经确认的 Base-frame 边界。配置缺失、仍为 `null` 或未
+`metadata.validated=true`。其他机器应复制 `config/examples/tray_workspace.json` 为被 Git 忽略的
+`config/local/tray_workspace.json`，填入经确认的 Base-frame 边界。配置缺失、仍为 `null` 或未
 确认时，工厂和真实 CLI 在创建 Runtime、打开硬件前失败关闭。
 
 Base Z `[0, 180] mm` 是最终 TCP 的绝对任务许可高度。上限 `180 mm` 是当前 Base 标定和 TCP

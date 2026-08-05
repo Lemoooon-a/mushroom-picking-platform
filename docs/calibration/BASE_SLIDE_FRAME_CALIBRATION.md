@@ -40,8 +40,9 @@ class SlideZeroKinematics(Protocol):
 
 ```bash
 cd /Users/sd/Projects/mushroom-picking-platform/host
-cp config/five_axis_geometry.example.json \
-  config/five_axis_geometry.local.json
+mkdir -p config/local
+cp config/examples/five_axis_geometry.json \
+  config/local/five_axis_geometry.json
 ```
 
 必须测量并填写：
@@ -166,7 +167,7 @@ roll/pitch、有效状态和 warnings。默认不修改文件。
 目标文件为：
 
 ```text
-host/config/frame_transforms.local.json
+host/config/local/frame_transforms.json
 ```
 
 该文件被 Git 忽略。保存采用同目录临时文件和原子替换；已有文件默认拒绝覆盖，复核预览并
@@ -228,7 +229,7 @@ CAD（Computer-Aided Design，计算机辅助设计）、人工测量或后续�
 .venv/bin/python scripts/set_tool_camera_transform.py \
   --x-mm ... --y-mm ... --z-mm ... \
   --roll-deg ... --pitch-deg ... --yaw-deg ... \
-  --config config/frame_transforms.local.json
+  --config config/local/frame_transforms.json
 ```
 
 默认仅预览并检查 `tool_T_camera @ camera_T_tool` 的 round trip。确认后使用

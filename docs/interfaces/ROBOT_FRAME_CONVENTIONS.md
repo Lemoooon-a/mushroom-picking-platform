@@ -22,7 +22,7 @@ Base (B)
 
 仓库现在提供参数化五轴 FK 和 Base 根目标的完整五轴候选解算，但仍没有
 URDF（Unified Robot Description Format，统一机器人描述格式）。当前机器的实际连杆长度继续
-由本机几何配置提供。`five_axis_geometry.local.json` 必须由机械负责人填写并
+由本机几何配置提供。`host/config/local/five_axis_geometry.json` 必须由机械负责人填写并
 确认 Tool 右手轴方向、Rotation 零角语义、TCP 相对 Rotation 输出的固定几何，然后显式设置
 `geometry_confirmed=true`；实现不会猜测这些参数。
 

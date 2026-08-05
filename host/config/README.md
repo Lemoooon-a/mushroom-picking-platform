@@ -36,6 +36,7 @@
 - `project/workspace_planning.py` 只描述 arm-local 逆运动学（Inverse Kinematics, IK）规划约束。
 - `project/robot_motion_envelope.py` 只描述 startup 与中间安全阶段策略，不是碰撞模型或安全认证。
 - `local/tray_workspace.json` 只描述 Base frame 中普通最终任务 TCP 的绝对允许范围，不是机械极限。
+- `host/calibration/` 只保存标定算法、状态模型和 capture/solve 逻辑；机器专属标定结果统一保存在 ignored `host/config/local/`。
 
 ## 三类工作区与安全策略
 

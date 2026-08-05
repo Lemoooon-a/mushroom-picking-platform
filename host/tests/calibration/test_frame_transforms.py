@@ -36,7 +36,7 @@ class FrameTransformConfigTests(unittest.TestCase):
 
     def test_example_json_loads(self) -> None:
         transforms = load_frame_transforms(
-            HOST_ROOT / "config" / "frame_transforms.example.json"
+            HOST_ROOT / "config" / "examples" / "frame_transforms.json"
         )
         np.testing.assert_allclose(transforms.base_T_slide_zero.matrix, np.eye(4))
         self.assertIsNone(transforms.tool_T_camera)

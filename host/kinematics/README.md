@@ -37,8 +37,9 @@ Slide/Z translation
   @ rotation_output_T_tool
 ```
 
-当前机器几何从被 Git 忽略的 `config/five_axis_geometry.local.json` 加载。模板
-`config/five_axis_geometry.example.json` 故意把未知尺寸设为 `null` 且保持
+当前机器几何从被 Git 忽略的 `config/local/five_axis_geometry.json` 加载。模板位于
+`config/examples/five_axis_geometry.json`。
+该 example 故意把未知尺寸设为 `null` 且保持
 `geometry_confirmed=false`，避免示例数值进入真实标定。
 
 默认标定 provider 为：
