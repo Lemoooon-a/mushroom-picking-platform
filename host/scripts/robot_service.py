@@ -39,6 +39,9 @@ from config.project.vision_runtime import (  # noqa: E402
 )
 from config.tray_workspace import load_tray_workspace_config  # noqa: E402
 from scripts.run_motion_demo import create_demo_flow  # noqa: E402
+from motion.unified_protocol import (  # noqa: E402
+    AxisDescriptor, AxisKind, AxisName, AxisState, MotionCommandResult,
+)
 from vision.gateway import FakeVisionGateway, JsonSocketVisionGateway  # noqa: E402
 from vision.observation import Vector3  # noqa: E402
 from vision.protocol import NoTarget, TargetDetection  # noqa: E402
@@ -129,7 +132,7 @@ def create_service(args: argparse.Namespace, *, emit: Callable[[str], None] = pr
     if args.record_jsonl is not None:
         recorder = JsonLinesExecutionRecorder(args.record_jsonl, repository_root=REPOSITORY_ROOT)
     return MushroomRobotService(
-        runtime=runtime,
+        axis_motion=runtime.controller if runtime is not None else backend,
         controller=controller,
         workflow=workflow,
         mode=mode,
@@ -181,6 +184,14 @@ class RobotServiceShell:
             self.emit("move x y z [yaw] | plan x y z [yaw] | observe | plan-observation | pick")
             self.emit("resolve-camera-point x_mm y_mm z_mm")
             self.emit("suction grip|release|idle | joints enable|disable | quit")
+            self.emit("axes | axis state <axis> | axis states [axis ...]")
+            self.emit("axis move-abs <axis> <position> [--velocity V] [--acceleration A] [--timeout T]")
+            self.emit("axis move-rel <axis> <delta> [--velocity V] [--acceleration A] [--timeout T]")
+            self.emit("Single-axis commands are raw/manual maintenance operations.")
+            self.emit(
+                "They enforce only the selected axis state and soft limits; no Base-frame "
+                "workspace, IK, offset-workspace, side-switch, collision, or path checks apply."
+            )
             return True
         if command == "status":
             self.emit(_json(self.service.status()))
@@ -190,8 +201,14 @@ class RobotServiceShell:
                 self.emit(line_item)
             return True
         if command == "workspace":
-            self.emit(_json(self.service.controller.tray_workspace.config))
+            self.emit(_json(self.service.tray_workspace.config))
             return True
+        if command == "axes" and len(parts) == 1:
+            for descriptor in self.service.list_axes():
+                self.emit(format_axis_descriptor(descriptor))
+            return True
+        if command == "axis":
+            return self._run_axis_command(parts)
         if command == "startup":
             self.service.startup()
             self.emit("Robot Service READY")
@@ -236,6 +253,33 @@ class RobotServiceShell:
             return True
         raise ValueError("unknown command; type help")
 
+    def _run_axis_command(self, parts: list[str]) -> bool:
+        if len(parts) < 2:
+            raise ValueError("usage: axis state|states|move-abs|move-rel ...")
+        action = parts[1]
+        if action == "state" and len(parts) == 3:
+            self.emit(format_axis_state(self.service.get_axis_state(_axis(parts[2]))))
+            return True
+        if action == "states":
+            axes = None if len(parts) == 2 else tuple(_axis(item) for item in parts[2:])
+            for state in self.service.get_axis_states(axes):
+                self.emit(format_axis_state(state))
+            return True
+        if action in ("move-abs", "move-rel"):
+            axis, value, options = _axis_move_arguments(parts)
+            if action == "move-abs":
+                result = self.service.move_axis_absolute(axis, value, **options)
+                self.emit(format_axis_motion_result("absolute", result))
+            else:
+                result = self.service.move_axis_relative(axis, value, **options)
+                self.emit(
+                    format_axis_motion_result(
+                        "relative", result, requested_delta=value
+                    )
+                )
+            return True
+        raise ValueError("usage: axis state|states|move-abs|move-rel ...")
+
     def command_loop(self) -> None:
         self.emit('Type "help" for commands.')
         while True:
@@ -265,6 +309,10 @@ def format_capabilities(service: MushroomRobotService) -> tuple[str, ...]:
         f"Robot motion envelope: {available(capabilities.robot_motion_envelope)}",
         f"Joint holding: {available(capabilities.joint_holding)}",
         f"Suction command: {available(capabilities.suction_command)}",
+        f"Axis listing: {available(capabilities.axis_listing)}",
+        f"Axis state query: {available(capabilities.axis_state_query)}",
+        f"Axis absolute motion: {available(capabilities.axis_absolute_motion)}",
+        f"Axis relative motion: {available(capabilities.axis_relative_motion)}",
         f"Vision gateway: {capabilities.vision_gateway}",
         f"Vision target observation: {available(capabilities.vision_target_observation)}",
         f"Hand-eye calibration: {capabilities.hand_eye_calibration.value}",
@@ -272,6 +320,68 @@ def format_capabilities(service: MushroomRobotService) -> tuple[str, ...]:
         f"Pick planning: {available(capabilities.pick_planning)}",
         f"Pick execution: {available(capabilities.pick_execution)}",
         "Physical pick verification: unavailable",
+    )
+
+
+def format_axis_descriptor(descriptor: AxisDescriptor) -> str:
+    if not isinstance(descriptor, AxisDescriptor):
+        raise TypeError("descriptor must be an AxisDescriptor")
+    return _json(
+        {
+            "name": descriptor.name.value,
+            "unit": descriptor.position_unit,
+            "minimum": descriptor.minimum_position,
+            "maximum": descriptor.maximum_position,
+            "supports_homing": descriptor.capabilities.reference_home,
+            "requires_holding": descriptor.kind is AxisKind.ROTARY,
+        }
+    )
+
+
+def format_axis_state(state: AxisState) -> str:
+    if not isinstance(state, AxisState):
+        raise TypeError("state must be an AxisState")
+    return _json(
+        {
+            "axis": state.axis.value,
+            "position": state.current_position,
+            "unit": state.position_unit,
+            "position_valid": state.position_valid,
+            "homed": state.homed,
+            "moving": state.busy,
+            "enabled_holding": state.enabled,
+            "fault": state.faulted,
+            "fault_code": state.fault_code,
+            "fault_message": state.fault_message,
+        }
+    )
+
+
+def format_axis_motion_result(
+    command_kind: str,
+    result: MotionCommandResult,
+    *,
+    requested_delta: float | None = None,
+) -> str:
+    if not isinstance(result, MotionCommandResult):
+        raise TypeError("result must be a MotionCommandResult")
+    no_op = "no motion submitted" in result.message
+    return _json(
+        {
+            "command_type": command_kind,
+            "axis": result.axis.value,
+            "start_position": (
+                result.target_position - requested_delta
+                if requested_delta is not None
+                else None
+            ),
+            "requested_delta": requested_delta,
+            "absolute_target": result.target_position,
+            "submitted": result.accepted and not no_op,
+            "no_op": no_op,
+            "terminal_status": result.status.value,
+            "message": result.message,
+        }
     )
 
 
@@ -307,6 +417,43 @@ def _camera_point(parts: list[str]) -> tuple[float, float, float]:
     if len(parts) != 4:
         raise ValueError("usage: resolve-camera-point x_mm y_mm z_mm")
     return float(parts[1]), float(parts[2]), float(parts[3])
+
+
+def _axis(value: str) -> AxisName:
+    try:
+        return AxisName(value.lower())
+    except ValueError as exc:
+        raise ValueError(f"unknown axis {value!r}") from exc
+
+
+def _axis_move_arguments(
+    parts: list[str],
+) -> tuple[AxisName, float, dict[str, float | None]]:
+    if len(parts) < 4:
+        raise ValueError(
+            f"usage: axis {parts[1]} <axis> <value> "
+            "[--velocity V] [--acceleration A] [--timeout T]"
+        )
+    axis = _axis(parts[2])
+    value = float(parts[3])
+    options: dict[str, float | None] = {
+        "velocity": None,
+        "acceleration": None,
+        "timeout_s": None,
+    }
+    names = {
+        "--velocity": "velocity",
+        "--acceleration": "acceleration",
+        "--timeout": "timeout_s",
+    }
+    index = 4
+    while index < len(parts):
+        option = parts[index]
+        if option not in names or index + 1 >= len(parts):
+            raise ValueError(f"invalid axis motion option {option!r}")
+        options[names[option]] = float(parts[index + 1])
+        index += 2
+    return axis, value, options
 
 
 def _target(parts: list[str]) -> BaseToolTarget:

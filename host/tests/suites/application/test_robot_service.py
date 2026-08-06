@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import tempfile
-from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
@@ -21,7 +20,16 @@ from calibration.hand_eye import HandEyeCalibration, HandEyeCalibrationStatus
 from config.tray_workspace import TrayWorkspaceConfig
 from geometry.rigid_transform import RigidTransform
 from kinematics.frame_chain import RobotAxisState
-from motion.unified_protocol import AxisName, AxisState
+from motion.unified_controller import UnifiedMotionError
+from motion.unified_protocol import (
+    AxisName,
+    AxisState,
+    MotionCommandHandle,
+    MotionCommandResult,
+    MotionCommandStatus,
+    MotionErrorCode,
+    RelativeAxisTarget,
+)
 from vision.target_resolver import VisionTargetResolver
 
 
@@ -153,7 +161,7 @@ class RobotServiceTests(unittest.TestCase):
             controller=controller,
             workflow=None,
             mode=RobotServiceMode.EXECUTE,
-            runtime=SimpleNamespace(controller=runtime_controller),
+            axis_motion=runtime_controller,
             activate_controller_on_startup=False,
         )
         service.startup()
@@ -303,6 +311,128 @@ class RobotServiceTests(unittest.TestCase):
             records = [json.loads(line) for line in path.read_text().splitlines()]
         self.assertEqual([item["operation"] for item in records], ["startup", "plan"])
         self.assertEqual(records[-1]["application_state"], "ready")
+
+
+class RobotServiceAxisMotionTests(RobotServiceTests):
+    def setUp(self) -> None:
+        super().setUp()
+        self.axis_motion = Mock()
+        self.axis_motion.get_state.return_value = _axis_states()[0]
+        self.axis_motion.get_axis_states.return_value = _axis_states()
+        self.axis_motion.list_axes.return_value = ()
+        self.handle = MotionCommandHandle("axis-command", AxisName.SLIDE, 12.0)
+        self.axis_motion.submit_absolute.return_value = self.handle
+        self.axis_motion.submit_relative.return_value = self.handle
+        self.axis_motion.wait.return_value = MotionCommandResult(
+            command_id="axis-command",
+            axis=AxisName.SLIDE,
+            status=MotionCommandStatus.ARRIVED,
+            accepted=True,
+            completed=True,
+            target_position=12.0,
+            final_position=12.0,
+            position_error=0.0,
+            error_code=None,
+            message="arrived",
+        )
+
+    def axis_service(self, mode: RobotServiceMode) -> MushroomRobotService:
+        service = self.service(mode, axis_motion=self.axis_motion)
+        service.startup()
+        return service
+
+    def test_query_is_available_outside_ready_and_listing_in_all_modes(self) -> None:
+        for mode in RobotServiceMode:
+            with self.subTest(mode=mode.value):
+                service = self.axis_service(mode)
+                self.assertEqual(service.list_axes(), ())
+        service = self.axis_service(RobotServiceMode.EXECUTE)
+        for state in (
+            RobotServiceState.READY,
+            RobotServiceState.EXECUTING,
+            RobotServiceState.DISABLED,
+            RobotServiceState.FAULT,
+        ):
+            with self.subTest(state=state.value):
+                service.state = state
+                self.assertIsInstance(
+                    service.get_axis_state(AxisName.SLIDE), AxisState
+                )
+                self.assertEqual(len(service.get_axis_states()), 5)
+
+    def test_absolute_motion_blocks_to_terminal_and_returns_ready(self) -> None:
+        service = self.axis_service(RobotServiceMode.EXECUTE)
+        result = service.move_axis_absolute(
+            AxisName.SLIDE,
+            12.0,
+            velocity=3.0,
+            acceleration=4.0,
+            timeout_s=5.0,
+        )
+        self.assertEqual(result.status, MotionCommandStatus.ARRIVED)
+        self.axis_motion.submit_absolute.assert_called_once()
+        target = self.axis_motion.submit_absolute.call_args.args[0]
+        self.assertEqual((target.axis, target.position), (AxisName.SLIDE, 12.0))
+        self.axis_motion.wait.assert_called_once_with(self.handle, timeout_s=5.0)
+        self.assertIs(service.state, RobotServiceState.READY)
+
+    def test_relative_motion_uses_explicit_relative_target(self) -> None:
+        service = self.axis_service(RobotServiceMode.EXECUTE)
+        result = service.move_axis_relative(AxisName.SLIDE, 2.0, velocity=3.0)
+        target = self.axis_motion.submit_relative.call_args.args[0]
+        self.assertIsInstance(target, RelativeAxisTarget)
+        self.assertEqual((target.axis, target.delta), (AxisName.SLIDE, 2.0))
+        self.assertEqual(result.target_position, 12.0)
+
+    def test_motion_is_rejected_in_read_only_and_dry_run(self) -> None:
+        for mode in (RobotServiceMode.READ_ONLY, RobotServiceMode.DRY_RUN):
+            with self.subTest(mode=mode.value):
+                service = self.axis_service(mode)
+                with self.assertRaises(RobotServiceCapabilityError):
+                    service.move_axis_absolute(AxisName.SLIDE, 1.0)
+        self.axis_motion.submit_absolute.assert_not_called()
+
+    def test_pre_submission_rejection_stays_ready(self) -> None:
+        service = self.axis_service(RobotServiceMode.EXECUTE)
+        self.axis_motion.submit_relative.side_effect = UnifiedMotionError(
+            MotionErrorCode.BUSY, "busy", axis=AxisName.SLIDE
+        )
+        with self.assertRaises(UnifiedMotionError):
+            service.move_axis_relative(AxisName.SLIDE, 1.0)
+        self.assertIs(service.state, RobotServiceState.READY)
+        self.axis_motion.stop.assert_not_called()
+
+    def test_terminal_timeout_attempts_stop_and_faults(self) -> None:
+        service = self.axis_service(RobotServiceMode.EXECUTE)
+        self.axis_motion.wait.return_value = MotionCommandResult(
+            command_id="axis-command",
+            axis=AxisName.SLIDE,
+            status=MotionCommandStatus.TIMEOUT,
+            accepted=True,
+            completed=False,
+            target_position=12.0,
+            final_position=10.0,
+            position_error=2.0,
+            error_code=MotionErrorCode.TIMEOUT,
+            message="timeout",
+        )
+        result = service.move_axis_absolute(AxisName.SLIDE, 12.0)
+        self.assertEqual(result.status, MotionCommandStatus.TIMEOUT)
+        self.axis_motion.stop.assert_called_once_with(AxisName.SLIDE)
+        self.assertIs(service.state, RobotServiceState.FAULT)
+
+    def test_user_stop_recovers_only_with_valid_stationary_states(self) -> None:
+        service = self.axis_service(RobotServiceMode.EXECUTE)
+        service.state = RobotServiceState.EXECUTING
+        service.stop()
+        self.assertIs(service.state, RobotServiceState.READY)
+
+        self.axis_motion.get_axis_states.return_value = _axis_states(
+            invalid_axis=AxisName.Z
+        )
+        service.state = RobotServiceState.EXECUTING
+        service.stop()
+        self.assertIs(service.state, RobotServiceState.FAULT)
 
 
 if __name__ == "__main__":

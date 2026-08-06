@@ -9,6 +9,15 @@ from unittest.mock import Mock
 from application.robot_service import ResolvedCameraPoint, RobotServiceCapabilities
 from application.runtime_state import RobotServiceMode
 from calibration.hand_eye import HandEyeCalibrationStatus
+from motion.unified_protocol import (
+    AxisCapabilities,
+    AxisDescriptor,
+    AxisKind,
+    AxisName,
+    AxisState,
+    MotionCommandResult,
+    MotionCommandStatus,
+)
 from scripts.robot_service import RobotServiceShell, build_parser, format_capabilities, validate_args
 
 
@@ -83,6 +92,79 @@ class RobotServiceCliTests(unittest.TestCase):
         self.assertIn("Hand-eye calibration: missing", output)
         self.assertIn("Pick planning: unavailable", output)
         self.assertIn("Physical pick verification: unavailable", output)
+
+    def test_axis_commands_only_dispatch_through_service(self) -> None:
+        service = Mock()
+        descriptor = AxisDescriptor(
+            AxisName.Z,
+            "Z",
+            AxisKind.LINEAR,
+            "mm",
+            "mm/s",
+            "mm/s²",
+            -190.0,
+            0.0,
+            AxisCapabilities(True, True, True, True, True, True, True),
+        )
+        state = AxisState(
+            AxisName.Z, True, True, False, True, True, -50.0, "mm",
+            False, None, None,
+        )
+        result = MotionCommandResult(
+            "command", AxisName.Z, MotionCommandStatus.ARRIVED, True, True,
+            -60.0, -60.0, 0.0, None, "arrived",
+        )
+        service.list_axes.return_value = (descriptor,)
+        service.get_axis_state.return_value = state
+        service.get_axis_states.return_value = (state,)
+        service.move_axis_absolute.return_value = result
+        service.move_axis_relative.return_value = result
+        output: list[str] = []
+        shell = RobotServiceShell(service, emit=output.append)
+
+        shell.run_command("axes")
+        shell.run_command("axis state z")
+        shell.run_command("axis states z")
+        shell.run_command(
+            "axis move-abs z -60 --velocity 2 --acceleration 3 --timeout 4"
+        )
+        shell.run_command("axis move-rel z -10 --timeout 5")
+
+        service.list_axes.assert_called_once_with()
+        service.get_axis_state.assert_called_once_with(AxisName.Z)
+        service.get_axis_states.assert_called_once_with((AxisName.Z,))
+        service.move_axis_absolute.assert_called_once_with(
+            AxisName.Z,
+            -60.0,
+            velocity=2.0,
+            acceleration=3.0,
+            timeout_s=4.0,
+        )
+        service.move_axis_relative.assert_called_once_with(
+            AxisName.Z,
+            -10.0,
+            velocity=None,
+            acceleration=None,
+            timeout_s=5.0,
+        )
+        rendered = "\n".join(output)
+        self.assertIn('"unit": "mm"', rendered)
+        self.assertIn('"requested_delta": -10.0', rendered)
+        self.assertNotIn("controller", service.method_calls)
+
+    def test_help_contains_raw_manual_safety_warning(self) -> None:
+        output: list[str] = []
+        RobotServiceShell(Mock(), emit=output.append).run_command("help")
+        rendered = "\n".join(output)
+        self.assertIn("raw/manual maintenance", rendered)
+        self.assertIn("no Base-frame workspace", rendered)
+
+    def test_unknown_axis_and_non_finite_values_are_rejected(self) -> None:
+        shell = RobotServiceShell(Mock(), emit=lambda _line: None)
+        with self.assertRaisesRegex(ValueError, "unknown axis"):
+            shell.run_command("axis state unknown")
+        with self.assertRaises(ValueError):
+            shell.run_command("axis move-rel z not-a-number")
 
 
 if __name__ == "__main__":

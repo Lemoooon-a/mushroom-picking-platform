@@ -23,7 +23,7 @@ from kinematics.base_frame_solver import BaseFrameFiveAxisSolver, BaseFrameSolve
 from kinematics.base_move_transition_planner import BaseMovePlan, BaseMoveTransitionPlanner
 from kinematics.five_axis import FiveAxisKinematics, load_local_five_axis_kinematics
 from kinematics.frame_chain import RobotAxisState
-from motion.unified_protocol import AxisCapabilities, AxisDescriptor, AxisKind, AxisName
+from motion.unified_protocol import AxisCapabilities, AxisDescriptor, AxisKind, AxisName, AxisState
 from vision.observation import CaptureMotionState
 from vision.target_resolver import VisionTargetResolver
 
@@ -137,6 +137,46 @@ class OfflinePlanningBackend:
 
     def joints_holding(self) -> bool:
         return self.holding
+
+    def list_axes(self) -> tuple[AxisDescriptor, ...]:
+        descriptors = _offline_descriptors()
+        return tuple(descriptors[axis] for axis in AxisName)
+
+    def get_state(self, axis: AxisName) -> AxisState:
+        return next(state for state in self.get_axis_states((axis,)))
+
+    def get_axis_states(
+        self,
+        axes: tuple[AxisName, ...] | None = None,
+    ) -> tuple[AxisState, ...]:
+        if self.axis_state is None:
+            raise OfflinePlanningStateError(
+                "simulated axis state is unavailable before dry-run startup"
+            )
+        selected = tuple(AxisName) if axes is None else axes
+        values = {
+            AxisName.SLIDE: self.axis_state.slide_mm,
+            AxisName.Z: self.axis_state.z_mm,
+            AxisName.SHOULDER: self.axis_state.shoulder_deg,
+            AxisName.ELBOW: self.axis_state.elbow_deg,
+            AxisName.ROTATION: self.axis_state.rotation_deg,
+        }
+        return tuple(
+            AxisState(
+                axis=axis,
+                connected=False,
+                enabled=self.holding if axis not in (AxisName.SLIDE, AxisName.Z) else None,
+                busy=False,
+                homed=None,
+                position_valid=True,
+                current_position=values[axis],
+                position_unit="mm" if axis in (AxisName.SLIDE, AxisName.Z) else "deg",
+                faulted=False,
+                fault_code=None,
+                fault_message="simulated dry-run state; not hardware feedback",
+            )
+            for axis in selected
+        )
 
 
 def create_offline_planning_controller(
