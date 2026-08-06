@@ -77,7 +77,7 @@ def capture_and_calibrate(
     with runtime:
         initialize_read_only_rotary_positions(runtime)
         axis_state = capture_stable_axis_state(
-            runtime.kinematics_motion.get_axis_states,
+            runtime.controller.get_axis_states,
             samples=samples,
             sample_interval_s=sample_interval_s,
             max_linear_drift_mm=max_linear_drift_mm,

@@ -237,7 +237,7 @@ class FakeRuntime:
         self.events: list[str] = []
         self.shoulder_joint = FakeJoint(self.events, "shoulder")
         self.elbow_joint = FakeJoint(self.events, "elbow")
-        self.kinematics_motion = FakeMotion(self.events, states or snapshot())
+        self.controller = FakeMotion(self.events, states or snapshot())
 
     def __enter__(self) -> "FakeRuntime":
         self.events.append("open")

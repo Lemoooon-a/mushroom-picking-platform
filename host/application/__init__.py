@@ -1,25 +1,23 @@
-"""整机应用层控制边界。"""
+"""整机应用层正式公共入口。"""
 
-from application.controller import (
-    BaseFrameRobotBackend,
-    MushroomRobotController,
-    MushroomRobotStatus,
-    RobotCapabilities,
-    UnsupportedToolGoalOrientationError,
-)
-from application.tray_workspace import (
-    TargetOutsideTrayWorkspace,
-    TrayWorkspace,
-    TrayWorkspaceCheck,
+from application.robot_service import (
+    MotionResult,
+    MushroomRobotService,
+    ResolvedCameraPoint,
+    RobotServiceCapabilities,
+    RobotServiceCapabilityError,
+    RobotServiceError,
+    RobotServiceStateError,
+    RobotServiceStatus,
 )
 
 __all__ = [
-    "BaseFrameRobotBackend",
-    "MushroomRobotController",
-    "MushroomRobotStatus",
-    "RobotCapabilities",
-    "TargetOutsideTrayWorkspace",
-    "TrayWorkspace",
-    "TrayWorkspaceCheck",
-    "UnsupportedToolGoalOrientationError",
+    "MotionResult",
+    "MushroomRobotService",
+    "ResolvedCameraPoint",
+    "RobotServiceCapabilities",
+    "RobotServiceCapabilityError",
+    "RobotServiceError",
+    "RobotServiceStateError",
+    "RobotServiceStatus",
 ]

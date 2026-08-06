@@ -2,7 +2,7 @@
 
 更新时间：2026-08-06（Asia/Shanghai）
 
-证据范围：当前源码、配置、提交历史、STM32 子模块文档、Host 编译、553 项离线测试，以及 Robot Service dry-run CLI 的 startup/status/observe/plan-observation/quit 冒烟结果；本轮未执行网络同步、固件构建或真实硬件命令。
+证据范围：当前源码、配置、提交历史、STM32 子模块文档、Host 编译、595 项离线测试，以及 Robot Service dry-run CLI 的既有冒烟结果；本轮未执行网络同步、固件构建或真实硬件命令。
 
 ## 1. 技术结论
 
@@ -10,7 +10,9 @@
 
 V1–V3 分别实现版本化 Vision Gateway、原子 PickPlan/Workflow 和顶层 Robot Service；V4 同步本报告与接口文档。553 项 Host 离线测试全部通过，dry-run CLI 不再构造硬件 runtime，状态中明确记录 `submitted_hardware_commands=0`。这证明软件框架和合成路径可复现，不证明真实五轴运动、培养槽作业、吸附或自动采摘已完成硬件验证。
 
-当前最大缺口是真实数据与机械系统验证：仍缺真实视觉 producer、已验证 `tool_T_camera`、经确认的 GraspProfile、真空反馈和完整碰撞模型。下一主要里程碑应先完成手眼/视觉/grasp 数据闭环，再进行受控小范围硬件验证。
+`MushroomRobotService` 现为正常应用唯一运动入口，并提供五轴描述、状态、raw/manual 绝对和相对运动。相对增量在统一控制器提交锁内从当前有效逻辑位置解析为绝对目标，随后复用绝对提交和到位通路；历史 Frontend/Kinematics façade 已删除。该能力只检查所选轴自身门禁，不等同于 Base-frame 任务安全运动。
+
+当前最大缺口仍是真实数据与机械系统验证：仍缺真实视觉 producer、已验证 `tool_T_camera`、经确认的 GraspProfile、真空反馈和完整碰撞模型。下一主要里程碑应先完成手眼/视觉/grasp 数据闭环，再进行受控小范围硬件验证。
 
 ## 2. 总体进度矩阵
 
@@ -30,7 +32,7 @@ V1–V3 分别实现版本化 Vision Gateway、原子 PickPlan/Workflow 和顶�
 | 视觉通信与观察 | Implemented | JSON v1、Fake/Socket gateway、timeout/长度/frame/request 校验、CaptureSnapshot | 无真实视觉 producer、内参/深度证据 | Offline tested；真实 producer unavailable |
 | 视觉到机器人 | Implemented with gate | q_capture 绑定、Camera→Tool→Base、低质量/过期/手眼缺失 fail-closed | `tool_T_camera` 当前缺失/未验证 | Offline tested；真实运动 blocked |
 | 抓取规划与流程 | Implemented with gate | GraspProfile、pre/contact/retreat 原子计划、dry-run/execute 阶段、FAULT 规则 | 真实 profile、真空确认、放置/释放、自动恢复 | Offline tested；hardware-blocked |
-| 顶层运行服务 | Implemented | 单一 Service、状态、capabilities、CLI、JSONL 记录、三种模式 | execute 尚无本轮实机证据 | Offline tested |
+| 顶层运行服务 | Implemented | 单一 Service、状态、capabilities、CLI、JSONL、五轴查询及 raw/manual 绝对/相对运动 | raw 单轴不经过任务工作区/碰撞规划；execute 尚无本轮实机证据 | Offline tested |
 | 完整采摘任务 | Not verified | 软件侧观察/规划/抓取框架已集成 | 真实感知、物理吸附确认、搬运/释放和系统验证 | unavailable / not system validated |
 
 ## 3. 仓库与版本状态
@@ -81,6 +83,8 @@ Feetech Rotation axis ──────────────┘        ├�
                                                VisionPickWorkflow ← VisionGateway
                                                       ↑
                                                MushroomRobotService
+                                                ├─ Base-frame task motion
+                                                └─ raw/manual axis motion
 ```
 
 - `firmware/stm32_motion_controller/`：独立版本化的 STM32 平台代码、协议与硬件参数。
@@ -151,7 +155,9 @@ machine protocol v2 提供带 command id 的接受响应与终态 event；Host c
 
 `MushroomRobotController` 提供 startup、Base pose plan/move、return、stop、holding、suction、status 与 shutdown。最终任务目标必须先通过 `TrayWorkspace`；startup、return、`LIFT`、`TRANSIT` 不被普通最终目标 Z 门限误拦截。
 
-`MushroomRobotService` 是唯一进程级应用入口。Vision Gateway 只通信/校验，snapshot 把 observation 绑定到拍摄姿态，resolver 只组合 Camera→Base，PickPlanner 生成 pre/contact/retreat，Workflow 只编排阶段；最终运动仍经 controller 的 Base 出口。
+`MushroomRobotService` 是唯一进程级应用入口。Vision Gateway 只通信/校验，snapshot 把 observation 绑定到拍摄姿态，resolver 只组合 Camera→Base，PickPlanner 生成 pre/contact/retreat，Workflow 只编排阶段；任务运动仍经 controller 的 Base 出口。新增 raw/manual 单轴入口只用于维护、标定和小范围调试，不执行 TrayWorkspace、IK、OffsetWorkspace、side-switch 或碰撞路径检查。
+
+五轴相对运动读取调用时当前有效逻辑位置，在同一提交临界区完成 busy/fault/Homing/holding 检查、`current + delta` 换算、软限位校验和绝对提交。等待到位在锁外复用现有容差、稳定窗口和 timeout；零增量在轴容差内返回 no-op ARRIVED，不发送运动命令。
 
 当前 hand-eye missing，tracked grasp example 保持 `validated=false`/null，所以 Camera observation 可显示，但 `plan-observation`/`pick` 明确拒绝。无真空反馈时即使 retreat 完成也只能返回 `PHYSICAL_PICK_UNVERIFIED`。完整采摘仍不能标记为 System validated。
 
@@ -172,6 +178,8 @@ machine protocol v2 提供带 command id 的接受响应与终态 event；Host c
 | V2 定向 | GraspProfile/PickWorkflow + 既有 controller/resolver | exit 0；Ran 24；OK |
 | V3 定向 | Robot Service/CLI/workflow/controller/integration/bootstrap | exit 0；Ran 63；OK |
 | V4 前全量 | `.venv/bin/python -m unittest discover -s tests -q` | exit 0；Ran 553；OK；0.904s；无真实硬件 I/O |
+| 单轴入口基线 | `.venv/bin/python -m unittest discover -s tests -q` | exit 0；Ran 577；OK；0.975s；工作树已有未提交功能修改 |
+| 单轴入口终检 | `.venv/bin/python -m unittest discover -s tests -q` | exit 0；Ran 595；OK；无真实硬件 I/O |
 | dry-run CLI | `robot_service.py --mode dry-run --fake-position 0 0 100` 后 startup/status/observe/plan-observation/quit | exit 0；observation 成功；hand-eye 明确拒绝；`submitted_hardware_commands=0` |
 
 ### 9.3 Mathematical Tests
@@ -208,6 +216,7 @@ example，不读取真实机器标定来证明精度。
 - startup 执行顺序为 suction idle、rotary holding enable/verify、Z Home、Slide Home、startup pose；offline 模式不发送这些命令。
 - stop 不自动移除 holding；disable 前要求确认静止并提示支撑机构。
 - communication/fault/timeout 走 terminal error 与 best-effort stop；不能等同于硬件急停。
+- raw/manual 单轴移动只允许 execute + READY；提交前拒绝保持 READY，已提交 timeout/通信/设备 fault 进入 FAULT。用户 stop 只有在五轴均确认静止、无 fault 且位置有效时才恢复 READY。
 - hand-eye missing/provisional 时视觉运动 fail-closed；Base 手工运动不因此被禁用。
 - grasp profile 缺失/未验证、no target、低 confidence、过期 observation 和规划拒绝均不运动；motion/suction failure best-effort stop 后进入 FAULT。
 - 本轮未发现或修改任何 boot-test/自动真实运动宏；未开启真实运动默认项。
@@ -223,6 +232,7 @@ example，不读取真实机器标定来证明精度。
 5. 仓库没有本轮 Host 组合能力的真实硬件日志，离线通过不能升级为 hardware-tested。
 6. S1 与根提交尚未 push；root gitlink 在其他机器可获取之前，必须先发布子模块提交。
 7. 真实 socket vision producer 与 validated GraspProfile 均不存在；当前只有 Fake gateway 的合成验证。
+8. Raw/manual 单轴运动没有 Base-frame 工作区、逆运动学、跨轴协调、side-switch clearance 或碰撞路径保护，只能用于受控维护操作。
 
 ### Risks
 
@@ -274,7 +284,7 @@ example，不读取真实机器标定来证明精度。
 ## 15. 交接信息
 
 - 当前阶段：Host Robot Service、视觉 gateway/observation 和抓取规划框架已离线集成；真实完整采摘未验证。
-- 当前任务：V1–V3 已提交，V4 同步文档与最终验证；未 push。
+- 当前任务：顶层单轴入口、原子相对运动和旧 façade 清理已完成离线实现；未 push，未执行硬件命令。
 - 首读文件：本报告、`docs/interfaces/ROBOT_SERVICE_RUNTIME.md`、`VISION_GATEWAY_PROTOCOL.md`、`PICK_WORKFLOW.md`、`host/scripts/robot_service.py`、`host/application/robot_service.py`。
 - 首跑命令：
 

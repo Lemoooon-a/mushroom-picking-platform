@@ -1,7 +1,7 @@
 # 上层统一运动控制接口协议
 
 > 文档状态：Draft v0.2  
-> 适用范围：Host 上层运动控制、前端单轴控制、平面二连杆运动学调用  
+> 适用范围：Host 内部统一运动控制、Robot Service 单轴能力与运动学执行
 > 更新日期：2026-08-05
 > 关键修订：严格限制“工作零点”只用于上电初始化，不参与后续运动学、坐标换算或常规控制。
 
@@ -9,7 +9,7 @@
 
 ## 1. 目的
 
-本协议用于统一采蘑菇平台各运动轴的上层调用方式，使前端、运动学模块和后续任务协调器不需要直接了解 STM32 串口协议、MG4010E CAN 协议或 Feetech 舵机寄存器。
+本协议用于统一采蘑菇平台各运动轴的内部调用方式。正常应用只通过 `MushroomRobotService` 调用，运动学和维护工具不需要了解 STM32 串口协议、MG4010E CAN 协议或 Feetech 舵机寄存器。
 
 本协议规定的是 Host 内部的软件接口和语义，不新增串口、CAN、TCP、WebSocket 或 ROS 2 通信协议。
 
@@ -31,10 +31,13 @@
 ## 2. 分层关系
 
 ```text
-Frontend / Kinematics / Task Coordinator
+CLI / GUI / External Application
                     |
-                    v
-        UnifiedMotionController
+          MushroomRobotService
+                    |
+        private axis-motion port
+                    |
+        UnifiedMotionController (internal)
                     |
         +-----------+-----------+
         |           |           |
@@ -687,20 +690,12 @@ move_absolute(
 
 ### 11.2 `move_relative()`
 
-第一版主要用于：
+五轴相对运动均基于调用时读取的当前有效逻辑位置，在同一提交锁内计算
+`absolute_target = current_position + delta`，随后复用绝对目标校验、分发和到位判断。不得调用
+STM32 或其他执行器的原生相对命令。结果中的 `target_position` 始终是绝对逻辑目标。
 
-```text
-slide
-z
-```
-
-对于不支持相对运动的轴返回：
-
-```text
-UNSUPPORTED_COMMAND
-```
-
-运动学模块不得依赖相对运动。
+当 `abs(delta)` 不大于该轴既有位置容差时，命令作为 no-op 立即成功，不发送硬件运动命令。
+运动学模块仍不得依赖相对运动。
 
 ### 11.3 `home_reference()`
 
@@ -864,24 +859,11 @@ class ArmJointTarget:
 
 统一控制层仍必须再次检查软限位。
 
-### 13.3 运动学调用接口
+### 13.3 运动学调用边界
 
-```python
-class KinematicsMotionInterface(Protocol):
-    def get_arm_joint_state(self) -> ArmJointState:
-        ...
-
-    def command_arm_joint_target(
-        self,
-        target: ArmJointTarget,
-        *,
-        wait: bool = False,
-        timeout_s: float | None = None,
-    ) -> tuple[MotionResult, ...]:
-        ...
-```
-
-第一版 `command_arm_joint_target()` 的语义：
+运动学执行由仓库内部 Base solver、transition planner 和统一 controller 组合，不再提供独立的
+公开 Kinematics façade。正常应用通过 `MushroomRobotService` 的 Base-frame 目标方法进入完整
+规划链。内部多轴执行语义：
 
 1. 验证肩、肘及可选末端旋转角；
 2. 检查各轴后端是否可用；
@@ -893,19 +875,7 @@ class KinematicsMotionInterface(Protocol):
 8. 不实现连续轨迹；
 9. 不读取或使用工作零点。
 
-由于肩、肘和末端旋转轴当前尚未统一实现可靠到位判断，第一版应使用：
-
-```text
-wait=False
-```
-
-返回：
-
-```text
-accepted=True, completed=None
-```
-
-只表示命令已接受，不表示已经到位。
+多轴执行复用当前统一到位判断、稳定窗口和 timeout；命令接受不等于机械已经到位。
 
 ### 13.4 运动学模块禁止事项
 
@@ -996,10 +966,10 @@ FeetechRotationAxis
 
 ## 15. 调用示例
 
-### 15.1 前端查询轴描述
+### 15.1 Service 查询轴描述
 
 ```python
-for axis in motion.list_axes():
+for axis in service.list_axes():
     print(
         axis.name,
         axis.minimum_position,
@@ -1040,10 +1010,8 @@ target = ArmJointTarget(
     elbow_deg=-65.0,
 )
 
-results = kinematics_motion.command_arm_joint_target(
-    target,
-    wait=False,
-)
+plan = service.plan_base_target(base_target)
+result = service.move_base_target(base_target)
 ```
 
 ### 15.5 上电初始化
@@ -1069,9 +1037,9 @@ state = initializer.initialize_to_work_ready(
 
 ---
 
-## 16. 前端约束
+## 16. 应用入口约束
 
-前端应：
+CLI、GUI 和外部应用应：
 
 - 通过 `list_axes()` 和 `describe_axis()` 获取常规控制能力；
 - 根据 `position_unit` 显示 mm 或 deg；
@@ -1082,7 +1050,7 @@ state = initializer.initialize_to_work_ready(
 - 在系统初始化未完成时禁止启动运动学任务；
 - 只显示系统级的“初始化状态”，不将工作零点暴露为普通单轴目标。
 
-前端不应：
+CLI、GUI 和外部应用不应：
 
 - 为所有轴显示机械 Home 按钮；
 - 提供普通的“回工作零点”单轴按钮；

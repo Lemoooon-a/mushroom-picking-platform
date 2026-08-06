@@ -410,7 +410,7 @@ base_point = frame_chain.transform_camera_point_to_base(
 `create_upper_motion_runtime()` 是三类真实硬件的唯一公共组装入口。它加载调用方提供的
 `HardwareConfig` 与 `MotionRuntimeConfig`，调用一次 `resolve_hardware()`，并用解析得到的
 STM32/Feetech port 和 gs_usb device 创建 transport、bus、肩肘关节、Rotation、唯一的
-`UnifiedMotionController` 及两个 façade。构造会进行设备发现，但不会打开通信、初始化关节、
+内部唯一的 `UnifiedMotionController`。构造会进行设备发现，但不会打开通信、初始化关节、
 使能、机械归零、torque enable 或提交运动。当前 MG4010 实机已确认在请求 ID `0x141/0x142`
 上原样应答，因此 Runtime 显式启用 `allow_same_id_response`；CAN 层仍校验命令字、帧格式并
 排除 gs_usb TX echo。
@@ -568,51 +568,12 @@ cd host
 必须准备使用物理急停。其余四轴在等待被异常中断时会各尝试一次 best-effort software stop；
 group failure/timeout 则复用统一控制器自身的 stop 策略，不重复发送 stop。
 
-### Frontend and kinematics client boundaries
+### 应用入口与内部控制器边界
 
-`motion.FrontendMotionInterface` 和 `motion.KinematicsMotionInterface` 是建议冻结的同进程
-调用边界。`FrontendMotionFacade` 与 `KinematicsMotionFacade` 只转发方法，必须复用同一个
-`UnifiedMotionController`：
-
-```python
-from bootstrap import create_upper_motion_runtime
-
-runtime = create_upper_motion_runtime(hardware_config, motion_config)
-frontend_motion = runtime.frontend_motion
-kinematics_motion = runtime.kinematics_motion
-```
-
-`bootstrap.py` 负责创建唯一 controller 和通信生命周期；前端与运动学 façade 始终共享它。
-应用入口创建一次 runtime 后注入各消费者，消费者不得自行重建硬件后端。
-
-当前统一 API 映射如下：
-
-| Client member | Unified controller member | Direct forwarding | Minimal core addition |
-| --- | --- | ---: | ---: |
-| `list_axes` / `describe_axis` / `get_state` | same name | Yes | No |
-| `get_axis_states` | same name | Yes | Yes: ordered batch query |
-| `submit_absolute` / `submit_positions` | same name | Yes | No |
-| `get_command_result` | same name | Yes | No |
-| `get_group_result` | same name | Yes | Yes: non-blocking aggregation |
-| `wait_group` | same name | Yes | No |
-| `stop` / `home_reference` | same name | Yes | No |
-
-两个新增 core 方法只组合现有公开状态/result，不新增单位换算、命令记录、底层分发或硬件
-访问。前端 façade 不暴露阻塞 `wait`/`wait_group`；运动学 façade 不暴露单轴提交、stop 或
-home。
-
-两个示例完全使用 fake，不读取本地硬件配置：
-
-```bash
-cd host
-.venv/bin/python -m examples.frontend_motion_usage
-.venv/bin/python -m examples.kinematics_motion_usage
-```
-
-成员交接文档位于：
-
-- `docs/handoffs/FRONTEND_MOTION_INTERFACE_HANDOFF.md`
-- `docs/handoffs/KINEMATICS_MOTION_INTERFACE_HANDOFF.md`
+正常 CLI、GUI 和外部应用只调用 `MushroomRobotService`。历史 `FrontendMotionInterface`、
+`KinematicsMotionInterface` 及对应 façade 已删除，`UpperMotionRuntime` 不再提供
+`frontend_motion` / `kinematics_motion`。`UnifiedMotionController` 保留为内部实现，校准、
+维护和硬件诊断脚本可直接使用同一个 `runtime.controller`，但它不是应用层正式入口。
 
 ## Feetech 末端旋转轴
 
@@ -671,3 +632,8 @@ cd host
 ```
 
 不要在自动测试中运行 execute。当前本机 hand-eye missing，且没有 validated grasp profile；`observe` 可显示 Fake/Socket Camera observation，`plan-observation` 和 `pick` 会明确 fail-closed。详见 `docs/interfaces/ROBOT_SERVICE_RUNTIME.md`、`VISION_GATEWAY_PROTOCOL.md` 和 `PICK_WORKFLOW.md`。
+
+Service 还提供 `axes`、`axis state/states`、`axis move-abs` 和 `axis move-rel`。这些是
+raw/manual maintenance operations：只执行所选轴自身状态与软限位门禁，不经过 TrayWorkspace、
+Base-frame IK、OffsetWorkspace、side-switch clearance 或碰撞路径检查。相对增量基于调用时读取的
+当前有效逻辑位置，并在 controller 提交锁内解析为绝对目标；零增量在到位容差内直接完成且不提交硬件命令。

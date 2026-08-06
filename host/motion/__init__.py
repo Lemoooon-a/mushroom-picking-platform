@@ -6,11 +6,6 @@ from motion.authorization import (
     RotationMotionAuthorizationError,
     RuntimeMode,
 )
-from motion.client_facades import FrontendMotionFacade, KinematicsMotionFacade
-from motion.client_interfaces import (
-    FrontendMotionInterface,
-    KinematicsMotionInterface,
-)
 from motion.suction import (
     STM32SuctionControl,
     SuctionControl,
@@ -32,6 +27,7 @@ from motion.unified_protocol import (
     MultiAxisCommandHandle,
     MultiAxisCommandResult,
     MultiAxisTarget,
+    RelativeAxisTarget,
     RotaryJointEnableStatus,
 )
 
@@ -43,10 +39,6 @@ __all__ = [
     "AxisName",
     "AxisState",
     "AxisTarget",
-    "FrontendMotionFacade",
-    "FrontendMotionInterface",
-    "KinematicsMotionFacade",
-    "KinematicsMotionInterface",
     "MotionAuthorization",
     "MotionAuthorizationError",
     "MotionCommandHandle",
@@ -55,8 +47,8 @@ __all__ = [
     "MotionErrorCode",
     "MultiAxisCommandHandle",
     "MultiAxisCommandResult",
-    "MultiAxisSubmissionError",
     "MultiAxisTarget",
+    "RelativeAxisTarget",
     "RotationMotionAuthorizationError",
     "RotaryJointEnableStatus",
     "RuntimeMode",
@@ -64,18 +56,4 @@ __all__ = [
     "SuctionControl",
     "SuctionMode",
     "SuctionStatus",
-    "UnifiedMotionController",
-    "UnifiedMotionError",
 ]
-
-
-def __getattr__(name: str) -> object:
-    if name in {
-        "MultiAxisSubmissionError",
-        "UnifiedMotionController",
-        "UnifiedMotionError",
-    }:
-        from motion import unified_controller
-
-        return getattr(unified_controller, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

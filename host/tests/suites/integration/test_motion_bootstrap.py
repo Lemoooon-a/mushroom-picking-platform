@@ -171,8 +171,8 @@ class BootstrapAssemblyTests(unittest.TestCase):
             ),
             (0.0, 180.0),
         )
-        self.assertIs(runtime.frontend_motion._controller, runtime.controller)
-        self.assertIs(runtime.kinematics_motion._controller, runtime.controller)
+        self.assertFalse(hasattr(runtime, "frontend_motion"))
+        self.assertFalse(hasattr(runtime, "kinematics_motion"))
 
     @patch("bootstrap.FeetechRotationAxis.command_position")
     @patch("bootstrap.FeetechRotationAxis.enable_torque")

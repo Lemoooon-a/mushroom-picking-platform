@@ -16,11 +16,6 @@ from drivers.stm32_motion import (
     STM32SerialTransport,
 )
 from motion.authorization import MotionAuthorization, RuntimeMode
-from motion.client_facades import FrontendMotionFacade, KinematicsMotionFacade
-from motion.client_interfaces import (
-    FrontendMotionInterface,
-    KinematicsMotionInterface,
-)
 from motion.suction import STM32SuctionControl
 from motion.unified_controller import UnifiedMotionController
 from robot.feetech_rotation import FeetechRotationAxis
@@ -40,7 +35,7 @@ class HardwareCloseError(MotionRuntimeError):
 
 
 class UpperMotionRuntime:
-    """三类硬件和两个客户端视图共享的单一 Runtime。
+    """三类硬件和一个内部统一控制器组成的 Runtime。
 
     构造不打开硬件。``open()`` 仅按 STM32、CAN、Feetech 的顺序打开
     通信资源，不初始化、使能、归零或运动任何轴。
@@ -74,22 +69,8 @@ class UpperMotionRuntime:
         self.feetech_bus = feetech_bus
         self.rotation_axis = rotation_axis
         self.controller = controller
-        self._frontend_motion: FrontendMotionInterface = FrontendMotionFacade(
-            controller
-        )
-        self._kinematics_motion: KinematicsMotionInterface = (
-            KinematicsMotionFacade(controller)
-        )
         self._is_open = False
         self._opened_resources: list[tuple[str, object]] = []
-
-    @property
-    def frontend_motion(self) -> FrontendMotionInterface:
-        return self._frontend_motion
-
-    @property
-    def kinematics_motion(self) -> KinematicsMotionInterface:
-        return self._kinematics_motion
 
     @property
     def is_open(self) -> bool:

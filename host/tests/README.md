@@ -37,4 +37,4 @@
   -q
 ```
 
-2026-08-06 Robot Service 集成后结果为 553 项 Host 离线测试通过；automatic discovery 不包含真实硬件测试。
+2026-08-06 Robot Service 单轴入口与旧 façade 清理后结果为 594 项 Host 离线测试通过；automatic discovery 不包含真实硬件测试。

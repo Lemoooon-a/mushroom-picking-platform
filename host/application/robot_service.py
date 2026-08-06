@@ -150,9 +150,14 @@ class MushroomRobotService:
         vision_observation = self._workflow is not None
         pick_planning = bool(base.vision_target_resolution and self.grasp_profile is not None and vision_observation)
         axis_listing = callable(getattr(self._axis_motion, "list_axes", None))
-        axis_state_query = callable(getattr(self._axis_motion, "get_axis_states", None)) and (
-            self.mode is RobotServiceMode.DRY_RUN
-            or (self.mode is RobotServiceMode.EXECUTE and self._started_controller)
+        axis_state_query = callable(
+            getattr(self._axis_motion, "get_axis_states", None)
+        ) and (
+            self.mode is RobotServiceMode.READ_ONLY
+            or (
+                self.mode in (RobotServiceMode.DRY_RUN, RobotServiceMode.EXECUTE)
+                and self._started_controller
+            )
         )
         axis_motion = (
             self.mode is RobotServiceMode.EXECUTE
@@ -233,6 +238,7 @@ class MushroomRobotService:
     def get_axis_state(self, axis: AxisName) -> AxisState:
         if not isinstance(axis, AxisName):
             raise ValueError("axis must be an AxisName")
+        self._require_axis_query_runtime()
         method = getattr(self._axis_motion, "get_state", None)
         if not callable(method):
             raise RobotServiceCapabilityError("axis state query is unavailable")
@@ -255,6 +261,7 @@ class MushroomRobotService:
             or not all(isinstance(axis, AxisName) for axis in axes)
         ):
             raise ValueError("axes must be a tuple of AxisName values or None")
+        self._require_axis_query_runtime()
         method = getattr(self._axis_motion, "get_axis_states", None)
         if not callable(method):
             raise RobotServiceCapabilityError("axis state query is unavailable")
@@ -269,6 +276,15 @@ class MushroomRobotService:
         ):
             raise RobotServiceError("axis motion port returned invalid states")
         return states
+
+    def _require_axis_query_runtime(self) -> None:
+        if (
+            self.mode in (RobotServiceMode.DRY_RUN, RobotServiceMode.EXECUTE)
+            and not self._started_controller
+        ):
+            raise RobotServiceCapabilityError(
+                "axis state query requires a started Robot Service runtime"
+            )
 
     def move_axis_absolute(
         self,
