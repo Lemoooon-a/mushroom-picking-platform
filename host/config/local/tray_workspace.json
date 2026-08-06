@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "frame": "base",
+  "x_min_mm": 20.0,
+  "x_max_mm": 480.0,
+  "y_min_mm": 20.0,
+  "y_max_mm": 700.0,
+  "z_min_mm": 0.0,
+  "z_max_mm": 180.0,
+  "boundary_tolerance_mm": 0.000001,
+  "metadata": {
+    "validated": true,
+    "source": "User-confirmed Base-frame cultivation-tray boundaries on 2026-08-05",
+    "z_range_definition": "Absolute final TCP height in Base frame; not Z-axis logical position or displacement from Home",
+    "z_max_derivation": {
+      "base_T_slide_zero_z_mm": 420.0,
+      "rotation_output_T_tool_z_mm": -240.0,
+      "home_tcp_base_z_mm": 180.0,
+      "policy": "Static snapshot; recalculate and reconfirm after Base calibration or TCP geometry changes"
+    }
+  }
+}

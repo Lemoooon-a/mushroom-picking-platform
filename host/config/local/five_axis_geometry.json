@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "geometry_confirmed": true,
+  "link_lengths_mm": [400, 400],
+  "slide_direction_xyz": [0.0, 1.0, 0.0],
+  "z_direction_xyz": [0.0, 0.0, 1.0],
+  "slide_zero_T_planar_origin_at_zero": {
+    "translation_mm": [0.0, 0.0, 0.0],
+    "rotation_rpy_deg": [0.0, 0.0, 0.0]
+  },
+  "rotation_output_T_tool": {
+    "translation_mm": [0, 0, -240],
+    "rotation_rpy_deg": [0, 0, 0]
+  },
+  "metadata": {
+    "notes": "Confirmed local geometry; Tool/TCP is 240 mm below the Rotation output axis after the 2026-08-04 60 mm downward extension."
+  }
+}

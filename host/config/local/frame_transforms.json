@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "base_T_slide_zero": {
+    "translation_mm": [
+      -49.346054046664335,
+      112.7679332328427,
+      420.0
+    ],
+    "rotation_rpy_deg": [
+      0.0,
+      0.0,
+      0.10163194444445622
+    ]
+  },
+  "tool_T_camera": {
+    "translation_mm": [
+      70.0,
+      32.5,
+      194.85
+    ],
+    "rotation_rpy_deg": [
+      180.0,
+      0.0,
+      -90.0
+    ]
+  },
+  "metadata": {
+    "tool_camera_source": "manual_measurement",
+    "tool_camera_method": "measured_mount_center_plus_rgb_optical_center_offset",
+    "tool_camera_frame_id": "camera_color_optical_frame",
+    "tool_camera_validated": false,
+    "base_slide_calibrated_at": "2026-08-04T08:48:17.686987+00:00",
+    "base_slide_calibration_method": "recomputed_from_recorded_axis_pose",
+    "base_slide_recomputed_at": "2026-08-04",
+    "validated": true,
+    "git_commit": "dd4d420974273ff955f36ab570cc45613df48716",
+    "fk_provider": "kinematics.five_axis:load_local_five_axis_kinematics",
+    "fk_geometry": {
+      "link_lengths_mm": [
+        400.0,
+        400.0
+      ],
+      "slide_direction_xyz": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "z_direction_xyz": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "slide_zero_T_planar_origin_at_zero": {
+        "translation_mm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_rpy_deg": [
+          0.0,
+          -0.0,
+          0.0
+        ]
+      },
+      "rotation_output_T_tool": {
+        "translation_mm": [
+          0.0,
+          0.0,
+          -240.0
+        ],
+        "rotation_rpy_deg": [
+          0.0,
+          -0.0,
+          0.0
+        ]
+      }
+    },
+    "captured_axis_positions": {
+      "slide_mm": 0.0,
+      "z_mm": 0.0,
+      "shoulder_deg": 32.99995833333333,
+      "elbow_deg": -89.00002777777779,
+      "rotation_deg": 55.8984375
+    },
+    "reference_base_T_tool": {
+      "translation_mm": [
+        510.0,
+        0.0,
+        180.0
+      ],
+      "rotation_rpy_deg": [
+        0.0,
+        -0.0,
+        0.0
+      ]
+    },
+    "computed_base_T_slide_zero": {
+      "translation_mm": [
+        -49.346054046664335,
+        112.7679332328427,
+        420.0
+      ],
+      "rotation_rpy_deg": [
+        0.0,
+        -0.0,
+        0.10163194444445622
+      ]
+    },
+    "computed_slide_zero_T_base": {
+      "translation_mm": [
+        49.145947400669286,
+        -112.85528640552836,
+        -420.0
+      ],
+      "rotation_rpy_deg": [
+        0.0,
+        -0.0,
+        -0.10163194444445622
+      ]
+    },
+    "calibration_checks": {
+      "position_residual_mm": 5.688254509362935e-14,
+      "yaw_residual_deg": 0.0,
+      "estimated_roll_deg": 0.0,
+      "estimated_pitch_deg": -0.0,
+      "estimated_yaw_deg": 0.10163194444445622,
+      "expected_yaw_deg": 0.0,
+      "yaw_alignment_error_deg": 0.10163194444444912,
+      "valid": true,
+      "warnings": []
+    },
+    "operator_notes": "Recomputed from the recorded axis pose with reference Base TCP z changed from 65 mm to 180 mm and Tool/TCP offset changed from -180 mm to -240 mm."
+  }
+}
