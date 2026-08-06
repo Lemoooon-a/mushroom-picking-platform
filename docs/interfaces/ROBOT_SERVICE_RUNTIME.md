@@ -27,7 +27,9 @@ enable_joints() / disable_joints()
 suction("grip" | "release" | "idle")
 ```
 
-状态为 `CREATED → STARTING → READY`，观察使用 `OBSERVING`，规划使用 `PLANNING`，真实动作使用 `EXECUTING`，关节失能后为 `DISABLED`，不可恢复执行错误为 `FAULT`，关闭后为 `SHUTDOWN`。单轴提交前的参数、busy、位置有效性、Homing、holding 和软限位拒绝保持 READY；已提交后的 timeout、通信或设备故障会 best-effort stop 后进入 FAULT。
+状态为 `CREATED → STARTING → READY`，观察使用 `OBSERVING`，规划使用 `PLANNING`，真实动作使用 `EXECUTING`，关节失能后为 `DISABLED`，不可恢复执行错误为 `FAULT`，关闭后为 `SHUTDOWN`。Service 用一个私有 active-operation token 串行化 startup、运动、pick、holding 和 suction；状态检查与 token 注册在短临界区内原子完成，阻塞 backend 调用和到位等待不持有状态锁。单轴提交前的参数、busy、位置有效性、Homing、holding 和软限位拒绝保持 READY；获得 command handle 后的 timeout、BUSY、通信或设备故障会 best-effort stop 后进入 FAULT。
+
+`stop()` 和 `shutdown()` 会使当前 token 失效，因此迟到的运动线程不能覆盖较新的 `FAULT` 或 `SHUTDOWN`。没有活动操作时，`stop()` 保持 `CREATED/READY/DISABLED/FAULT/SHUTDOWN` 原状态；它不再充当 lifecycle 或 holding 恢复入口。`DISABLED` 可直接调用 `enable_joints()`，只有重新确认 Shoulder、Elbow、Rotation holding 以及五轴连接、静止、无 fault、位置有效后才进入 `READY`。
 
 ## 两种运动入口
 

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import threading
 import unittest
+from unittest.mock import Mock
 
 from application.controller import MushroomRobotController
 from application.motion_target import BaseToolTarget
 from application.robot_service import MushroomRobotService, RobotServiceStateError
+from application.pick_planner import PickPlan
+from application.pick_workflow import PickOutcome, PickResult, VisionPickWorkflow
 from application.runtime_state import RobotServiceMode, RobotServiceState
 from application.tray_workspace import TrayWorkspace
 from config.tray_workspace import TrayWorkspaceConfig
@@ -74,8 +77,23 @@ class _Backend:
         self.execute_release = threading.Event()
         self.block_execute = False
         self.shutdown_error: Exception | None = None
+        self.startup_error: Exception | None = None
+        self.enable_error: Exception | None = None
+        self.disable_error: Exception | None = None
+        self.action_entered = threading.Event()
+        self.action_release = threading.Event()
+        self.block_action: str | None = None
 
-    def startup(self): self.calls.append("startup")
+    def _action(self, name: str) -> None:
+        self.calls.append(name)
+        if self.block_action == name:
+            self.action_entered.set()
+            self.action_release.wait(2.0)
+
+    def startup(self):
+        self.calls.append("startup")
+        if self.startup_error is not None:
+            raise self.startup_error
     def require_base_motion_ready(self): self.calls.append("ready-check")
     def plan_to_base_pose(self, x, y, z, yaw): self.calls.append("base-plan"); return "plan"
     def execute_base_plan(self, plan):
@@ -86,9 +104,15 @@ class _Backend:
         return True
     def return_to_startup(self): self.calls.append("return")
     def stop(self): self.calls.append("stop")
-    def enable_joints(self): self.calls.append("enable")
-    def disable_joints(self): self.calls.append("disable")
-    def suction_grip(self): self.calls.append("grip")
+    def enable_joints(self):
+        self._action("enable")
+        if self.enable_error is not None:
+            raise self.enable_error
+    def disable_joints(self):
+        self._action("disable")
+        if self.disable_error is not None:
+            raise self.disable_error
+    def suction_grip(self): self._action("grip")
     def suction_release(self): self.calls.append("release")
     def suction_idle(self): self.calls.append("idle")
     def get_status(self): self.calls.append("status"); return "ok"
@@ -125,7 +149,13 @@ class _AxisPort:
 
 
 class RobotServiceStateMachineTests(unittest.TestCase):
-    def make_service(self) -> tuple[MushroomRobotService, _Backend, _AxisPort]:
+    def make_service(
+        self,
+        *,
+        mode: RobotServiceMode = RobotServiceMode.EXECUTE,
+        workflow: VisionPickWorkflow | None = None,
+        startup: bool = True,
+    ) -> tuple[MushroomRobotService, _Backend, _AxisPort]:
         backend = _Backend()
         axis_port = _AxisPort()
         controller = MushroomRobotController(
@@ -136,11 +166,12 @@ class RobotServiceStateMachineTests(unittest.TestCase):
         )
         service = MushroomRobotService(
             controller=controller,
-            workflow=None,
-            mode=RobotServiceMode.EXECUTE,
+            workflow=workflow,
+            mode=mode,
             axis_motion=axis_port,
         )
-        service.startup()
+        if startup:
+            service.startup()
         return service, backend, axis_port
 
     def test_axis_and_base_move_cannot_both_submit(self) -> None:
@@ -218,6 +249,219 @@ class RobotServiceStateMachineTests(unittest.TestCase):
         self.assertIn(("axis-submit", AxisName.Z), axis_port.calls)
         self.assertIn(("axis-stop", AxisName.Z), axis_port.calls)
         self.assertIs(service.state, RobotServiceState.FAULT)
+
+    def test_stop_fault_cannot_be_overwritten_by_late_arrival(self) -> None:
+        service, backend, axis_port = self.make_service()
+        axis_port.block_wait = True
+        thread = threading.Thread(
+            target=lambda: service.move_axis_relative(AxisName.Z, -10.0)
+        )
+        thread.start()
+        self.assertTrue(axis_port.wait_entered.wait(1.0))
+        axis_port.states = _axis_states(valid=False)
+
+        service.stop()
+        self.assertIs(service.state, RobotServiceState.FAULT)
+        axis_port.wait_release.set()
+        thread.join(1.0)
+
+        self.assertFalse(thread.is_alive())
+        self.assertIs(service.state, RobotServiceState.FAULT)
+        self.assertIn("stop", backend.calls)
+
+    def test_shutdown_invalidates_late_arrival_and_is_idempotent(self) -> None:
+        service, backend, axis_port = self.make_service()
+        axis_port.block_wait = True
+        thread = threading.Thread(
+            target=lambda: service.move_axis_relative(AxisName.Z, -10.0)
+        )
+        thread.start()
+        self.assertTrue(axis_port.wait_entered.wait(1.0))
+
+        service.shutdown()
+        self.assertIs(service.state, RobotServiceState.SHUTDOWN)
+        self.assertEqual(backend.calls[-2:], ["stop", "shutdown"])
+        axis_port.wait_release.set()
+        thread.join(1.0)
+        self.assertIs(service.state, RobotServiceState.SHUTDOWN)
+
+        shutdown_count = backend.calls.count("shutdown")
+        service.shutdown()
+        self.assertEqual(backend.calls.count("shutdown"), shutdown_count)
+
+    def test_status_and_axis_query_remain_available_while_waiting(self) -> None:
+        service, _, axis_port = self.make_service()
+        axis_port.block_wait = True
+        thread = threading.Thread(
+            target=lambda: service.move_axis_relative(AxisName.Z, -10.0)
+        )
+        thread.start()
+        self.assertTrue(axis_port.wait_entered.wait(1.0))
+
+        self.assertIs(service.status().state, RobotServiceState.EXECUTING)
+        self.assertEqual(len(service.get_axis_states()), len(tuple(AxisName)))
+        axis_port.wait_release.set()
+        thread.join(1.0)
+        self.assertFalse(thread.is_alive())
+
+    def test_stop_without_active_operation_preserves_stable_states(self) -> None:
+        created, _, _ = self.make_service(startup=False)
+        created.stop()
+        self.assertIs(created.state, RobotServiceState.CREATED)
+
+        for state in (
+            RobotServiceState.READY,
+            RobotServiceState.DISABLED,
+            RobotServiceState.FAULT,
+        ):
+            with self.subTest(state=state.value):
+                service, _, _ = self.make_service()
+                service.state = state
+                service.stop()
+                self.assertIs(service.state, state)
+
+        shut, _, _ = self.make_service()
+        shut.shutdown()
+        shut.stop()
+        self.assertIs(shut.state, RobotServiceState.SHUTDOWN)
+
+    def test_disabled_joints_can_be_enabled_and_revalidated(self) -> None:
+        service, _, axis_port = self.make_service()
+        axis_port.states = _axis_states(rotary_enabled=False)
+        service.disable_joints()
+        self.assertIs(service.state, RobotServiceState.DISABLED)
+        axis_port.states = _axis_states(rotary_enabled=True)
+
+        service.enable_joints()
+
+        self.assertIs(service.state, RobotServiceState.READY)
+        self.assertIsNone(service.fault)
+
+    def test_partial_enable_failure_faults(self) -> None:
+        service, backend, axis_port = self.make_service()
+        axis_port.states = _axis_states(rotary_enabled=False)
+        service.disable_joints()
+        backend.enable_error = RuntimeError("partial enable")
+        mixed = list(_axis_states(rotary_enabled=False))
+        shoulder = mixed[list(AxisName).index(AxisName.SHOULDER)]
+        mixed[list(AxisName).index(AxisName.SHOULDER)] = AxisState(
+            **{**shoulder.__dict__, "enabled": True}
+        )
+        axis_port.states = tuple(mixed)
+
+        with self.assertRaisesRegex(RuntimeError, "partial enable"):
+            service.enable_joints()
+
+        self.assertIs(service.state, RobotServiceState.FAULT)
+
+    def test_suction_disable_and_enable_are_mutually_exclusive_with_move(self) -> None:
+        cases = (
+            ("grip", lambda service: service.suction("grip")),
+            ("disable", lambda service: service.disable_joints()),
+            ("enable", lambda service: service.enable_joints()),
+        )
+        for action, operation in cases:
+            with self.subTest(action=action):
+                service, backend, axis_port = self.make_service()
+                backend.block_action = action
+                thread_errors: list[Exception] = []
+
+                def run_action() -> None:
+                    try:
+                        operation(service)
+                    except Exception as exc:
+                        thread_errors.append(exc)
+
+                thread = threading.Thread(target=run_action)
+                thread.start()
+                self.assertTrue(backend.action_entered.wait(1.0))
+                with self.assertRaises(RobotServiceStateError):
+                    service.move_axis_relative(AxisName.Z, -10.0)
+                self.assertNotIn(("axis-submit", AxisName.Z), axis_port.calls)
+                backend.action_release.set()
+                thread.join(1.0)
+                self.assertEqual(thread_errors, [])
+
+    def test_pick_and_base_move_are_mutually_exclusive(self) -> None:
+        workflow = Mock(spec=VisionPickWorkflow)
+        entered = threading.Event()
+        release = threading.Event()
+        observation = Mock(request_id="pick-1")
+        plan = Mock(spec=PickPlan)
+        plan.observation = observation
+
+        def execute(plan_value, *, execute):
+            entered.set()
+            release.wait(2.0)
+            return PickResult(PickOutcome.PLANNED, observation, plan_value, "planned")
+
+        workflow.execute_pick_plan.side_effect = execute
+        service, backend, _ = self.make_service(workflow=workflow)
+        thread = threading.Thread(target=lambda: service.execute_pick_plan(plan))
+        thread.start()
+        self.assertTrue(entered.wait(1.0))
+
+        with self.assertRaises(RobotServiceStateError):
+            service.move_base_target(BaseToolTarget(1, 2, 3, 0))
+        self.assertNotIn("base-submit", backend.calls)
+        release.set()
+        thread.join(1.0)
+
+    def test_unexpected_pick_exception_does_not_leak_active_state(self) -> None:
+        workflow = Mock(spec=VisionPickWorkflow)
+        workflow.execute_pick_plan.side_effect = RuntimeError("unexpected pick error")
+        plan = Mock(spec=PickPlan)
+        plan.observation = Mock(request_id="pick-1")
+        service, backend, _ = self.make_service(workflow=workflow)
+
+        with self.assertRaisesRegex(RuntimeError, "unexpected pick error"):
+            service.execute_pick_plan(plan)
+
+        self.assertIs(service.state, RobotServiceState.FAULT)
+        self.assertIn("stop", backend.calls)
+        self.assertIsNone(service._active_operation)
+
+    def test_planning_only_pick_exception_returns_ready(self) -> None:
+        workflow = Mock(spec=VisionPickWorkflow)
+        workflow.execute_pick_plan.side_effect = RuntimeError("planning failed")
+        plan = Mock(spec=PickPlan)
+        plan.observation = Mock(request_id="pick-1")
+        service, backend, _ = self.make_service(
+            mode=RobotServiceMode.DRY_RUN,
+            workflow=workflow,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "planning failed"):
+            service.execute_pick_plan(plan)
+
+        self.assertIs(service.state, RobotServiceState.READY)
+        self.assertNotIn("stop", backend.calls)
+        self.assertIsNone(service._active_operation)
+
+    def test_startup_failure_stops_closes_and_faults(self) -> None:
+        service, backend, _ = self.make_service(startup=False)
+        backend.startup_error = RuntimeError("startup failed")
+
+        with self.assertRaisesRegex(RuntimeError, "startup failed"):
+            service.startup()
+
+        self.assertIs(service.state, RobotServiceState.FAULT)
+        self.assertIn("stop", backend.calls)
+        self.assertIn("shutdown", backend.calls)
+        self.assertIsNone(service._active_operation)
+
+    def test_shutdown_close_failure_preserves_shutdown_fault(self) -> None:
+        service, backend, _ = self.make_service()
+        backend.shutdown_error = RuntimeError("close failed")
+
+        with self.assertRaisesRegex(RuntimeError, "close failed"):
+            service.shutdown()
+
+        self.assertIs(service.state, RobotServiceState.SHUTDOWN)
+        self.assertIn("close failed", service.fault or "")
+        close_count = backend.calls.count("shutdown")
+        service.shutdown()
+        self.assertEqual(backend.calls.count("shutdown"), close_count)
 
 
 if __name__ == "__main__":

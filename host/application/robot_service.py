@@ -59,6 +59,7 @@ class _ActiveOperation:
     operation_id: int
     kind: str
     cancellation_requested: bool = False
+    initial_state: RobotServiceState = RobotServiceState.READY
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,9 @@ class MushroomRobotService:
         base = self._controller.capabilities
         vision_observation = self._workflow is not None
         pick_planning = bool(base.vision_target_resolution and self.grasp_profile is not None and vision_observation)
+        with self._state_lock:
+            state = self.state
+            started_controller = self._started_controller
         axis_listing = callable(getattr(self._axis_motion, "list_axes", None))
         axis_state_query = callable(
             getattr(self._axis_motion, "get_axis_states", None)
@@ -168,13 +172,13 @@ class MushroomRobotService:
             self.mode is RobotServiceMode.READ_ONLY
             or (
                 self.mode in (RobotServiceMode.DRY_RUN, RobotServiceMode.EXECUTE)
-                and self._started_controller
+                and started_controller
             )
         )
         axis_motion = (
             self.mode is RobotServiceMode.EXECUTE
-            and self.state is RobotServiceState.READY
-            and self._started_controller
+            and state is RobotServiceState.READY
+            and started_controller
             and callable(getattr(self._axis_motion, "submit_absolute", None))
         )
         return RobotServiceCapabilities(
@@ -216,9 +220,23 @@ class MushroomRobotService:
                 with self._state_lock:
                     if self._active_operation is token:
                         self._started_controller = True
-            self._finish_operation(token, final_state=RobotServiceState.READY)
+            finished = self._finish_operation(
+                token,
+                final_state=RobotServiceState.READY,
+            )
+            if not finished:
+                try:
+                    self._controller.shutdown()
+                finally:
+                    with self._state_lock:
+                        self._started_controller = False
+                self._record("startup", final_status="cancelled")
+                return
             self._record("startup", final_status="ready")
         except Exception as exc:
+            if not self._operation_is_current(token):
+                self._record("startup", final_status="cancelled", error=str(exc))
+                raise
             self._best_effort_stop()
             compensation_errors: list[str] = []
             try:
@@ -240,22 +258,73 @@ class MushroomRobotService:
             raise
 
     def shutdown(self) -> None:
-        try:
-            if self._started_controller:
+        with self._state_lock:
+            if (
+                self.state is RobotServiceState.SHUTDOWN
+                and self._active_operation is None
+            ):
+                self._shutdown_requested = True
+                return
+            self._shutdown_requested = True
+            token = self._active_operation
+            if token is not None:
+                token.cancellation_requested = True
+                self._active_operation = None
+            started_controller = self._started_controller
+        stop_error: Exception | None = None
+        close_error: Exception | None = None
+        if token is not None and self.mode is RobotServiceMode.EXECUTE:
+            try:
+                self._controller.stop()
+            except Exception as exc:
+                stop_error = exc
+        if started_controller or token is not None:
+            try:
                 self._controller.shutdown()
-        finally:
+            except Exception as exc:
+                close_error = exc
+        with self._state_lock:
             self._started_controller = False
             self.state = RobotServiceState.SHUTDOWN
-            self._record("shutdown", final_status="shutdown")
+            errors = tuple(
+                message
+                for message in (
+                    f"stop failed: {stop_error}" if stop_error else None,
+                    f"close failed: {close_error}" if close_error else None,
+                )
+                if message is not None
+            )
+            if errors:
+                self.fault = "shutdown: " + "; ".join(errors)
+        self._record(
+            "shutdown",
+            final_status="shutdown" if close_error is None else "fault",
+            error=str(close_error) if close_error is not None else None,
+        )
+        if close_error is not None:
+            raise close_error
 
     def status(self) -> RobotServiceStatus:
+        with self._state_lock:
+            state = self.state
+            fault = self.fault
+            started_controller = self._started_controller
         backend_status = None
-        if self._started_controller and self.state not in (RobotServiceState.SHUTDOWN, RobotServiceState.CREATED):
+        if started_controller and state not in (
+            RobotServiceState.SHUTDOWN,
+            RobotServiceState.CREATED,
+        ):
             try:
                 backend_status = self._controller.get_status()
             except Exception as exc:
                 backend_status = f"unavailable: {exc}"
-        return RobotServiceStatus(self.state, self.mode, self.capabilities, backend_status, self.fault)
+        return RobotServiceStatus(
+            state,
+            self.mode,
+            self.capabilities,
+            backend_status,
+            fault,
+        )
 
     def list_axes(self) -> tuple[AxisDescriptor, ...]:
         method = getattr(self._axis_motion, "list_axes", None)
@@ -311,9 +380,11 @@ class MushroomRobotService:
         return states
 
     def _require_axis_query_runtime(self) -> None:
+        with self._state_lock:
+            started_controller = self._started_controller
         if (
             self.mode in (RobotServiceMode.DRY_RUN, RobotServiceMode.EXECUTE)
-            and not self._started_controller
+            and not started_controller
         ):
             raise RobotServiceCapabilityError(
                 "axis state query requires a started Robot Service runtime"
@@ -413,6 +484,7 @@ class MushroomRobotService:
             submitted = True
             result = wait(handle, timeout_s=timeout_s)
         except Exception as exc:
+            operation_current = self._operation_is_current(token)
             if not submitted and _is_pre_submission_rejection(exc):
                 self._finish_operation(
                     token,
@@ -420,13 +492,16 @@ class MushroomRobotService:
                 )
                 final_status = "rejected"
             else:
-                self._best_effort_stop_axis(target.axis)
-                self._finish_operation(
-                    token,
-                    final_state=RobotServiceState.FAULT,
-                    fault=f"raw axis {command_kind} motion: {exc}",
-                )
-                final_status = "fault"
+                if operation_current:
+                    self._best_effort_stop_axis(target.axis)
+                    self._finish_operation(
+                        token,
+                        final_state=RobotServiceState.FAULT,
+                        fault=f"raw axis {command_kind} motion: {exc}",
+                    )
+                    final_status = "fault"
+                else:
+                    final_status = "cancelled"
             self._record_axis_motion(
                 command_kind,
                 target,
@@ -445,15 +520,16 @@ class MushroomRobotService:
                 final_state=RobotServiceState.READY,
             )
         else:
-            self._best_effort_stop_axis(target.axis)
-            self._finish_operation(
-                token,
-                final_state=RobotServiceState.FAULT,
-                fault=(
-                    f"raw axis {command_kind} motion: {result.status.value}: "
-                    f"{result.message}"
-                ),
-            )
+            if self._operation_is_current(token):
+                self._best_effort_stop_axis(target.axis)
+                self._finish_operation(
+                    token,
+                    final_state=RobotServiceState.FAULT,
+                    fault=(
+                        f"raw axis {command_kind} motion: {result.status.value}: "
+                        f"{result.message}"
+                    ),
+                )
         self._record_axis_motion(
             command_kind,
             target,
@@ -614,32 +690,40 @@ class MushroomRobotService:
             self._record("move", input_target=target, selected_plan=plan, final_status="ready")
             return result
         except Exception as exc:
-            self._best_effort_stop()
-            self._finish_operation(
-                token,
-                final_state=RobotServiceState.FAULT,
-                fault=f"move: {exc}",
+            operation_current = self._operation_is_current(token)
+            if operation_current:
+                self._best_effort_stop()
+                self._finish_operation(
+                    token,
+                    final_state=RobotServiceState.FAULT,
+                    fault=f"move: {exc}",
+                )
+            self._record(
+                "move",
+                final_status="fault" if operation_current else "cancelled",
+                error=str(exc),
             )
-            self._record("move", final_status="fault", error=str(exc))
             raise
 
     def request_observation(self) -> VisionTargetObservation:
-        self._require_ready("observe")
         self._require_not_read_only("observe")
         workflow = self._require_workflow()
-        self.state = RobotServiceState.OBSERVING
+        token = self._begin_write_operation(
+            kind="observe",
+            allowed_states=(RobotServiceState.READY,),
+            active_state=RobotServiceState.OBSERVING,
+        )
         try:
             observation = workflow.request_observation()
-            self.state = RobotServiceState.READY
+            self._finish_operation(token, final_state=RobotServiceState.READY)
             self._record("observe", request_id=observation.request_id, final_status="ready")
             return observation
         except Exception as exc:
-            self.state = RobotServiceState.READY
+            self._finish_operation(token, final_state=RobotServiceState.READY)
             self._record("observe", final_status="rejected", error=str(exc))
             raise
 
     def plan_observation(self, observation: VisionTargetObservation, grasp_profile: GraspProfile | None = None) -> PickPlan:
-        self._require_ready("plan-observation")
         self._require_not_read_only("plan-observation")
         if not self._controller.capabilities.vision_target_resolution:
             raise RobotServiceCapabilityError(
@@ -647,35 +731,132 @@ class MushroomRobotService:
             )
         profile = self._require_profile(grasp_profile)
         workflow = self._require_workflow()
-        self.state = RobotServiceState.PLANNING
+        token = self._begin_write_operation(
+            kind="plan-observation",
+            allowed_states=(RobotServiceState.READY,),
+            active_state=RobotServiceState.PLANNING,
+        )
         try:
             plan = workflow.plan_observation(observation, profile)
-            self.state = RobotServiceState.READY
+            self._finish_operation(token, final_state=RobotServiceState.READY)
             self._record("plan-observation", request_id=observation.request_id, selected_plan=plan, final_status="ready")
             return plan
         except Exception as exc:
-            self.state = RobotServiceState.READY
+            self._finish_operation(token, final_state=RobotServiceState.READY)
             self._record("plan-observation", request_id=observation.request_id, final_status="rejected", error=str(exc))
             raise
 
     def execute_pick_plan(self, plan: PickPlan) -> PickResult:
-        self._require_ready("pick")
         workflow = self._require_workflow()
         execute = self.mode is RobotServiceMode.EXECUTE
-        self.state = RobotServiceState.EXECUTING if execute else RobotServiceState.PLANNING
-        result = workflow.execute_pick_plan(plan, execute=execute)
+        token = self._begin_write_operation(
+            kind="pick",
+            allowed_states=(RobotServiceState.READY,),
+            active_state=(
+                RobotServiceState.EXECUTING
+                if execute
+                else RobotServiceState.PLANNING
+            ),
+        )
+        try:
+            result = workflow.execute_pick_plan(plan, execute=execute)
+        except Exception as exc:
+            operation_current = self._operation_is_current(token)
+            if execute and operation_current:
+                self._best_effort_stop()
+                self._finish_operation(
+                    token,
+                    final_state=RobotServiceState.FAULT,
+                    fault=f"pick: {exc}",
+                )
+            elif operation_current:
+                self._finish_operation(token, final_state=RobotServiceState.READY)
+            self._record(
+                "pick",
+                final_status=(
+                    "fault" if execute else "rejected"
+                ) if operation_current else "cancelled",
+                error=str(exc),
+            )
+            raise
         if result.outcome is PickOutcome.FAILED:
-            self.fault = result.message
-            self.state = RobotServiceState.FAULT
+            self._finish_operation(
+                token,
+                final_state=RobotServiceState.FAULT,
+                fault=result.message,
+            )
         else:
-            self.state = RobotServiceState.READY
+            self._finish_operation(token, final_state=RobotServiceState.READY)
         self._record("pick", request_id=plan.observation.request_id, selected_plan=plan, final_status=self.state.value, stage_result=result)
         return result
 
     def pick(self, grasp_profile: GraspProfile | None = None) -> PickResult:
-        observation = self.request_observation()
-        plan = self.plan_observation(observation, grasp_profile)
-        return self.execute_pick_plan(plan)
+        self._require_not_read_only("pick")
+        if not self._controller.capabilities.vision_target_resolution:
+            raise RobotServiceCapabilityError(
+                "Hand-eye calibration is missing or not validated."
+            )
+        profile = self._require_profile(grasp_profile)
+        workflow = self._require_workflow()
+        token = self._begin_write_operation(
+            kind="pick",
+            allowed_states=(RobotServiceState.READY,),
+            active_state=RobotServiceState.OBSERVING,
+        )
+        try:
+            observation = workflow.request_observation()
+            if not self._set_operation_state(token, RobotServiceState.PLANNING):
+                raise RobotServiceStateError("pick was cancelled before planning")
+            plan = workflow.plan_observation(observation, profile)
+        except Exception as exc:
+            self._finish_operation(token, final_state=RobotServiceState.READY)
+            self._record("pick", final_status="rejected", error=str(exc))
+            raise
+        execute = self.mode is RobotServiceMode.EXECUTE
+        next_state = (
+            RobotServiceState.EXECUTING if execute else RobotServiceState.PLANNING
+        )
+        if not self._set_operation_state(token, next_state):
+            raise RobotServiceStateError("pick was cancelled before execution")
+        try:
+            result = workflow.execute_pick_plan(plan, execute=execute)
+        except Exception as exc:
+            operation_current = self._operation_is_current(token)
+            if execute and operation_current:
+                self._best_effort_stop()
+                self._finish_operation(
+                    token,
+                    final_state=RobotServiceState.FAULT,
+                    fault=f"pick: {exc}",
+                )
+            elif operation_current:
+                self._finish_operation(token, final_state=RobotServiceState.READY)
+            self._record(
+                "pick",
+                final_status=(
+                    "fault" if execute else "rejected"
+                ) if operation_current else "cancelled",
+                error=str(exc),
+            )
+            raise
+        final_state = (
+            RobotServiceState.FAULT
+            if result.outcome is PickOutcome.FAILED
+            else RobotServiceState.READY
+        )
+        self._finish_operation(
+            token,
+            final_state=final_state,
+            fault=result.message if final_state is RobotServiceState.FAULT else None,
+        )
+        self._record(
+            "pick",
+            request_id=observation.request_id,
+            selected_plan=plan,
+            final_status=final_state.value,
+            stage_result=result,
+        )
+        return result
 
     def return_to_startup(self) -> object:
         self._require_execute_mode("return")
@@ -689,27 +870,49 @@ class MushroomRobotService:
             self._finish_operation(token, final_state=RobotServiceState.READY)
             return result
         except Exception as exc:
-            self._best_effort_stop()
-            self._finish_operation(
-                token,
-                final_state=RobotServiceState.FAULT,
-                fault=f"return: {exc}",
+            operation_current = self._operation_is_current(token)
+            if operation_current:
+                self._best_effort_stop()
+                self._finish_operation(
+                    token,
+                    final_state=RobotServiceState.FAULT,
+                    fault=f"return: {exc}",
+                )
+            self._record(
+                "return",
+                final_status="fault" if operation_current else "cancelled",
+                error=str(exc),
             )
-            self._record("return", final_status="fault", error=str(exc))
             raise
 
     def stop(self) -> None:
-        if self.mode is RobotServiceMode.EXECUTE and self._started_controller:
+        with self._state_lock:
+            token = self._active_operation
+            if token is not None:
+                token.cancellation_requested = True
+                self._active_operation = None
+            elif self.state is RobotServiceState.EXECUTING:
+                token = _ActiveOperation(
+                    0,
+                    "orphan executing operation",
+                    cancellation_requested=True,
+                    initial_state=RobotServiceState.READY,
+                )
+            started_controller = self._started_controller
+            shutdown_requested = self._shutdown_requested
+        stop_error: Exception | None = None
+        if self.mode is RobotServiceMode.EXECUTE and started_controller:
             try:
                 self._controller.stop()
             except Exception as exc:
-                self._fault("stop", exc)
-                raise
+                stop_error = exc
         state_reader = getattr(self._axis_motion, "get_axis_states", None)
         if (
-            self.mode is RobotServiceMode.EXECUTE
-            and self._started_controller
+            token is not None
+            and self.mode is RobotServiceMode.EXECUTE
+            and started_controller
             and callable(state_reader)
+            and stop_error is None
         ):
             try:
                 states = state_reader(_ALL_AXIS_NAMES)
@@ -726,32 +929,118 @@ class MushroomRobotService:
                 )
             except Exception as exc:
                 valid_stop = False
-                self.fault = f"stop state verification: {exc}"
-            if valid_stop:
-                self.fault = None
-                self.state = RobotServiceState.READY
+                verification_error = f"stop state verification: {exc}"
             else:
-                self.fault = self.fault or "stop did not confirm valid stationary axes"
-                self.state = RobotServiceState.FAULT
-        elif self.state is not RobotServiceState.FAULT:
-            self.state = RobotServiceState.READY
-        self._record("stop", final_status=self.state.value)
+                verification_error = None
+        elif token is not None and self.mode is RobotServiceMode.EXECUTE:
+            valid_stop = False
+            verification_error = (
+                f"stop: {stop_error}"
+                if stop_error is not None
+                else "stop did not confirm valid stationary axes"
+            )
+        else:
+            valid_stop = True
+            verification_error = None
+        stopped_state = RobotServiceState.READY
+        if token is not None and valid_stop:
+            if token.initial_state is RobotServiceState.DISABLED:
+                if self._rotary_holding_snapshot() is False:
+                    stopped_state = RobotServiceState.DISABLED
+                else:
+                    valid_stop = False
+                    verification_error = (
+                        "cancelled enable did not confirm disabled joint holding"
+                    )
+            elif token.kind == "joints disable":
+                if self._rotary_holding_snapshot() is not True:
+                    valid_stop = False
+                    verification_error = (
+                        "cancelled disable did not confirm enabled joint holding"
+                    )
+        with self._state_lock:
+            if token is not None and not self._shutdown_requested:
+                if valid_stop:
+                    self.state = stopped_state
+                    self.fault = None
+                else:
+                    self.state = RobotServiceState.FAULT
+                    self.fault = (
+                        verification_error
+                        or "stop did not confirm valid stationary axes"
+                    )
+            final_state = self.state
+        self._record("stop", final_status=final_state.value)
+        if stop_error is not None and token is not None and not shutdown_requested:
+            raise stop_error
 
     def enable_joints(self) -> object:
-        self._require_execute("joints enable")
-        result = self._controller.enable_joints()
-        self.state = RobotServiceState.READY
+        self._require_execute_mode("joints enable")
+        token = self._begin_write_operation(
+            kind="joints enable",
+            allowed_states=(RobotServiceState.DISABLED, RobotServiceState.READY),
+            active_state=RobotServiceState.EXECUTING,
+        )
+        try:
+            result = self._controller.enable_joints()
+            if not self._operation_is_current(token):
+                self._record("joints enable", final_status="cancelled")
+                return result
+            self._require_enabled_stationary_axes()
+        except Exception as exc:
+            if not self._operation_is_current(token):
+                self._record("joints enable", final_status="cancelled", error=str(exc))
+                raise
+            holding = self._rotary_holding_snapshot()
+            final_state = (
+                RobotServiceState.DISABLED
+                if holding is False
+                else RobotServiceState.FAULT
+            )
+            self._finish_operation(
+                token,
+                final_state=final_state,
+                fault=None if final_state is RobotServiceState.DISABLED else f"joints enable: {exc}",
+            )
+            self._record("joints enable", final_status=final_state.value, error=str(exc))
+            raise
+        self._finish_operation(token, final_state=RobotServiceState.READY)
+        self._record("joints enable", final_status="ready")
         return result
 
     def disable_joints(self) -> object:
-        self._require_execute("joints disable")
-        result = self._controller.disable_joints()
-        self.state = RobotServiceState.DISABLED
+        self._require_execute_mode("joints disable")
+        token = self._begin_write_operation(
+            kind="joints disable",
+            allowed_states=(RobotServiceState.READY,),
+            active_state=RobotServiceState.EXECUTING,
+        )
+        try:
+            result = self._controller.disable_joints()
+        except Exception as exc:
+            if not self._operation_is_current(token):
+                self._record("joints disable", final_status="cancelled", error=str(exc))
+                raise
+            holding = self._rotary_holding_snapshot()
+            final_state = (
+                RobotServiceState.READY
+                if holding is True
+                else RobotServiceState.DISABLED
+                if holding is False
+                else RobotServiceState.FAULT
+            )
+            self._finish_operation(
+                token,
+                final_state=final_state,
+                fault=None if final_state is not RobotServiceState.FAULT else f"joints disable: {exc}",
+            )
+            self._record("joints disable", final_status=final_state.value, error=str(exc))
+            raise
+        self._finish_operation(token, final_state=RobotServiceState.DISABLED)
+        self._record("joints disable", final_status="disabled")
         return result
 
     def suction(self, action: str) -> object:
-        self._require_ready(f"suction {action}")
-        self._require_execute(f"suction {action}")
         methods = {
             "grip": self._controller.suction_grip,
             "release": self._controller.suction_release,
@@ -759,12 +1048,32 @@ class MushroomRobotService:
         }
         if action not in methods:
             raise ValueError("suction action must be grip, release, or idle")
+        self._require_execute_mode(f"suction {action}")
+        token = self._begin_write_operation(
+            kind=f"suction {action}",
+            allowed_states=(RobotServiceState.READY,),
+            active_state=RobotServiceState.EXECUTING,
+        )
         try:
-            return methods[action]()
+            result = methods[action]()
         except Exception as exc:
-            self._best_effort_stop()
-            self._fault(f"suction {action}", exc)
+            operation_current = self._operation_is_current(token)
+            if operation_current:
+                self._best_effort_stop()
+                self._finish_operation(
+                    token,
+                    final_state=RobotServiceState.FAULT,
+                    fault=f"suction {action}: {exc}",
+                )
+            self._record(
+                f"suction {action}",
+                final_status="fault" if operation_current else "cancelled",
+                error=str(exc),
+            )
             raise
+        self._finish_operation(token, final_state=RobotServiceState.READY)
+        self._record(f"suction {action}", final_status="ready")
+        return result
 
     def _begin_write_operation(
         self,
@@ -791,7 +1100,11 @@ class MushroomRobotService:
                     f"{kind} rejected because operation "
                     f"{self._active_operation.kind} is already active"
                 )
-            token = _ActiveOperation(self._next_operation_id, kind)
+            token = _ActiveOperation(
+                self._next_operation_id,
+                kind,
+                initial_state=self.state,
+            )
             self._next_operation_id += 1
             self._active_operation = token
             self.state = active_state
@@ -871,6 +1184,76 @@ class MushroomRobotService:
             raise RobotServiceCapabilityError("Grasp profile is missing or not validated.")
         return profile
 
+    def _rotary_holding_snapshot(self) -> bool | None:
+        state_reader = getattr(self._axis_motion, "get_axis_states", None)
+        if not callable(state_reader):
+            return None
+        try:
+            states = state_reader(_ALL_AXIS_NAMES)
+        except Exception:
+            return None
+        if not isinstance(states, tuple) or not all(
+            isinstance(state, AxisState) for state in states
+        ):
+            return None
+        by_axis = {state.axis: state for state in states}
+        rotary = (
+            AxisName.SHOULDER,
+            AxisName.ELBOW,
+            AxisName.ROTATION,
+        )
+        if not all(axis in by_axis for axis in rotary):
+            return None
+        enabled = tuple(by_axis[axis].enabled for axis in rotary)
+        if enabled == (True, True, True):
+            return True
+        if enabled == (False, False, False):
+            return False
+        return None
+
+    def _require_enabled_stationary_axes(self) -> None:
+        state_reader = getattr(self._axis_motion, "get_axis_states", None)
+        if not callable(state_reader):
+            raise RobotServiceCapabilityError(
+                "axis state query is required to validate enabled joints"
+            )
+        states = state_reader(_ALL_AXIS_NAMES)
+        if (
+            not isinstance(states, tuple)
+            or len(states) != len(_ALL_AXIS_NAMES)
+            or not all(isinstance(state, AxisState) for state in states)
+        ):
+            raise RobotServiceStateError(
+                "enabled joint validation did not return all axis states"
+            )
+        by_axis = {state.axis: state for state in states}
+        if set(by_axis) != set(_ALL_AXIS_NAMES):
+            raise RobotServiceStateError(
+                "enabled joint validation did not return all axis states"
+            )
+        if any(
+            not state.connected
+            or state.busy is not False
+            or state.faulted
+            or not state.position_valid
+            for state in states
+        ):
+            raise RobotServiceStateError(
+                "enabled joint validation requires connected, stationary, "
+                "fault-free axes with valid positions"
+            )
+        if any(
+            by_axis[axis].enabled is not True
+            for axis in (
+                AxisName.SHOULDER,
+                AxisName.ELBOW,
+                AxisName.ROTATION,
+            )
+        ):
+            raise RobotServiceStateError(
+                "rotary joint holding was not confirmed after enable"
+            )
+
     def _read_current_axis_state(self) -> RobotAxisState:
         state_reader = getattr(self._axis_motion, "get_axis_states", None)
         if not callable(state_reader):
@@ -929,12 +1312,15 @@ class MushroomRobotService:
             pass
 
     def _fault(self, operation: str, exc: Exception) -> None:
-        self.fault = f"{operation}: {exc}"
-        self.state = RobotServiceState.FAULT
+        with self._state_lock:
+            self.fault = f"{operation}: {exc}"
+            self.state = RobotServiceState.FAULT
         self._record(operation, final_status="fault", error=str(exc))
 
     def _record(self, operation: str, **fields: object) -> None:
-        self.recorder.record(operation, application_state=self.state, **fields)
+        with self._state_lock:
+            state = self.state
+        self.recorder.record(operation, application_state=state, **fields)
 
 
 def _finite_coordinate(name: str, value: object) -> float:
