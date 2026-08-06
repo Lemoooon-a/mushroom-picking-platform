@@ -79,6 +79,23 @@ class AxisTarget:
 
 
 @dataclass(frozen=True)
+class RelativeAxisTarget:
+    """相对调用时当前逻辑位置的单轴增量目标。"""
+
+    axis: AxisName
+    delta: float
+    velocity: float | None = None
+    acceleration: float | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.axis, AxisName):
+            raise ValueError("axis must be an AxisName")
+        _require_finite("delta", self.delta)
+        _require_optional_positive("velocity", self.velocity)
+        _require_optional_positive("acceleration", self.acceleration)
+
+
+@dataclass(frozen=True)
 class MultiAxisTarget:
     targets: tuple[AxisTarget, ...]
 
@@ -113,6 +130,7 @@ class MotionErrorCode(str, Enum):
     BACKEND_UNAVAILABLE = "backend_unavailable"
     UNSUPPORTED_PARAMETER = "unsupported_parameter"
     UNSUPPORTED_COMMAND = "unsupported_command"
+    INVALID_STATE = "invalid_state"
     POSITION_INVALID = "position_invalid"
     NOT_HOMED = "not_homed"
     SOFT_LIMIT = "soft_limit"

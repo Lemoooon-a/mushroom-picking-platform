@@ -45,6 +45,7 @@ from motion.unified_protocol import (
     MultiAxisCommandHandle,
     MultiAxisCommandResult,
     MultiAxisTarget,
+    RelativeAxisTarget,
     RotaryJointEnableStatus,
 )
 from robot.feetech_rotation import (
@@ -540,12 +541,44 @@ class UnifiedMotionController:
             self.authorization.require_axis_motion(target.axis)
         else:
             self.authorization.require_motion()
-        target = self._validate_target(target)
-        if target.axis in _ROTARY_AXES:
-            self._require_rotary_motion_enabled()
         with self._lock:
-            self._ensure_axis_idle(target.axis)
-            return self._submit_validated(target)
+            target = self._validate_target(target)
+            if target.axis in _ROTARY_AXES:
+                self._require_rotary_motion_enabled()
+            return self._submit_absolute_locked(target)
+
+    def submit_relative(
+        self,
+        target: RelativeAxisTarget,
+    ) -> MotionCommandHandle:
+        """把当前有效逻辑位置加增量后，通过绝对位置通路原子提交。"""
+
+        if isinstance(target, RelativeAxisTarget):
+            self.authorization.require_axis_motion(target.axis)
+        else:
+            self.authorization.require_motion()
+        if not isinstance(target, RelativeAxisTarget):
+            raise UnifiedMotionError(
+                MotionErrorCode.INVALID_REQUEST,
+                "target must be a RelativeAxisTarget",
+            )
+        with self._lock:
+            axis = self._require_axis(target.axis)
+            self._ensure_axis_idle(axis)
+            if axis in _ROTARY_AXES:
+                self._require_rotary_motion_enabled()
+            start_position = self._read_valid_relative_start_locked(axis)
+            absolute = self._validate_target(
+                AxisTarget(
+                    axis=axis,
+                    position=start_position + target.delta,
+                    velocity=target.velocity,
+                    acceleration=target.acceleration,
+                )
+            )
+            if abs(target.delta) <= self._arrival_configs[axis].position_tolerance:
+                return self._record_relative_no_op_locked(absolute, start_position)
+            return self._submit_absolute_locked(absolute, idle_checked=True)
 
     def submit_positions(self, target: MultiAxisTarget) -> MultiAxisCommandHandle:
         self.authorization.require_motion()
@@ -922,6 +955,75 @@ class UnifiedMotionController:
             backend_token=token,
         )
         self._active_by_axis[target.axis] = handle.command_id
+        self._prune_records()
+        return handle
+
+    def _submit_absolute_locked(
+        self,
+        target: AxisTarget,
+        *,
+        idle_checked: bool = False,
+    ) -> MotionCommandHandle:
+        if not idle_checked:
+            self._ensure_axis_idle(target.axis)
+        return self._submit_validated(target)
+
+    def _read_valid_relative_start_locked(self, axis: AxisName) -> float:
+        state = self.get_state(axis)
+        if state.faulted:
+            raise UnifiedMotionError(
+                MotionErrorCode.DEVICE_FAULT,
+                f"axis {axis.value} has a device fault",
+                axis=axis,
+            )
+        if state.busy is not False:
+            raise UnifiedMotionError(
+                MotionErrorCode.BUSY,
+                f"axis {axis.value} stationary state is not confirmed false",
+                axis=axis,
+            )
+        if axis in _LINEAR_AXES and state.homed is not True:
+            raise UnifiedMotionError(
+                MotionErrorCode.NOT_HOMED,
+                f"axis {axis.value} is not homed",
+                axis=axis,
+            )
+        if not state.position_valid or state.current_position is None:
+            raise UnifiedMotionError(
+                MotionErrorCode.POSITION_INVALID,
+                f"axis {axis.value} has no valid current logical position",
+                axis=axis,
+            )
+        if not math.isfinite(state.current_position):
+            raise UnifiedMotionError(
+                MotionErrorCode.POSITION_INVALID,
+                f"axis {axis.value} current logical position is not finite",
+                axis=axis,
+            )
+        return float(state.current_position)
+
+    def _record_relative_no_op_locked(
+        self,
+        target: AxisTarget,
+        current_position: float,
+    ) -> MotionCommandHandle:
+        handle = MotionCommandHandle(uuid4().hex, target.axis, target.position)
+        record = _CommandRecord(
+            handle=handle,
+            status=MotionCommandStatus.ARRIVED,
+            accepted_at=self._clock(),
+            target_position=target.position,
+            stable_since=self._clock(),
+            terminal_result=None,
+            backend_token=None,
+        )
+        record.terminal_result = self._result(
+            record,
+            MotionCommandStatus.ARRIVED,
+            final_position=current_position,
+            message="relative delta is within the axis tolerance; no motion submitted",
+        )
+        self._records[handle.command_id] = record
         self._prune_records()
         return handle
 
@@ -1515,7 +1617,7 @@ class UnifiedMotionController:
     def _require_rotary_motion_enabled(self) -> None:
         if not self.rotary_joints_enabled():
             raise UnifiedMotionError(
-                MotionErrorCode.BACKEND_ERROR,
+                MotionErrorCode.INVALID_STATE,
                 'Rotary joints are disabled. Run "joints enable" before motion.',
             )
 

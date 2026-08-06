@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -25,6 +26,7 @@ from motion.unified_protocol import (
     MotionCommandStatus,
     MotionErrorCode,
     MultiAxisTarget,
+    RelativeAxisTarget,
 )
 from motion.suction import SuctionMode, SuctionStatus
 
@@ -303,6 +305,119 @@ class ControllerTestCase(unittest.TestCase):
             handle = self.controller.home_reference(axis)
         self.assertIsInstance(handle, MotionCommandHandle)
         return handle  # type: ignore[return-value]
+
+
+class RelativeAxisMotionTests(ControllerTestCase):
+    def test_all_five_axes_resolve_relative_delta_to_absolute_target(self) -> None:
+        cases = (
+            (AxisName.SLIDE, 10.0, 2.0, 12.0),
+            (AxisName.Z, 50.0, -5.0, 45.0),
+            (AxisName.SHOULDER, 10.0, 2.0, 12.0),
+            (AxisName.ELBOW, -10.0, -2.0, -12.0),
+            (AxisName.ROTATION, 20.0, 3.0, 23.0),
+        )
+        for axis, start, delta, expected in cases:
+            with self.subTest(axis=axis.value):
+                if axis in (AxisName.SLIDE, AxisName.Z):
+                    self.stm32.states.append(
+                        axis_status(
+                            axis.value,
+                            position_um=round(start * 1000),
+                            busy=False,
+                        )
+                    )
+                elif axis is AxisName.SHOULDER:
+                    self.shoulder.states.append(joint_state(start))
+                elif axis is AxisName.ELBOW:
+                    self.elbow.states.append(joint_state(start))
+                else:
+                    self.rotation.feedback.append(rotation_feedback(start))
+                handle = self.controller.submit_relative(
+                    RelativeAxisTarget(axis, delta)
+                )
+                self.assertAlmostEqual(handle.target_position, expected)
+
+    def test_relative_velocity_and_acceleration_reuse_absolute_dispatch(self) -> None:
+        self.stm32.states.append(
+            axis_status("slide", position_um=10_000, busy=False)
+        )
+        handle = self.controller.submit_relative(
+            RelativeAxisTarget(AxisName.SLIDE, 5.0, 3.0, 6.0)
+        )
+        self.assertEqual(handle.target_position, 15.0)
+        self.assertEqual(self.stm32.submissions[-1], ("slide", 15_000, 3_000, 6_000))
+
+    def test_zero_delta_returns_arrived_without_hardware_submission(self) -> None:
+        self.stm32.states.append(
+            axis_status("slide", position_um=10_000, busy=False)
+        )
+        handle = self.controller.submit_relative(
+            RelativeAxisTarget(AxisName.SLIDE, 0.0)
+        )
+        result = self.controller.wait(handle)
+        self.assertEqual(result.status, MotionCommandStatus.ARRIVED)
+        self.assertEqual(result.target_position, 10.0)
+        self.assertIn("no motion submitted", result.message)
+        self.assertEqual(self.stm32.submissions, [])
+
+    def test_relative_preconditions_reject_before_hardware_submission(self) -> None:
+        cases = (
+            (axis_status("slide", position_um=0, busy=True), MotionErrorCode.BUSY),
+            (axis_status("slide", position_um=0, busy=False, fault=1), MotionErrorCode.DEVICE_FAULT),
+            (axis_status("slide", position_um=0, busy=False, valid=False), MotionErrorCode.POSITION_INVALID),
+            (axis_status("slide", position_um=0, busy=False, homed=False), MotionErrorCode.NOT_HOMED),
+        )
+        for state, code in cases:
+            with self.subTest(code=code.value):
+                self.stm32.states.append(state)
+                with self.assertRaises(UnifiedMotionError) as raised:
+                    self.controller.submit_relative(
+                        RelativeAxisTarget(AxisName.SLIDE, 1.0)
+                    )
+                self.assertEqual(raised.exception.error_code, code)
+                self.assertEqual(self.stm32.submissions, [])
+
+    def test_relative_soft_limits_reject_both_directions(self) -> None:
+        for start, delta in ((799.0, 2.0), (1.0, -2.0)):
+            with self.subTest(start=start, delta=delta):
+                self.stm32.states.append(
+                    axis_status(
+                        "slide", position_um=round(start * 1000), busy=False
+                    )
+                )
+                with self.assertRaises(UnifiedMotionError) as raised:
+                    self.controller.submit_relative(
+                        RelativeAxisTarget(AxisName.SLIDE, delta)
+                    )
+                self.assertEqual(raised.exception.error_code, MotionErrorCode.SOFT_LIMIT)
+                self.assertEqual(self.stm32.submissions, [])
+
+    def test_concurrent_relative_requests_cannot_both_use_same_start(self) -> None:
+        self.stm32.states.extend(
+            [axis_status("slide", position_um=10_000, busy=False)] * 2
+        )
+        barrier = threading.Barrier(2)
+        outcomes: list[object] = []
+
+        def submit() -> None:
+            barrier.wait()
+            try:
+                outcomes.append(
+                    self.controller.submit_relative(
+                        RelativeAxisTarget(AxisName.SLIDE, 1.0)
+                    )
+                )
+            except Exception as exc:
+                outcomes.append(exc)
+
+        threads = [threading.Thread(target=submit) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=1.0)
+        self.assertEqual(sum(isinstance(item, MotionCommandHandle) for item in outcomes), 1)
+        self.assertEqual(sum(isinstance(item, UnifiedMotionError) for item in outcomes), 1)
+        self.assertEqual(len(self.stm32.submissions), 1)
 
 
 class SuctionAndRotaryLifecycleTests(ControllerTestCase):
