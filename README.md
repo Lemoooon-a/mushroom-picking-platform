@@ -22,6 +22,9 @@
 - `tools/`：电机测试、标定和调试工具
 - `config/`：仓库级机器人配置模板
 
+Web 前端可通过 [Robot Web API](docs/interfaces/ROBOT_WEB_API.md) 调用统一的
+`MushroomRobotService`，服务默认使用只读模式并仅监听本机地址。
+
 ## 当前阶段
 
 当前优先完成：
