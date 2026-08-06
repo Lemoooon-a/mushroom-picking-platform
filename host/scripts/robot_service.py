@@ -25,7 +25,10 @@ from application.execution_record import JsonLinesExecutionRecorder  # noqa: E40
 from application.motion_target import BaseToolTarget  # noqa: E402
 from application.pick_planner import PickPlanner  # noqa: E402
 from application.pick_workflow import VisionPickWorkflow  # noqa: E402
-from application.robot_service import MushroomRobotService  # noqa: E402
+from application.robot_service import (  # noqa: E402
+    MushroomRobotService,
+    ResolvedCameraPoint,
+)
 from application.runtime_state import RobotServiceMode  # noqa: E402
 from application.tray_workspace import TrayWorkspace  # noqa: E402
 from calibration.hand_eye import hand_eye_from_frame_document  # noqa: E402
@@ -176,6 +179,7 @@ class RobotServiceShell:
         if command == "help":
             self.emit("status | capabilities | workspace | startup | return | stop")
             self.emit("move x y z [yaw] | plan x y z [yaw] | observe | plan-observation | pick")
+            self.emit("resolve-camera-point x_mm y_mm z_mm")
             self.emit("suction grip|release|idle | joints enable|disable | quit")
             return True
         if command == "status":
@@ -206,6 +210,13 @@ class RobotServiceShell:
         if command == "observe":
             self.latest_observation = self.service.request_observation()
             self.emit(_json(self.latest_observation))
+            return True
+        if command == "resolve-camera-point":
+            x_mm, y_mm, z_mm = _camera_point(parts)
+            for line_item in format_resolved_camera_point(
+                self.service.resolve_camera_point(x_mm, y_mm, z_mm)
+            ):
+                self.emit(line_item)
             return True
         if command == "plan-observation":
             if self.latest_observation is None:
@@ -262,6 +273,40 @@ def format_capabilities(service: MushroomRobotService) -> tuple[str, ...]:
         f"Pick execution: {available(capabilities.pick_execution)}",
         "Physical pick verification: unavailable",
     )
+
+
+def format_resolved_camera_point(
+    result: ResolvedCameraPoint,
+) -> tuple[str, ...]:
+    if not isinstance(result, ResolvedCameraPoint):
+        raise TypeError("result must be a ResolvedCameraPoint")
+    camera_x, camera_y, camera_z = result.camera_point_mm
+    base_x, base_y, base_z = result.base_point_mm
+    return (
+        "Camera point:",
+        f"  frame: {result.frame_id}",
+        f"  x: {camera_x:.3f} mm",
+        f"  y: {camera_y:.3f} mm",
+        f"  z: {camera_z:.3f} mm",
+        "",
+        "Base point:",
+        "  frame: base",
+        f"  x: {base_x:.3f} mm",
+        f"  y: {base_y:.3f} mm",
+        f"  z: {base_z:.3f} mm",
+        "",
+        "Transform status:",
+        f"  tool_T_camera source: {result.tool_camera_source}",
+        "  tool_T_camera validated: "
+        f"{str(result.tool_camera_validated).lower()}",
+        f"  result: {result.transform_status.value.upper()}",
+    )
+
+
+def _camera_point(parts: list[str]) -> tuple[float, float, float]:
+    if len(parts) != 4:
+        raise ValueError("usage: resolve-camera-point x_mm y_mm z_mm")
+    return float(parts[1]), float(parts[2]), float(parts[3])
 
 
 def _target(parts: list[str]) -> BaseToolTarget:

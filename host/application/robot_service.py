@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 from application.controller import MushroomRobotController
 from application.execution_record import ExecutionRecorder, NullExecutionRecorder
@@ -12,7 +13,21 @@ from application.pick_planner import PickPlan
 from application.pick_workflow import PickOutcome, PickResult, VisionPickWorkflow
 from application.runtime_state import RobotServiceMode, RobotServiceState
 from calibration.hand_eye import HandEyeCalibrationStatus
+from geometry.rigid_transform import RigidTransform
+from kinematics.frame_chain import RobotAxisState
+from motion.unified_protocol import AxisName, AxisState
 from vision.observation import VisionTargetObservation
+
+
+_CAMERA_COLOR_OPTICAL_FRAME = "camera_color_optical_frame"
+_ALL_AXIS_NAMES = tuple(AxisName)
+_EXPECTED_POSITION_UNITS = {
+    AxisName.SLIDE: "mm",
+    AxisName.Z: "mm",
+    AxisName.SHOULDER: "deg",
+    AxisName.ELBOW: "deg",
+    AxisName.ROTATION: "deg",
+}
 
 
 class RobotServiceError(RuntimeError):
@@ -58,6 +73,23 @@ class MotionResult:
     executed: bool
     plan: object
     message: str
+
+
+@dataclass(frozen=True)
+class ResolvedCameraPoint:
+    camera_point_mm: tuple[float, float, float]
+    base_point_mm: tuple[float, float, float]
+    frame_id: str
+    tool_camera_source: str
+    tool_camera_validated: bool
+
+    @property
+    def transform_status(self) -> HandEyeCalibrationStatus:
+        return (
+            HandEyeCalibrationStatus.VALIDATED
+            if self.tool_camera_validated
+            else HandEyeCalibrationStatus.PROVISIONAL
+        )
 
 
 class MushroomRobotService:
@@ -150,6 +182,51 @@ class MushroomRobotService:
             except Exception as exc:
                 backend_status = f"unavailable: {exc}"
         return RobotServiceStatus(self.state, self.mode, self.capabilities, backend_status, self.fault)
+
+    def resolve_camera_point(
+        self,
+        x_mm: float,
+        y_mm: float,
+        z_mm: float,
+        *,
+        frame_id: str = _CAMERA_COLOR_OPTICAL_FRAME,
+    ) -> ResolvedCameraPoint:
+        """把当前真实姿态下的 Camera 点只读转换到 Base frame。"""
+
+        self._require_ready("resolve-camera-point")
+        camera_point = (
+            _finite_coordinate("x_mm", x_mm),
+            _finite_coordinate("y_mm", y_mm),
+            _finite_coordinate("z_mm", z_mm),
+        )
+        if camera_point[2] <= 0.0:
+            raise ValueError("z_mm must be greater than zero")
+        if frame_id != _CAMERA_COLOR_OPTICAL_FRAME:
+            raise ValueError(
+                f"frame_id must be {_CAMERA_COLOR_OPTICAL_FRAME!r}"
+            )
+
+        resolver = self.controller.target_resolver
+        calibration = None if resolver is None else resolver.hand_eye_calibration
+        if resolver is None or calibration is None:
+            raise RobotServiceCapabilityError("tool_T_camera is not configured.")
+
+        axis_state = self._read_current_axis_state()
+        base_T_tool = resolver.pose_provider.forward_kinematics_base(axis_state)
+        if not isinstance(base_T_tool, RigidTransform):
+            raise RobotServiceError(
+                "current pose provider returned a non-RigidTransform base_T_tool"
+            )
+        base_point = (
+            base_T_tool @ calibration.tool_T_camera
+        ).transform_point(camera_point)
+        return ResolvedCameraPoint(
+            camera_point_mm=camera_point,
+            base_point_mm=tuple(float(value) for value in base_point),
+            frame_id=frame_id,
+            tool_camera_source=calibration.source,
+            tool_camera_validated=calibration.validated,
+        )
 
     def plan_base_target(self, target: BaseToolTarget) -> object:
         self._require_ready("plan")
@@ -312,6 +389,58 @@ class MushroomRobotService:
             raise RobotServiceCapabilityError("Grasp profile is missing or not validated.")
         return profile
 
+    def _read_current_axis_state(self) -> RobotAxisState:
+        runtime_controller = getattr(self.runtime, "controller", None)
+        state_reader = getattr(runtime_controller, "get_axis_states", None)
+        if not callable(state_reader):
+            raise RobotServiceCapabilityError(
+                "Current real axis state is unavailable in this Robot Service mode."
+            )
+        states = state_reader(_ALL_AXIS_NAMES)
+        if not isinstance(states, tuple) or not all(
+            isinstance(state, AxisState) for state in states
+        ):
+            raise RobotServiceStateError(
+                "Current five-axis positions are unavailable or invalid."
+            )
+        state_by_axis = {state.axis: state for state in states}
+        if len(states) != len(_ALL_AXIS_NAMES) or set(state_by_axis) != set(
+            _ALL_AXIS_NAMES
+        ):
+            raise RobotServiceStateError(
+                "Current five-axis positions are unavailable or invalid."
+            )
+        if any(state_by_axis[axis].busy is not False for axis in _ALL_AXIS_NAMES):
+            raise RobotServiceStateError(
+                "Robot must be stationary before resolving a camera point."
+            )
+
+        positions: dict[AxisName, float] = {}
+        for axis in _ALL_AXIS_NAMES:
+            state = state_by_axis[axis]
+            position = state.current_position
+            if (
+                not state.connected
+                or state.faulted
+                or not state.position_valid
+                or position is None
+                or isinstance(position, bool)
+                or not isinstance(position, (int, float))
+                or not math.isfinite(position)
+                or state.position_unit != _EXPECTED_POSITION_UNITS[axis]
+            ):
+                raise RobotServiceStateError(
+                    "Current five-axis positions are unavailable or invalid."
+                )
+            positions[axis] = float(position)
+        return RobotAxisState(
+            slide_mm=positions[AxisName.SLIDE],
+            z_mm=positions[AxisName.Z],
+            shoulder_deg=positions[AxisName.SHOULDER],
+            elbow_deg=positions[AxisName.ELBOW],
+            rotation_deg=positions[AxisName.ROTATION],
+        )
+
     def _best_effort_stop(self) -> None:
         try:
             self.controller.stop()
@@ -327,7 +456,17 @@ class MushroomRobotService:
         self.recorder.record(operation, application_state=self.state, **fields)
 
 
+def _finite_coordinate(name: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{name} must be a finite real number")
+    converted = float(value)
+    if not math.isfinite(converted):
+        raise ValueError(f"{name} must be finite")
+    return converted
+
+
 __all__ = [
-    "MotionResult", "MushroomRobotService", "RobotServiceCapabilities", "RobotServiceCapabilityError",
-    "RobotServiceError", "RobotServiceStateError", "RobotServiceStatus",
+    "MotionResult", "MushroomRobotService", "ResolvedCameraPoint",
+    "RobotServiceCapabilities", "RobotServiceCapabilityError", "RobotServiceError",
+    "RobotServiceStateError", "RobotServiceStatus",
 ]

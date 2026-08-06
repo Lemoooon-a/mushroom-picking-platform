@@ -6,7 +6,7 @@ import io
 import unittest
 from unittest.mock import Mock
 
-from application.robot_service import RobotServiceCapabilities
+from application.robot_service import ResolvedCameraPoint, RobotServiceCapabilities
 from application.runtime_state import RobotServiceMode
 from calibration.hand_eye import HandEyeCalibrationStatus
 from scripts.robot_service import RobotServiceShell, build_parser, format_capabilities, validate_args
@@ -40,6 +40,36 @@ class RobotServiceCliTests(unittest.TestCase):
         service.request_observation.assert_called_once()
         service.pick.assert_called_once()
         service.shutdown.assert_called_once()
+
+    def test_shell_resolves_and_formats_camera_point(self) -> None:
+        service = Mock()
+        service.resolve_camera_point.return_value = ResolvedCameraPoint(
+            camera_point_mm=(20.0, -15.0, 450.0),
+            base_point_mm=(185.0, 212.5, 44.85),
+            frame_id="camera_color_optical_frame",
+            tool_camera_source="manual_measurement",
+            tool_camera_validated=False,
+        )
+        output = []
+        shell = RobotServiceShell(service, emit=output.append)
+
+        self.assertTrue(shell.run_command("resolve-camera-point 20 -15 450"))
+
+        service.resolve_camera_point.assert_called_once_with(20.0, -15.0, 450.0)
+        rendered = "\n".join(output)
+        self.assertIn("Camera point:", rendered)
+        self.assertIn("frame: camera_color_optical_frame", rendered)
+        self.assertIn("x: 20.000 mm", rendered)
+        self.assertIn("y: -15.000 mm", rendered)
+        self.assertIn("z: 450.000 mm", rendered)
+        self.assertIn("Base point:", rendered)
+        self.assertIn("frame: base", rendered)
+        self.assertIn("x: 185.000 mm", rendered)
+        self.assertIn("y: 212.500 mm", rendered)
+        self.assertIn("z: 44.850 mm", rendered)
+        self.assertIn("tool_T_camera source: manual_measurement", rendered)
+        self.assertIn("tool_T_camera validated: false", rendered)
+        self.assertIn("result: PROVISIONAL", rendered)
 
     def test_capability_output_has_all_fail_closed_lines(self) -> None:
         service = Mock()
