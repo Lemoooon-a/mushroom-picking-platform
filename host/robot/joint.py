@@ -141,6 +141,16 @@ class JointState:
     moving: bool
 
 
+@dataclass(frozen=True)
+class JointHoldSnapshot:
+    """已提交的当前位置保持命令所依据的最后一组电机快照。"""
+
+    target_position_rad: float
+    target_motor_multi_turn_deg: float
+    sampled_motor_speed_deg_s: float
+    commanded_max_motor_speed_deg_s: float
+
+
 def wrap_360(angle_deg: float) -> float:
     """将有限角度归一化到 ``[0, 360)``。"""
 
@@ -483,10 +493,52 @@ class CanRotaryJoint:
         self._last_state = current
         return current
 
-    def stop(self) -> None:
-        """发送已验证的 0x81 软件停止；该操作不替代硬件急停。"""
+    def stop(self) -> JointHoldSnapshot:
+        """读取当前位置并提交 A4 位置保持；绝不回退到 0x81。"""
 
-        self.driver.stop()
+        self._require_initialized()
+        fault = self.driver.read_fault()
+        if fault.error_state != 0:
+            raise JointMotorFaultError(
+                f"joint {self.config.name} motor ID {self.config.motor_id}: "
+                f"motor error state is 0x{fault.error_state:02X}; no hold command was sent"
+            )
+        if fault.motor_state != 0x00:
+            raise JointMotorDisabledError(
+                f"joint {self.config.name} motor ID {self.config.motor_id}: "
+                f"motor state 0x{fault.motor_state:02X} is not the protocol-defined "
+                "enabled state 0x00; no hold command was sent"
+            )
+
+        status = self.driver.read_status()
+        single = self.driver.read_single_turn_position()
+        position_rad = resolve_output_angle_to_joint_position(
+            self._output_abs_deg(single), self.config
+        )
+        # 0x92 必须最后读取，使 A4 目标尽量贴近发送前的电机坐标。
+        motor_multi_turn_deg = self.driver.read_multi_turn_position_deg()
+        configured_max = math.degrees(self.config.max_velocity_rad_s) * self.config.gear_ratio
+        hold_speed = min(
+            configured_max,
+            max(1.0, abs(float(status.motor_speed_deg_s))),
+        )
+        self.driver.command_position(
+            target_motor_deg=motor_multi_turn_deg,
+            max_motor_speed_deg_s=hold_speed,
+        )
+        self._last_state = self._compose_state(
+            single=single,
+            position_rad=position_rad,
+            multi_turn_deg=motor_multi_turn_deg,
+            status=status,
+            fault=fault,
+        )
+        return JointHoldSnapshot(
+            target_position_rad=position_rad,
+            target_motor_multi_turn_deg=motor_multi_turn_deg,
+            sampled_motor_speed_deg_s=float(status.motor_speed_deg_s),
+            commanded_max_motor_speed_deg_s=hold_speed,
+        )
 
     def validate_position_command(
         self,

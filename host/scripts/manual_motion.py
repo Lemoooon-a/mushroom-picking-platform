@@ -403,10 +403,9 @@ def run_stop(
         if axis in _LINEAR_AXES:
             emit("planned operation: STM32 software/protocol stop")
         elif axis in (AxisName.SHOULDER, AxisName.ELBOW):
-            emit("planned operation: MG4010 software stop (0x81)")
+            emit("planned operation: MG4010 current-position hold (A4; no 0x81)")
         else:
-            emit("Rotation has no verified independent stop; unsupported")
-            return False
+            emit("planned operation: Rotation current-position hold")
         if not execute:
             emit("READ_ONLY stop preview complete; no command was sent")
             return True

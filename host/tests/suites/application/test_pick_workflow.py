@@ -26,6 +26,7 @@ class _Backend:
         self.calls: list[object] = []
         self.fail_plan_at: int | None = None
         self.fail_execute_at: int | None = None
+        self.false_execute_at: int | None = None
         self.fail_suction = False
 
     def startup(self): self.calls.append("startup")
@@ -39,6 +40,7 @@ class _Backend:
         number = len([item for item in self.calls if isinstance(item, tuple) and item[0] == "execute"]) + 1
         self.calls.append(("execute", plan))
         if number == self.fail_execute_at: raise RuntimeError("motion failed")
+        if number == self.false_execute_at: return False
         return True
     def return_to_startup(self): self.calls.append("return")
     def stop(self): self.calls.append("stop")
@@ -191,6 +193,20 @@ class PickWorkflowTests(unittest.TestCase):
                 result = self.workflow(NoTarget("unused", "unused")).execute_pick_plan(plan, execute=True)
                 self.assertIs(result.outcome, PickOutcome.FAILED)
                 self.assertEqual(self.backend.calls[-1], "stop")
+
+    def test_false_motion_result_stops_pick_before_suction(self) -> None:
+        plan = self.planner().plan(self.observation(), self.profile)
+        self.backend.calls.clear()
+        self.backend.false_execute_at = 2
+
+        result = self.workflow(NoTarget("unused", "unused")).execute_pick_plan(
+            plan,
+            execute=True,
+        )
+
+        self.assertIs(result.outcome, PickOutcome.FAILED)
+        self.assertNotIn("grip", self.backend.calls)
+        self.assertEqual(self.backend.calls[-1], "stop")
 
 
 if __name__ == "__main__":

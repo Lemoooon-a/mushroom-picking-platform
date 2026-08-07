@@ -1,7 +1,7 @@
 # Host Python control library
 
 本目录是蘑菇采摘平台的上位机 Python 代码。当前正式实现瓴控
-MG4010E-i36 的只读状态查询、有限行程旋转关节位置控制和软件停止。
+MG4010E-i36 的只读状态查询、有限行程旋转关节位置控制和当前位置保持停止。
 
 首版只发送以下命令：
 
@@ -9,8 +9,8 @@ MG4010E-i36 的只读状态查询、有限行程旋转关节位置控制和软�
 - `0x92`：读取当前上电周期多圈坐标；
 - `0x9A`：读取电机状态和故障；
 - `0x9C`：读取速度、温度、电流和编码器状态；
-- `0xA4`：多圈绝对位置闭环控制命令 2；
-- `0x81`：软件停止。
+- `0xA4`：多圈绝对位置闭环控制命令 2及业务层当前位置保持；
+- `0x81`：仅供显式维护诊断，正常停止和异常恢复不发送。
 
 首版不实现转矩、连续速度、其他位置模式、参数写入、ROM 写入、自动使能、
 自动清错、自动回零、后台监控线程或多关节轨迹规划。
@@ -123,9 +123,9 @@ output_abs_deg = wrap_360(
 `command_position()` 不等待机械到位。后续 `motion/` 层负责到位等待、运动超时、
 故障停止、多关节协调和轨迹执行。
 
-如果 `0xA4` 已尝试发送但最终无法确认应答，驱动会尽力发送一次 `0x81`，再抛出
-`MotorCommandResultUnknownError`。异常明确提示原命令可能已经被电机接收，机械
-状态未知。
+如果 `0xA4` 已尝试发送但最终无法确认应答，驱动抛出
+`MotorCommandResultUnknownError`。异常明确提示原命令可能已经被电机接收、机械
+状态未知；驱动不会自动发送可能释放保持力矩的 `0x81`。
 
 ## 首次标定
 
@@ -168,11 +168,11 @@ python scripts/maintenance/mg4010_joint.py move \
   --execute --confirm-motion
 ```
 
-MG4010 `0x81` 只能称为 software stop，不是 disable、torque disable、断电或硬件急停：
+MG4010 `0x81` 仅保留为可能释放保持力矩的原始维护命令，必须显式确认自由运动风险：
 
 ```bash
-python scripts/maintenance/mg4010_joint.py software-stop \
-  --joint shoulder --execute --confirm-software-stop
+python scripts/maintenance/mg4010_joint.py protocol-stop-0x81 \
+  --joint shoulder --execute --confirm-free-motion-risk
 ```
 
 当前 `shoulder` 为 ID 1、`elbow` 为 ID 2，两者均使用 36:1 减速比。肩关节以
@@ -347,9 +347,11 @@ result = controller.wait_group(handle, timeout_s=10.0)
 
 This is coordinated point-to-point submission, not interpolated or strictly synchronized motion.
 
-当前没有轨迹插补、严格多轴同步、同时到达规划或完整采摘状态机；
-`startup_position` 不属于普通运动目标，也不会参与坐标换算。Rotation 当前没有可靠的独立
-stop，timeout 不会自动 torque disable。所有真实运动仍要求显式硬件配置、已确认的默认
+肩、肘同时出现在组目标且两轴都省略 velocity 时，统一控制器会按提交前读取的角度差和
+逐轴默认速度上限分配速度，使两轴近似同时到达。该功能仍不是轨迹插补或严格多轴同步；
+当前也没有完整采摘状态机。
+`startup_position` 不属于普通运动目标，也不会参与坐标换算。Rotation 当前使用尚未完成真机
+验证的当前位置保持式软件制动，不是可靠的独立 stop；timeout 不会自动 torque disable。所有真实运动仍要求显式硬件配置、已确认的默认
 速度/加速度、逐轴机械验证和现场安全措施；软件 stop 不是硬件急停。
 
 ## Base-root frame chain and calibration
@@ -425,14 +427,15 @@ STM32/Feetech port 和 gs_usb device 创建 transport、bus、肩肘关节、Rot
 `home_reference()`。`MOTION` 必须由调用方显式选择，且只允许后续的显式运动调用继续执行，
 本身不会发送命令。Rotation 因没有经过验证的独立 stop，即使在 `MOTION` 下也默认拒绝；
 只有额外设置 `allow_unverified_rotation_motion=True` 才能进入现有位置提交逻辑。多轴目标包含
-Rotation 时同样执行该门禁，timeout 不会被描述为已停止，也不会以 torque disable 冒充 stop。
+Rotation 时同样执行该门禁。Rotation timeout 会尝试把当前反馈位置写回 goal，但未确认静止时
+不会被描述为已停止，也不会以 torque disable 冒充 stop。
 
 到位容差、稳定窗口、轮询周期、timeout、默认速度、默认加速度以及 Slide/Z 的 Host 位置、
 速度和加速度上限统一来自被 Git 忽略的 `config/local/motion.py`。当前本机线性范围同步 STM32
 firmware 软限位：Slide `0..799.988 mm`、Z `-190..0 mm`；固件仍独立执行同一底层保护。
-当前实测运行默认值为 Slide `60 mm/s`、`180 mm/s²`，Z `8 mm/s`、`25 mm/s²`；它们
-不等于允许上限。完成整机有效行程验收后，应同时更新 firmware 与本地配置，避免 Host 和
-下位机范围不一致。
+当前运行默认值为 Slide `60 mm/s`、`180 mm/s²`，Z `8 mm/s`、`25 mm/s²`，Shoulder 和
+Elbow 均为 `30 deg/s`；它们不等于允许上限。完成整机有效行程验收后，应同时更新 firmware
+与本地配置，避免 Host 和下位机范围不一致。
 先复制 `config/examples/motion.py` 到 `config/local/motion.py`，再替换其中明确标为
 `EXAMPLE / BENCH-TEST PLACEHOLDER`、`NOT PRODUCTION-CALIBRATED` 的数值。Rotation 的工程
 速度/加速度映射尚未验证，因此示例保持 `None`。同一时刻只允许一个进程拥有这些真实硬件；
@@ -514,8 +517,9 @@ stop，软件 stop 也不是 disable、断电或硬件急停。
 `scripts/manual_motion.py move-group` 通过同一个 `UpperMotionRuntime` 和
 `UnifiedMotionController.submit_positions()` 提交用户显式指定的任意轴子集。它采用稳定轴顺序
 `slide, z, shoulder, elbow, rotation`，不会给未指定轴补当前位置或保持目标。该入口是协调
-点到点运动（Coordinated Point-to-Point Motion），不是轨迹插补、严格同步或同时到达规划，
-也不验证轴间路径无碰撞。
+点到点运动（Coordinated Point-to-Point Motion），不是轨迹插补或严格同步，也不验证轴间
+路径无碰撞。肩肘同时参与且两者都未显式指定速度时，会按角度差自动分配默认速度以近似同时
+到达；任一肩肘速度显式给出时不启用该计算。
 
 至少一个轴目标必须显式给出；timeout 和本次调用允许的最大线性/旋转位移可按需要覆盖。各轴
 速度与加速度可显式提供，是否支持仍由 descriptor 和统一 controller 校验。默认不运动，只打开
@@ -564,8 +568,9 @@ cd host
 ```
 
 执行模式会先把 Rotation goal 预置为当前角度，再显式 torque enable，然后才提交轴子集目标。
-脚本结束后不会自动 torque disable；Rotation 当前没有经过验证的独立 software stop，发生异常时
-必须准备使用物理急停。其余四轴在等待被异常中断时会各尝试一次 best-effort software stop；
+脚本结束后不会自动 torque disable；Rotation 当前使用尚未经过真机验证的当前位置保持式
+software stop，发生异常时仍必须准备使用物理急停。肩肘使用 `A4` 当前位置保持且不回退到 `0x81`；
+其余轴在等待被异常中断时会各尝试一次协调停止；
 group failure/timeout 则复用统一控制器自身的 stop 策略，不重复发送 stop。
 
 ### 应用入口与内部控制器边界

@@ -26,12 +26,12 @@ MOTION = MotionRuntimeConfig(
         arrival=ArrivalConfig(0.2, 0.2, 0.05, 180.0),
     ),
     shoulder=AxisMotionProfile(
-        default_velocity=10.0,  # deg/s; EXAMPLE / BENCH-TEST PLACEHOLDER
+        default_velocity=30.0,  # deg/s; BENCH-TEST DEFAULT, NOT PRODUCTION-CALIBRATED
         default_acceleration=None,  # backend has no verified engineering mapping
         arrival=ArrivalConfig(0.5, 0.2, 0.05, 10.0),
     ),
     elbow=AxisMotionProfile(
-        default_velocity=10.0,  # deg/s; EXAMPLE / BENCH-TEST PLACEHOLDER
+        default_velocity=30.0,  # deg/s; BENCH-TEST DEFAULT, NOT PRODUCTION-CALIBRATED
         default_acceleration=None,  # backend has no verified engineering mapping
         arrival=ArrivalConfig(0.5, 0.2, 0.05, 10.0),
     ),

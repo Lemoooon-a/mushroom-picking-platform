@@ -27,7 +27,7 @@ class OffsetWorkspaceConfig:
     """机械臂平面局部坐标中的两个闭区间偏置矩形。"""
 
     local_x_min_mm: float = 50.0
-    local_x_max_mm: float = 450.0
+    local_x_max_mm: float = 600.0
     positive_y_min_mm: float = 150.0
     positive_y_max_mm: float = 350.0
     positive_center_y_mm: float = 250.0

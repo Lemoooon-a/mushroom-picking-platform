@@ -29,6 +29,7 @@ from motion.unified_protocol import (
     MultiAxisTarget,
     RelativeAxisTarget,
     RotaryJointEnableStatus,
+    StopReport,
 )
 
 __all__ = [
@@ -51,6 +52,7 @@ __all__ = [
     "RelativeAxisTarget",
     "RotationMotionAuthorizationError",
     "RotaryJointEnableStatus",
+    "StopReport",
     "RuntimeMode",
     "STM32SuctionControl",
     "SuctionControl",

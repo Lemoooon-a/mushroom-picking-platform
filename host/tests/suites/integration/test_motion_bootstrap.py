@@ -382,6 +382,7 @@ class MotionAuthorizationTests(unittest.TestCase):
         rotation = Mock()
         rotation.config = END_EFFECTOR_ROTATION_CONFIG
         rotation.command_position.return_value = 1
+        rotation.stop.return_value = 0.0
         rotation.read_feedback.return_value = SimpleNamespace(
             position_rad=0.0,
             moving=False,
@@ -456,13 +457,14 @@ class MotionAuthorizationTests(unittest.TestCase):
         controller.submit_absolute(AxisTarget(AxisName.ROTATION, 1.0))
         rotation.command_position.assert_called_once()
 
-    def test_stop_is_safety_action_but_rotation_stop_remains_unsupported(self) -> None:
+    def test_stop_is_safety_action_and_rotation_preserves_torque(self) -> None:
         controller, stm32, rotation = self._controller(RuntimeMode.READ_ONLY)
         slide_result = controller.stop(AxisName.SLIDE)
         self.assertEqual(slide_result.status.value, "aborted")
         stm32.stop.assert_called_once_with("slide")
         rotation_result = controller.stop(AxisName.ROTATION)
-        self.assertEqual(rotation_result.error_code, MotionErrorCode.UNSUPPORTED_COMMAND)
+        self.assertEqual(rotation_result.status.value, "aborted")
+        rotation.stop.assert_called_once_with()
         rotation.disable_torque.assert_not_called()
 
 

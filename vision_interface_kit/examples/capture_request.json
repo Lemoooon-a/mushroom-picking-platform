@@ -1,0 +1,7 @@
+{
+  "protocol_version": 1,
+  "type": "capture_request",
+  "request_id": "capture-000001",
+  "camera_frame": "camera_color_optical_frame",
+  "timestamp": 1786060800.0
+}

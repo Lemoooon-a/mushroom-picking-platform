@@ -282,7 +282,6 @@ class BaseMoveTransitionPlannerTests(unittest.TestCase):
         self.assertEqual(
             tuple(stage.kind for stage in plan.stages),
             (
-                BaseMoveStageKind.LIFT,
                 BaseMoveStageKind.TRANSIT,
                 BaseMoveStageKind.LOWER,
             ),

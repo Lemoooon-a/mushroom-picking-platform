@@ -80,29 +80,35 @@ class FakeDriver:
             error_state=error_state,
         )
         self.commands: list[tuple[float, float]] = []
+        self.events: list[str] = []
         self.stop_calls = 0
         self.multi_reads = 0
         self.enable_calls = 0
         self.disable_calls = 0
 
     def read_single_turn_position(self) -> MotorSingleTurnPosition:
+        self.events.append("single")
         if self.single_samples:
             self.last_single = self.single_samples.pop(0)
         return self.last_single
 
     def read_multi_turn_position_deg(self) -> float:
+        self.events.append("multi")
         self.multi_reads += 1
         return self.multi_turn_deg
 
     def read_status(self) -> MotorStatus:
+        self.events.append("status")
         return self.status
 
     def read_fault(self) -> MotorFault:
+        self.events.append("fault")
         return self.fault
 
     def command_position(
         self, *, target_motor_deg: float, max_motor_speed_deg_s: float
     ) -> None:
+        self.events.append("command")
         self.commands.append((target_motor_deg, max_motor_speed_deg_s))
 
     def stop(self) -> None:
@@ -140,6 +146,44 @@ def initialized_joint(driver: FakeDriver, config: JointConfig) -> CanRotaryJoint
     joint = CanRotaryJoint(driver, config)  # type: ignore[arg-type]
     joint.initialize(sample_interval=0)
     return joint
+
+
+class PositionHoldStopTests(unittest.TestCase):
+    def test_stop_reads_safety_state_then_holds_last_multi_turn_position(self) -> None:
+        driver = FakeDriver(multi_turn_deg=1234.5, speed_deg_s=5)
+        joint = initialized_joint(driver, make_config())
+        driver.events.clear()
+
+        snapshot = joint.stop()
+
+        self.assertEqual(
+            driver.events,
+            ["fault", "status", "single", "multi", "command"],
+        )
+        self.assertEqual(driver.commands, [(1234.5, 5.0)])
+        self.assertAlmostEqual(snapshot.target_motor_multi_turn_deg, 1234.5)
+        self.assertAlmostEqual(snapshot.target_position_rad, 0.0)
+        self.assertEqual(driver.stop_calls, 0)
+
+    def test_stop_caps_hold_speed_at_configured_joint_limit(self) -> None:
+        driver = FakeDriver(multi_turn_deg=10.0, speed_deg_s=5000)
+        joint = initialized_joint(driver, make_config())
+
+        joint.stop()
+
+        self.assertEqual(driver.commands, [(10.0, 360.0)])
+
+    def test_stop_fault_or_disabled_state_sends_no_position_or_protocol_stop(self) -> None:
+        for driver, error in (
+            (FakeDriver(error_state=1), JointMotorFaultError),
+            (FakeDriver(motor_state=0x10), JointMotorDisabledError),
+        ):
+            with self.subTest(error=error.__name__):
+                joint = initialized_joint(driver, make_config())
+                with self.assertRaises(error):
+                    joint.stop()
+                self.assertEqual(driver.commands, [])
+                self.assertEqual(driver.stop_calls, 0)
 
 
 class AngleResolutionTests(unittest.TestCase):

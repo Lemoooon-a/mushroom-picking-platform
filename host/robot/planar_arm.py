@@ -196,7 +196,7 @@ class Planar2RArmController:
             stop_detail = (
                 "; stop errors: " + "; ".join(stop_errors)
                 if stop_errors
-                else "; both 0x81 stop commands were accepted"
+                else "; both current-position hold commands were accepted"
             )
             raise PlanarArmCommandError(
                 f"dual-joint position submission did not complete: {command_error}"

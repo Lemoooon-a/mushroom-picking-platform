@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 import math
 
@@ -395,6 +395,7 @@ class BaseFrameFiveAxisSolver:
         self,
         solution: FiveAxisSolution,
         *,
+        axes: Iterable[AxisName] | None = None,
         velocity_overrides: Mapping[AxisName, float] | None = None,
         acceleration_overrides: Mapping[AxisName, float] | None = None,
     ) -> MultiAxisTarget:
@@ -405,6 +406,11 @@ class BaseFrameFiveAxisSolver:
         _validate_override_axes("velocity_overrides", velocities)
         _validate_override_axes("acceleration_overrides", accelerations)
         positions = _state_positions(solution.axis_state())
+        selected_axes = tuple(_AXIS_ORDER if axes is None else axes)
+        if not selected_axes or len(set(selected_axes)) != len(selected_axes):
+            raise ValueError("axes must contain at least one unique axis")
+        if any(not isinstance(axis, AxisName) for axis in selected_axes):
+            raise TypeError("axes must contain only AxisName values")
         return MultiAxisTarget(
             tuple(
                 AxisTarget(
@@ -413,7 +419,7 @@ class BaseFrameFiveAxisSolver:
                     velocities.get(axis),
                     accelerations.get(axis),
                 )
-                for axis in _AXIS_ORDER
+                for axis in selected_axes
             )
         )
 

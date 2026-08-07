@@ -21,6 +21,14 @@ class UnsupportedToolGoalOrientationError(ValueError):
     """解析结果超出当前仅支持 xyz+yaw 的 Base 目标接口。"""
 
 
+class BaseMotionExecutionError(RuntimeError):
+    """Base 后端明确报告计划未成功执行。"""
+
+    def __init__(self, message: str, *, stop_report: object | None = None) -> None:
+        super().__init__(message)
+        self.stop_report = stop_report
+
+
 @runtime_checkable
 class BaseFrameRobotBackend(Protocol):
     """已经验证的 Base-frame 运动链所需的最小适配面。"""
@@ -219,10 +227,16 @@ class MushroomRobotController:
         yaw_deg: float | None = None,
     ) -> object:
         plan = self.plan_to_base_pose(x_mm, y_mm, z_mm, yaw_deg)
-        return self._base_backend.execute_base_plan(plan)
+        return self.execute_base_plan(plan)
 
     def execute_base_plan(self, plan: object) -> object:
-        return self._base_backend.execute_base_plan(plan)
+        result = self._base_backend.execute_base_plan(plan)
+        if result is False:
+            raise BaseMotionExecutionError(
+                "Base backend reported that plan execution failed",
+                stop_report=getattr(self._base_backend, "last_stop_report", None),
+            )
+        return result
 
     def resolve_object_in_base(
         self,
@@ -327,6 +341,7 @@ def _finite(name: str, value: object) -> float:
 
 
 __all__ = [
+    "BaseMotionExecutionError",
     "BaseFrameRobotBackend",
     "BaseToolTarget",
     "MushroomRobotController",

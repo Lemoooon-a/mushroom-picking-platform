@@ -47,6 +47,7 @@ from motion.unified_protocol import (
     MultiAxisTarget,
     RelativeAxisTarget,
     RotaryJointEnableStatus,
+    StopReport,
 )
 from robot.feetech_rotation import (
     FeetechRotationError,
@@ -69,6 +70,7 @@ _AXIS_ORDER = tuple(AxisName)
 _LINEAR_AXES = frozenset((AxisName.SLIDE, AxisName.Z))
 _CAN_AXES = frozenset((AxisName.SHOULDER, AxisName.ELBOW))
 _ROTARY_AXES = (AxisName.SHOULDER, AxisName.ELBOW, AxisName.ROTATION)
+_POSITION_HOLD_CONFIRM_TIMEOUT_S = 2.0
 _TERMINAL_STATUSES = frozenset(
     (
         MotionCommandStatus.ARRIVED,
@@ -131,6 +133,7 @@ class _CommandRecord:
     terminal_result: MotionCommandResult | None
     backend_token: object | None
     is_home: bool = False
+    stop_result: MotionCommandResult | None = None
 
 
 class UnifiedMotionController:
@@ -593,6 +596,7 @@ class UnifiedMotionController:
                 self._ensure_axis_idle(item.axis)
             submitted: list[MotionCommandHandle] = []
             try:
+                validated = self._coordinate_default_can_velocities(validated)
                 for item in validated:
                     submitted.append(self._submit_validated(item))
             except UnifiedMotionError as exc:
@@ -635,8 +639,6 @@ class UnifiedMotionController:
                     error_code=exc.error_code,
                     message=str(exc),
                 )
-                if status == MotionCommandStatus.FAULT:
-                    self._best_effort_stop(handle.axis)
                 return self._finish(record, result)
             except Exception as exc:
                 code = self._map_exception(exc)
@@ -648,7 +650,7 @@ class UnifiedMotionController:
                     message=str(exc),
                 )
                 if status == MotionCommandStatus.FAULT:
-                    self._best_effort_stop(handle.axis)
+                    record.stop_result = self.stop(handle.axis)
                 return self._finish(record, result)
 
     def get_group_result(
@@ -722,6 +724,13 @@ class UnifiedMotionController:
         while True:
             result = self.get_command_result(handle)
             if result.status in _TERMINAL_STATUSES:
+                if result.status in (
+                    MotionCommandStatus.FAULT,
+                    MotionCommandStatus.COMMUNICATION_ERROR,
+                ):
+                    record = self._get_record(handle)
+                    if record.stop_result is None:
+                        record.stop_result = self.stop(handle.axis)
                 return result
             if self._clock() >= deadline:
                 return self._timeout_record(handle)
@@ -764,7 +773,16 @@ class UnifiedMotionController:
                 None,
             )
             if failure is not None:
-                self._abort_group_peers(handle, failure.axis)
+                prior_results = tuple(
+                    record.stop_result
+                    for item in handle.commands
+                    if (record := self._get_record(item)).stop_result is not None
+                )
+                stop_report = self.stop_axes(
+                    [item.axis for item in handle.commands],
+                    prior=StopReport(prior_results),
+                )
+                self._abort_group_peers(handle, failure.axis, stop_report)
                 final_results = tuple(
                     self.get_command_result(item) for item in handle.commands
                 )
@@ -775,9 +793,10 @@ class UnifiedMotionController:
                     accepted=True,
                     completed=False,
                     message=(
-                        f"axis {failure.axis.value} failed; best-effort stop was "
-                        "attempted for other active axes"
+                        f"axis {failure.axis.value} failed; one coordinated stop "
+                        "attempt was made for each participating axis"
                     ),
+                    stop_report=stop_report,
                 )
             if all(item.status == MotionCommandStatus.ARRIVED for item in results):
                 return MultiAxisCommandResult(
@@ -789,10 +808,17 @@ class UnifiedMotionController:
                     message="all participating axes arrived",
                 )
             if self._clock() >= deadline:
-                for command in handle.commands:
-                    current = self.get_command_result(command)
-                    if current.status not in _TERMINAL_STATUSES:
-                        self._timeout_record(command)
+                unfinished = [
+                    command
+                    for command in handle.commands
+                    if self.get_command_result(command).status not in _TERMINAL_STATUSES
+                ]
+                stop_report = self.stop_axes([item.axis for item in unfinished])
+                stop_by_axis = {item.axis: item for item in stop_report.results}
+                for command in unfinished:
+                    self._timeout_record(
+                        command, stop_result=stop_by_axis.get(command.axis)
+                    )
                 results = tuple(
                     self.get_command_result(item) for item in handle.commands
                 )
@@ -803,15 +829,21 @@ class UnifiedMotionController:
                     accepted=True,
                     completed=False,
                     message=(
-                        "group deadline expired; best-effort stop was attempted "
-                        "for unfinished axes"
+                        "group deadline expired; one coordinated stop attempt was "
+                        "made for each unfinished axis"
                     ),
+                    stop_report=stop_report,
                 )
             self._sleep(poll_interval)
 
     def stop(self, axis: AxisName) -> MotionCommandResult:
         axis = self._require_axis(axis)
         command_id = uuid4().hex
+        stop_method = (
+            "stm32_software_stop"
+            if axis in _LINEAR_AXES
+            else "current_position_hold"
+        )
         if not self._descriptors[axis].capabilities.stop:
             return MotionCommandResult(
                 command_id=command_id,
@@ -824,6 +856,8 @@ class UnifiedMotionController:
                 position_error=None,
                 error_code=MotionErrorCode.UNSUPPORTED_COMMAND,
                 message=f"axis {axis.value} has no independent stop command",
+                stop_method=stop_method,
+                command_submitted=False,
             )
         backend = self._backends[axis]
         if backend is None:
@@ -838,25 +872,132 @@ class UnifiedMotionController:
                 position_error=None,
                 error_code=MotionErrorCode.BACKEND_UNAVAILABLE,
                 message=f"axis {axis.value} backend is unavailable",
+                stop_method=stop_method,
+                command_submitted=False,
             )
+        target_position = 0.0
+        final_position = None
+        stop_submitted: bool | None = False
         try:
             if axis in _LINEAR_AXES:
                 backend.stop(axis.value)
+                stop_submitted = True
+            elif axis is AxisName.ROTATION:
+                held_position = backend.stop()
+                stop_submitted = True
+                target_position = math.degrees(held_position)
+                deadline = self._clock() + _POSITION_HOLD_CONFIRM_TIMEOUT_S
+                poll_interval = self._arrival_configs[axis].poll_interval_s
+                while True:
+                    feedback = backend.read_feedback()
+                    if feedback.error_raw:
+                        raise FeetechRotationError(
+                            f"Rotation device error {feedback.error_raw} while "
+                            "confirming current-position hold"
+                        )
+                    if not feedback.moving:
+                        final_position = math.degrees(feedback.position_rad)
+                        break
+                    if self._clock() >= deadline:
+                        return MotionCommandResult(
+                            command_id=command_id,
+                            axis=axis,
+                            status=MotionCommandStatus.TIMEOUT,
+                            accepted=True,
+                            completed=False,
+                            target_position=target_position,
+                            final_position=math.degrees(feedback.position_rad),
+                            position_error=None,
+                            error_code=MotionErrorCode.TIMEOUT,
+                            message=(
+                                "Rotation current-position hold was submitted, "
+                                "but stationary feedback was not confirmed within 2 seconds"
+                            ),
+                            stop_method=stop_method,
+                            command_submitted=True,
+                        )
+                    self._sleep(poll_interval)
             else:
-                backend.stop()
+                hold = backend.stop()
+                stop_submitted = True
+                hold_position_rad = getattr(hold, "target_position_rad", None)
+                if hold_position_rad is None:
+                    # 兼容只实现旧 stop() 测试接口的外部后端；正式 CAN
+                    # 后端始终返回 JointHoldSnapshot。
+                    hold_position_rad = backend.get_state().position_rad
+                target_position = math.degrees(hold_position_rad)
+                deadline = self._clock() + _POSITION_HOLD_CONFIRM_TIMEOUT_S
+                config = self._arrival_configs[axis]
+                stable_since: float | None = None
+                while True:
+                    state = backend.get_state()
+                    if state.error_state != 0:
+                        raise JointMotorFaultError(
+                            f"axis {axis.value} faulted while confirming position hold: "
+                            f"0x{state.error_state:02X}"
+                        )
+                    if state.motor_state != 0x00:
+                        raise JointMotorDisabledError(
+                            f"axis {axis.value} protocol enabled state was lost "
+                            "while confirming position hold"
+                        )
+                    current_deg = math.degrees(state.position_rad)
+                    position_error = abs(current_deg - target_position)
+                    if not state.moving and position_error <= config.position_tolerance:
+                        if stable_since is None:
+                            stable_since = self._clock()
+                        if self._clock() - stable_since >= config.stable_time_s:
+                            final_position = current_deg
+                            break
+                    else:
+                        stable_since = None
+                    if self._clock() >= deadline:
+                        return MotionCommandResult(
+                            command_id=command_id,
+                            axis=axis,
+                            status=MotionCommandStatus.TIMEOUT,
+                            accepted=True,
+                            completed=False,
+                            target_position=target_position,
+                            final_position=current_deg,
+                            position_error=position_error,
+                            error_code=MotionErrorCode.TIMEOUT,
+                            message=(
+                                f"{axis.value} current-position hold was submitted, "
+                                "but stable stationary feedback was not confirmed "
+                                "within 2 seconds; no 0x81 fallback was sent"
+                            ),
+                            stop_method=stop_method,
+                            command_submitted=True,
+                        )
+                    self._sleep(config.poll_interval_s)
         except Exception as exc:
             code = self._map_exception(exc)
+            status = self._status_for_error(code)
+            reported_submitted = stop_submitted
+            if stop_submitted is False and not isinstance(
+                exc,
+                (
+                    JointInitializationError,
+                    JointMotorDisabledError,
+                    JointMotorFaultError,
+                    JointPositionOutOfRangeError,
+                ),
+            ):
+                reported_submitted = None
             return MotionCommandResult(
                 command_id=command_id,
                 axis=axis,
-                status=MotionCommandStatus.COMMUNICATION_ERROR,
+                status=status,
                 accepted=True,
                 completed=False,
-                target_position=0.0,
-                final_position=None,
+                target_position=target_position,
+                final_position=final_position,
                 position_error=None,
                 error_code=code,
-                message=f"best-effort software stop failed: {exc}",
+                message=f"current-position hold failed: {exc}; no 0x81 fallback was sent",
+                stop_method=stop_method,
+                command_submitted=reported_submitted,
             )
         return MotionCommandResult(
             command_id=command_id,
@@ -864,12 +1005,42 @@ class UnifiedMotionController:
             status=MotionCommandStatus.ABORTED,
             accepted=True,
             completed=False,
-            target_position=0.0,
-            final_position=None,
+            target_position=target_position,
+            final_position=final_position,
             position_error=None,
             error_code=MotionErrorCode.BACKEND_ERROR,
-            message="software stop accepted; this is not an emergency stop",
+            message=(
+                "Rotation current-position hold confirmed stationary; this is not "
+                "an emergency stop"
+                if axis is AxisName.ROTATION
+                else (
+                    f"{axis.value} current-position hold confirmed stationary; "
+                    "protocol enabled state remains active"
+                    if axis in _CAN_AXES
+                    else "software stop accepted; this is not an emergency stop"
+                )
+            ),
+            stop_method=stop_method,
+            command_submitted=True,
         )
+
+    def stop_axes(
+        self,
+        axes: tuple[AxisName, ...] | list[AxisName],
+        *,
+        prior: StopReport | None = None,
+    ) -> StopReport:
+        """每个不同轴最多停止一次，并合并此前已经尝试过的结果。"""
+
+        results = list(prior.results if prior is not None else ())
+        attempted = {item.axis for item in results}
+        for axis in axes:
+            checked = self._require_axis(axis)
+            if checked in attempted:
+                continue
+            results.append(self.stop(checked))
+            attempted.add(checked)
+        return StopReport(tuple(results))
 
     def home_reference(
         self,
@@ -1099,6 +1270,122 @@ class UnifiedMotionController:
                 "target must be a MultiAxisTarget",
             )
         return tuple(self._validate_target(item) for item in target.targets)
+
+    def _coordinate_default_can_velocities(
+        self,
+        targets: tuple[AxisTarget, ...],
+    ) -> tuple[AxisTarget, ...]:
+        """按肩肘角度差分配默认速度；只读反馈失败时不提交任何运动。"""
+
+        by_axis = {target.axis: target for target in targets}
+        if not _CAN_AXES.issubset(by_axis):
+            return targets
+        if any(by_axis[axis].velocity is not None for axis in _CAN_AXES):
+            return targets
+
+        distances: dict[AxisName, float] = {}
+        velocity_caps: dict[AxisName, float] = {}
+        minimum_velocities: dict[AxisName, float] = {}
+        moving_axes: list[AxisName] = []
+
+        for axis in (AxisName.SHOULDER, AxisName.ELBOW):
+            target = by_axis[axis]
+            state = self.get_state(axis)
+            if state.faulted:
+                raise UnifiedMotionError(
+                    MotionErrorCode.DEVICE_FAULT,
+                    f"axis {axis.value} has a device fault; coordinated motion was not submitted",
+                    axis=axis,
+                )
+            if not state.position_valid or state.current_position is None:
+                raise UnifiedMotionError(
+                    MotionErrorCode.POSITION_INVALID,
+                    f"axis {axis.value} has no valid position for coordinated motion",
+                    axis=axis,
+                )
+            if state.busy is not False:
+                raise UnifiedMotionError(
+                    MotionErrorCode.BUSY,
+                    f"axis {axis.value} stationary state is not confirmed false",
+                    axis=axis,
+                )
+            if not math.isfinite(state.current_position):
+                raise UnifiedMotionError(
+                    MotionErrorCode.POSITION_INVALID,
+                    f"axis {axis.value} current position is not finite",
+                    axis=axis,
+                )
+
+            backend = self._require_backend(axis)
+            config = getattr(backend, "config", None)
+            position_tolerance_rad = getattr(config, "position_tolerance_rad", None)
+            max_velocity_rad_s = getattr(config, "max_velocity_rad_s", None)
+            gear_ratio = getattr(config, "gear_ratio", None)
+            if not all(
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(float(value))
+                and float(value) > 0.0
+                for value in (
+                    position_tolerance_rad,
+                    max_velocity_rad_s,
+                    gear_ratio,
+                )
+            ):
+                raise UnifiedMotionError(
+                    MotionErrorCode.BACKEND_ERROR,
+                    f"axis {axis.value} has invalid coordination configuration",
+                    axis=axis,
+                )
+
+            default_velocity, _acceleration = self._resolve_motion_parameters(target)
+            maximum_velocity = math.degrees(float(max_velocity_rad_s))
+            velocity_cap = min(default_velocity, maximum_velocity)
+            minimum_velocity = 1.0 / float(gear_ratio)
+            if minimum_velocity > velocity_cap:
+                raise UnifiedMotionError(
+                    MotionErrorCode.BACKEND_ERROR,
+                    f"axis {axis.value} default velocity is below the A4 protocol minimum",
+                    axis=axis,
+                )
+
+            distance = abs(target.position - state.current_position)
+            tolerance = math.degrees(float(position_tolerance_rad))
+            distances[axis] = distance
+            velocity_caps[axis] = velocity_cap
+            minimum_velocities[axis] = minimum_velocity
+            if distance > tolerance:
+                moving_axes.append(axis)
+
+        if not moving_axes:
+            return targets
+
+        duration_s = max(
+            distances[axis] / velocity_caps[axis]
+            for axis in moving_axes
+        )
+        if not math.isfinite(duration_s) or duration_s <= 0.0:
+            raise UnifiedMotionError(
+                MotionErrorCode.BACKEND_ERROR,
+                "coordinated shoulder/elbow duration is invalid",
+            )
+
+        coordinated_velocities = {
+            axis: min(
+                velocity_caps[axis],
+                max(minimum_velocities[axis], distances[axis] / duration_s),
+            )
+            for axis in moving_axes
+        }
+        return tuple(
+            AxisTarget(
+                target.axis,
+                target.position,
+                coordinated_velocities.get(target.axis, target.velocity),
+                target.acceleration,
+            )
+            for target in targets
+        )
 
     def _resolve_motion_parameters(self, target: AxisTarget) -> tuple[float, float | None]:
         default_velocity, default_acceleration = self._default_motion_parameters.get(
@@ -1338,7 +1625,7 @@ class UnifiedMotionController:
                 error_code=MotionErrorCode.DEVICE_FAULT,
                 message=state.fault_message or "device fault",
             )
-            self._best_effort_stop(record.handle.axis)
+            record.stop_result = self.stop(record.handle.axis)
             return self._finish(record, result)
         if not state.position_valid or state.current_position is None:
             return self._result(
@@ -1356,6 +1643,14 @@ class UnifiedMotionController:
                 final_position=state.current_position,
                 message="axis is outside the arrival tolerance",
             )
+        if state.busy is not False:
+            record.stable_since = None
+            return self._result(
+                record,
+                MotionCommandStatus.MOVING,
+                final_position=state.current_position,
+                message="axis stationary state is not confirmed false",
+            )
         now = self._clock()
         if record.stable_since is None:
             record.stable_since = now
@@ -1372,16 +1667,29 @@ class UnifiedMotionController:
                 record,
                 MotionCommandStatus.ARRIVED,
                 final_position=state.current_position,
-                message="position remained within tolerance for the stable window",
+                message=(
+                    "position remained within tolerance and stationary for the "
+                    "stable window"
+                ),
             ),
         )
 
-    def _timeout_record(self, handle: MotionCommandHandle) -> MotionCommandResult:
+    def _timeout_record(
+        self,
+        handle: MotionCommandHandle,
+        *,
+        stop_result: MotionCommandResult | None = None,
+    ) -> MotionCommandResult:
         with self._lock:
             record = self._get_record(handle)
             if record.terminal_result is not None:
                 return record.terminal_result
-            stop_message = self._best_effort_stop(handle.axis)
+            if stop_result is None:
+                stop_result = self.stop(handle.axis)
+            record.stop_result = stop_result
+            stop_message = (
+                f"stop result {stop_result.status.value}: {stop_result.message}"
+            )
             current_position = None
             try:
                 current_position = self.get_state(handle.axis).current_position
@@ -1406,16 +1714,23 @@ class UnifiedMotionController:
         results: list[MotionCommandResult] = []
         submitted_by_axis = {item.axis: item for item in submitted}
         failed_axis = error.axis or targets[len(submitted)].axis
+        stop_report = self.stop_axes(
+            [*(item.axis for item in submitted), failed_axis]
+        )
+        stop_by_axis = {item.axis: item for item in stop_report.results}
         for target in targets:
             handle = submitted_by_axis.get(target.axis)
             if handle is not None:
                 record = self._get_record(handle)
-                stop_message = self._best_effort_stop(target.axis)
+                stop_result = stop_by_axis[target.axis]
                 result = self._result(
                     record,
                     MotionCommandStatus.ABORTED,
                     error_code=MotionErrorCode.BACKEND_ERROR,
-                    message=f"group submission failed; {stop_message}",
+                    message=(
+                        "group submission failed; coordinated stop result: "
+                        f"{stop_result.status.value}: {stop_result.message}"
+                    ),
                 )
                 results.append(self._finish(record, result))
             else:
@@ -1450,15 +1765,18 @@ class UnifiedMotionController:
             completed=False,
             message=(
                 f"axis {failed_axis.value} submission failed; already submitted "
-                "axes received best-effort software stop"
+                "and uncertain axes received one coordinated stop attempt"
             ),
+            stop_report=stop_report,
         )
 
     def _abort_group_peers(
         self,
         handle: MultiAxisCommandHandle,
         failed_axis: AxisName,
+        stop_report: StopReport,
     ) -> None:
+        stop_by_axis = {item.axis: item for item in stop_report.results}
         with self._lock:
             for command in handle.commands:
                 if command.axis == failed_axis:
@@ -1468,7 +1786,12 @@ class UnifiedMotionController:
                     continue
                 if not self._descriptors[command.axis].capabilities.stop:
                     continue
-                message = self._best_effort_stop(command.axis)
+                stop_result = stop_by_axis.get(command.axis)
+                message = (
+                    "no stop result was recorded"
+                    if stop_result is None
+                    else f"stop result {stop_result.status.value}: {stop_result.message}"
+                )
                 result = self._result(
                     record,
                     MotionCommandStatus.ABORTED,
@@ -1482,17 +1805,13 @@ class UnifiedMotionController:
             if axis is AxisName.ROTATION:
                 return "no verified independent stop is available for Rotation"
             return "backend has no independent stop capability"
-        backend = self._backends[axis]
-        if backend is None:
+        if self._backends[axis] is None:
             return "backend is unavailable, so stop could not be sent"
         try:
-            if axis in _LINEAR_AXES:
-                backend.stop(axis.value)
-            else:
-                backend.stop()
+            result = self.stop(axis)
         except Exception as exc:
             return f"best-effort software stop failed: {exc}"
-        return "best-effort software stop was accepted (not an emergency stop)"
+        return f"stop result {result.status.value}: {result.message}"
 
     def _result(
         self,
@@ -1727,7 +2046,7 @@ class UnifiedMotionController:
         linear_capabilities = AxisCapabilities(True, True, True, True, True, True, True)
         can_capabilities = AxisCapabilities(True, True, True, False, True, False, True)
         rotation_capabilities = AxisCapabilities(
-            True, True, False, False, False, False, True
+            True, True, True, False, False, False, True
         )
         result = {
             AxisName.SLIDE: AxisDescriptor(

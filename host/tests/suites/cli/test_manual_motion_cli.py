@@ -511,7 +511,7 @@ class ManualMotionTests(unittest.TestCase):
         runtime.controller.home_reference.assert_called_once_with(AxisName.SLIDE, timeout_s=15.0)
 
     def test_stop_support_and_wording(self) -> None:
-        for axis in (AxisName.SLIDE, AxisName.Z, AxisName.SHOULDER, AxisName.ELBOW):
+        for axis in AxisName:
             runtime = fake_runtime()
             output: list[str] = []
             self.assertTrue(run_stop(runtime, axis, execute=True, emit=output.append))
@@ -520,9 +520,6 @@ class ManualMotionTests(unittest.TestCase):
             self.assertNotIn("disable", rendered)
             self.assertNotIn("emergency stop", rendered)
             self.assertNotIn("torque disable", rendered)
-        runtime = fake_runtime()
-        self.assertFalse(run_stop(runtime, AxisName.ROTATION, execute=True, emit=lambda _line: None))
-        runtime.controller.stop.assert_not_called()
 
     @patch("scripts.manual_motion.run_inspect")
     @patch("scripts.manual_motion.create_configured_runtime")

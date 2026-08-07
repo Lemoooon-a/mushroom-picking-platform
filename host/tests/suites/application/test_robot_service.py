@@ -6,7 +6,10 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 
-from application.controller import MushroomRobotController
+from application.controller import (
+    BaseMotionExecutionError,
+    MushroomRobotController,
+)
 from application.execution_record import JsonLinesExecutionRecorder
 from application.motion_target import BaseToolTarget
 from application.robot_service import (
@@ -29,6 +32,7 @@ from motion.unified_protocol import (
     MotionCommandStatus,
     MotionErrorCode,
     RelativeAxisTarget,
+    StopReport,
 )
 from vision.target_resolver import VisionTargetResolver
 
@@ -38,6 +42,8 @@ class _Backend:
         self.calls = []
         self.plan_error = None
         self.execute_error = None
+        self.execute_result = True
+        self.last_stop_report = None
 
     def startup(self): self.calls.append("startup")
     def require_base_motion_ready(self): self.calls.append("ready")
@@ -48,7 +54,7 @@ class _Backend:
     def execute_base_plan(self, plan):
         self.calls.append(("execute", plan))
         if self.execute_error: raise self.execute_error
-        return True
+        return self.execute_result
     def return_to_startup(self): self.calls.append("return")
     def stop(self): self.calls.append("stop")
     def enable_joints(self): self.calls.append("enable")
@@ -192,6 +198,44 @@ class RobotServiceTests(unittest.TestCase):
         self.assertIs(service.state, RobotServiceState.FAULT)
         self.assertIn("stop", self.backend.calls)
         service.stop()
+        self.assertIs(service.state, RobotServiceState.FAULT)
+
+    def test_false_execution_result_never_reports_success(self) -> None:
+        service = self.service(RobotServiceMode.EXECUTE)
+        service.startup()
+        self.backend.execute_result = False
+
+        with self.assertRaises(BaseMotionExecutionError):
+            service.move_base_target(BaseToolTarget(1, 2, 3, 4))
+
+        self.assertIs(service.state, RobotServiceState.FAULT)
+        self.assertIn("stop", self.backend.calls)
+
+    def test_execution_failure_with_stop_report_is_not_stopped_twice(self) -> None:
+        service = self.service(RobotServiceMode.EXECUTE)
+        service.startup()
+        self.backend.execute_result = False
+        self.backend.last_stop_report = StopReport(
+            (
+                MotionCommandResult(
+                    command_id="stop-shoulder",
+                    axis=AxisName.SHOULDER,
+                    status=MotionCommandStatus.ABORTED,
+                    accepted=True,
+                    completed=False,
+                    target_position=0.0,
+                    final_position=0.0,
+                    position_error=0.0,
+                    error_code=MotionErrorCode.BACKEND_ERROR,
+                    message="position hold confirmed",
+                ),
+            )
+        )
+
+        with self.assertRaises(BaseMotionExecutionError):
+            service.move_base_target(BaseToolTarget(1, 2, 3, 4))
+
+        self.assertNotIn("stop", self.backend.calls)
         self.assertIs(service.state, RobotServiceState.FAULT)
 
     def test_planning_rejection_returns_ready_and_disable_state(self) -> None:

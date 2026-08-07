@@ -692,7 +692,8 @@ class MushroomRobotService:
         except Exception as exc:
             operation_current = self._operation_is_current(token)
             if operation_current:
-                self._best_effort_stop()
+                if getattr(exc, "stop_report", None) is None:
+                    self._best_effort_stop()
                 self._finish_operation(
                     token,
                     final_state=RobotServiceState.FAULT,
@@ -959,7 +960,10 @@ class MushroomRobotService:
                         "cancelled disable did not confirm enabled joint holding"
                     )
         with self._state_lock:
-            if token is not None and not self._shutdown_requested:
+            if stop_error is not None and not self._shutdown_requested:
+                self.state = RobotServiceState.FAULT
+                self.fault = f"stop: {stop_error}"
+            elif token is not None and not self._shutdown_requested:
                 if valid_stop:
                     self.state = stopped_state
                     self.fault = None
@@ -971,7 +975,7 @@ class MushroomRobotService:
                     )
             final_state = self.state
         self._record("stop", final_status=final_state.value)
-        if stop_error is not None and token is not None and not shutdown_requested:
+        if stop_error is not None and not shutdown_requested:
             raise stop_error
 
     def enable_joints(self) -> object:

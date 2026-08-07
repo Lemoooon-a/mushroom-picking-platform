@@ -146,7 +146,7 @@ class MG4010DriverCommandTests(unittest.TestCase):
 
         self.assertEqual(bus.calls, [])
 
-    def test_unknown_command_result_attempts_stop_then_raises(self) -> None:
+    def test_unknown_command_result_never_falls_back_to_0x81(self) -> None:
         bus = FakeCanMotorBus(
             [
                 MotorCommunicationError("A4 timed out"),
@@ -159,10 +159,7 @@ class MG4010DriverCommandTests(unittest.TestCase):
             MG4010Driver(bus, 1).command_position(12.34, 180.0)
 
         self.assertEqual([call["expected_command"] for call in bus.calls], [0xA4])
-        self.assertEqual(
-            bus.send_only_calls,
-            [(0x141, bytes.fromhex("81 00 00 00 00 00 00 00"))],
-        )
+        self.assertEqual(bus.send_only_calls, [])
 
     def test_failure_before_send_does_not_stop_or_report_unknown_result(self) -> None:
         bus = FakeCanMotorBus([CanRequestNotSentError("bus is not open")])
@@ -173,29 +170,26 @@ class MG4010DriverCommandTests(unittest.TestCase):
         self.assertEqual([call["expected_command"] for call in bus.calls], [0xA4])
         self.assertEqual(bus.send_only_calls, [])
 
-    def test_unknown_result_is_preserved_when_stop_also_fails(self) -> None:
+    def test_unknown_result_ignores_unused_stop_transport(self) -> None:
         bus = FakeCanMotorBus(
             [MotorCommunicationError("A4 timed out")],
             send_only_error=MotorCommunicationError("stop send failed"),
         )
 
         with self.assertRaisesRegex(
-            MotorCommandResultUnknownError, "stop attempt also failed"
+            MotorCommandResultUnknownError, "no automatic 0x81 fallback"
         ):
             MG4010Driver(bus, 1).command_position(12.34, 180.0)
 
         self.assertEqual([call["expected_command"] for call in bus.calls], [0xA4])
-        self.assertEqual(
-            bus.send_only_calls,
-            [(0x141, bytes.fromhex("81 00 00 00 00 00 00 00"))],
-        )
+        self.assertEqual(bus.send_only_calls, [])
 
-    def test_stop_uses_0x81_and_protocol_response_id(self) -> None:
+    def test_explicit_maintenance_protocol_stop_uses_0x81(self) -> None:
         bus = FakeCanMotorBus(
             [response_message(bytes.fromhex("81 00 00 00 00 00 00 00"), motor_id=2)]
         )
 
-        MG4010Driver(bus, 2).stop()
+        MG4010Driver(bus, 2).protocol_stop_0x81()
 
         self.assertEqual(bus.calls[0]["arbitration_id"], 0x142)
         self.assertEqual(bus.calls[0]["expected_response_id"], 0x182)

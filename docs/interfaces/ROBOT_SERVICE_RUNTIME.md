@@ -31,6 +31,8 @@ suction("grip" | "release" | "idle")
 
 `stop()` 和 `shutdown()` 会使当前 token 失效，因此迟到的运动线程不能覆盖较新的 `FAULT` 或 `SHUTDOWN`。没有活动操作时，`stop()` 保持 `CREATED/READY/DISABLED/FAULT/SHUTDOWN` 原状态；它不再充当 lifecycle 或 holding 恢复入口。`DISABLED` 可直接调用 `enable_joints()`，只有重新确认 Shoulder、Elbow、Rotation holding 以及五轴连接、静止、无 fault、位置有效后才进入 `READY`。
 
+Rotation 的软件停止会读取当前反馈位置并立即写回 goal，在保留转矩的前提下尝试制动；显式统一 stop 最多等待 2 秒确认 `moving=False`。该方式尚未完成低速真机验收，不是厂商独立 stop、失能或硬件急停，因此 execute 模式仍保留 `--confirm-rotation-no-stop` 风险确认。
+
 ## 两种运动入口
 
 - Base-frame task movement：使用 `move_base_target()`，经过 TrayWorkspace、IK、OffsetWorkspace、transition planning 和 motion envelope。

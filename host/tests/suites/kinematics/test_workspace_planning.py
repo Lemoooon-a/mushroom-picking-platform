@@ -10,7 +10,7 @@ class OffsetWorkspaceClassificationTests(unittest.TestCase):
         self.config = OffsetWorkspaceConfig()
 
     def test_closed_positive_and_negative_boundaries(self) -> None:
-        for x in (50.0, 450.0):
+        for x in (self.config.local_x_min_mm, self.config.local_x_max_mm):
             for y in (150.0, 250.0, 350.0):
                 with self.subTest(x=x, y=y):
                     self.assertIs(
@@ -31,7 +31,10 @@ class OffsetWorkspaceClassificationTests(unittest.TestCase):
                     self.config.classify(200.0, y),
                     OffsetWorkspaceSide.OUTSIDE,
                 )
-        for x in (49.999, 450.001):
+        for x in (
+            self.config.local_x_min_mm - 0.001,
+            self.config.local_x_max_mm + 0.001,
+        ):
             for y in (250.0, -250.0):
                 with self.subTest(x=x, y=y):
                     self.assertIs(

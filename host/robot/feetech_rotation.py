@@ -247,3 +247,18 @@ class FeetechRotationAxis:
             expect_status=self.config.expect_write_status,
         )
         return target_raw
+
+    def stop(self) -> float:
+        """把当前反馈位置写回目标位置，保留转矩进行软件制动。"""
+
+        feedback = self.read_feedback()
+        if feedback.error_raw:
+            raise FeetechRotationError(
+                f"rotation {self.config.name}: device error {feedback.error_raw} "
+                "prevents current-position hold"
+            )
+        self.command_position(
+            feedback.position_rad,
+            self.config.max_speed_raw,
+        )
+        return feedback.position_rad

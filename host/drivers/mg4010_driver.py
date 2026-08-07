@@ -96,8 +96,9 @@ class MG4010Driver:
         """Submit a 0xA4 target and return after its CAN reply is confirmed.
 
         This method does not wait for mechanical arrival.  If the command was
-        submitted but no valid response can be confirmed, one 0x81 stop is
-        attempted before :class:`MotorCommandResultUnknownError` is raised.
+        submitted but no valid response can be confirmed, the final mechanical
+        state is reported as unknown.  No automatic 0x81 fallback is issued:
+        hardware validation showed that 0x81 can remove holding torque.
         """
 
         # Validate and encode before entering the recovery region.  A local
@@ -114,26 +115,20 @@ class MG4010Driver:
             # and an unsolicited stop would be misleading.
             raise
         except MotorError as command_error:
-            stop_error: MotorError | None = None
-            try:
-                # The recovery contract is one best-effort stop transmission.
-                # Do not use transact() here because its configured retries could
-                # issue more than one 0x81 frame.
-                self.bus.send_only(self.request_id, build_stop_request())
-            except MotorError as exc:
-                stop_error = exc
-
-            detail = "a 0x81 stop command was attempted"
-            if stop_error is not None:
-                detail += f", but that stop attempt also failed: {stop_error}"
             raise MotorCommandResultUnknownError(
                 f"motor ID {self.motor_id}: the 0xA4 position command may have "
                 f"been received, but its response could not be confirmed and "
-                f"the final mechanical state is unknown; {detail}"
+                "the final mechanical state is unknown; no automatic 0x81 "
+                "fallback was sent"
             ) from command_error
 
-    def stop(self) -> None:
-        """Submit the repeat-safe 0x81 software stop command."""
+    def protocol_stop_0x81(self) -> None:
+        """Submit raw protocol command 0x81 for explicit maintenance only.
+
+        This is intentionally not named ``stop`` so normal motion code cannot
+        mistake it for a holding stop.  On validated hardware it may remove
+        holding torque.
+        """
 
         self._transact(build_stop_request())
 

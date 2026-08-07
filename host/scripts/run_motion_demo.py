@@ -74,6 +74,7 @@ from motion.unified_protocol import (  # noqa: E402
     AxisTarget,
     MotionCommandStatus,
     MultiAxisTarget,
+    StopReport,
 )
 from scripts._motion_cli_common import (  # noqa: E402
     best_effort_stop_axes_once,
@@ -284,6 +285,7 @@ class DemoMotionFlow:
         self.virtual_state: RobotAxisState | None = None
         self.motion_interrupted = False
         self.startup_fk_valid = False
+        self.last_stop_report: StopReport | None = None
 
     def startup(self) -> None:
         """读取状态；执行模式下严格 Z→Slide→中心姿态。"""
@@ -327,10 +329,20 @@ class DemoMotionFlow:
             definition=self.startup_definition,
         )
         self._emit_startup_solution(self.startup_pose)
-        startup_target = self.solver.solution_to_multi_axis_target(
-            self.startup_pose.solution
+        startup_axes = _changed_axes(
+            self.solver,
+            current_state,
+            self.startup_pose.solution.axis_state(),
         )
-        self.runtime.controller.validate_positions(startup_target)
+        startup_target = (
+            self.solver.solution_to_multi_axis_target(
+                self.startup_pose.solution, axes=startup_axes
+            )
+            if startup_axes
+            else None
+        )
+        if startup_target is not None:
+            self.runtime.controller.validate_positions(startup_target)
 
         if not self.execute:
             self.virtual_state = self.startup_pose.solution.axis_state()
@@ -341,17 +353,18 @@ class DemoMotionFlow:
             )
             return
 
-        self._execute_stage(
-            DemoStage(
-                "STARTUP_SAFE_POSE",
-                self.startup_pose.base_T_tool_target,
-                startup_target,
-                self.startup_pose.solution,
-            ),
-            timeout_s=self._stage_timeout(),
-        )
-        actual_state = _robot_axis_state(
-            self.runtime.controller.get_axis_states(_AXIS_ORDER)
+        actual_state = (
+            self._execute_stage(
+                DemoStage(
+                    "STARTUP_SAFE_POSE",
+                    self.startup_pose.base_T_tool_target,
+                    startup_target,
+                    self.startup_pose.solution,
+                ),
+                timeout_s=self._stage_timeout(),
+            )
+            if startup_target is not None
+            else current_state
         )
         self.virtual_state = actual_state
         self.startup_fk_valid = self._verify_startup_fk(actual_state)
@@ -405,16 +418,16 @@ class DemoMotionFlow:
             )
         if self.motion_interrupted:
             raise DemoFlowError(
-                'MOVE REJECTED: run "status" and then "init" or restart first'
+                'MOVE REJECTED: run "status" and then "return" or restart first'
             )
 
     def execute_plan(self, plan: object) -> bool:
         """执行已由规划入口完整验证的阶段，不重新解算目标。"""
 
-        if not isinstance(plan, tuple) or not plan or not all(
+        if not isinstance(plan, tuple) or not all(
             isinstance(stage, DemoStage) for stage in plan
         ):
-            raise TypeError("plan must be a non-empty tuple of DemoStage objects")
+            raise TypeError("plan must be a tuple of DemoStage objects")
         return self._run_stages(plan)
 
     def plan_to_base_pose(
@@ -474,24 +487,36 @@ class DemoMotionFlow:
             current_state.rotation_deg,
         )
         lift_pose = self.solver.forward_kinematics_base(lift_state)
-        lift_target = MultiAxisTarget(
-            (AxisTarget(AxisName.Z, self.startup_definition.z_axis_mm),)
+        stages: list[DemoStage] = []
+        if AxisName.Z in _changed_axes(self.solver, current_state, lift_state):
+            stages.append(
+                DemoStage(
+                    "LIFT_TO_HOME",
+                    lift_pose,
+                    MultiAxisTarget(
+                        (AxisTarget(AxisName.Z, self.startup_definition.z_axis_mm),)
+                    ),
+                )
+            )
+        transit_axes = _changed_axes(
+            self.solver,
+            lift_state,
+            self.startup_pose.solution.axis_state(),
         )
-        startup_target = self.solver.solution_to_multi_axis_target(
-            self.startup_pose.solution
-        )
-        stages = (
-            DemoStage("LIFT_TO_HOME", lift_pose, lift_target),
-            DemoStage(
-                "TRANSIT_TO_STARTUP",
-                self.startup_pose.base_T_tool_target,
-                startup_target,
-                self.startup_pose.solution,
-            ),
-        )
+        if transit_axes:
+            stages.append(
+                DemoStage(
+                    "TRANSIT_TO_STARTUP",
+                    self.startup_pose.base_T_tool_target,
+                    self.solver.solution_to_multi_axis_target(
+                        self.startup_pose.solution, axes=transit_axes
+                    ),
+                    self.startup_pose.solution,
+                )
+            )
         self.emit("Return-to-startup plan:")
         self._emit_demo_stages(stages)
-        succeeded = self._run_stages(stages)
+        succeeded = self._run_stages(tuple(stages))
         if not succeeded:
             return False
         if self.execute:
@@ -511,16 +536,24 @@ class DemoMotionFlow:
         if not self.execute:
             self.emit("READ_ONLY stop preview; no stop command was sent")
             return
-        best_effort_stop_axes_once(
+        self.last_stop_report = best_effort_stop_axes_once(
             self.runtime,
             _STOPPABLE_OR_REPORTED_AXES,
             emit=self.emit,
         )
         self.emit(
-            "Stop requested. No plan will resume automatically; Rotation has no "
-            "verified independent software stop and is reported as such. "
-            "Rotary joint holding torque remains enabled."
+            "Stop requested. No plan will resume automatically. Per-axis results "
+            "above report whether current-position hold or software stop was confirmed."
         )
+        if self.last_stop_report.failed_axes:
+            failed = ", ".join(
+                axis.value for axis in sorted(
+                    self.last_stop_report.failed_axes, key=lambda item: item.value
+                )
+            )
+            raise DemoFlowError(
+                f"stop was not confirmed for axes: {failed}; no 0x81 fallback was sent"
+            )
 
     def suction_command(self, action: str) -> None:
         if not self.execute and action != "status":
@@ -597,7 +630,7 @@ class DemoMotionFlow:
                 if len(parts) != 1:
                     self.emit("usage: quit")
                     continue
-                self.emit('Use "init" before "quit" if you want to return to the startup pose.')
+                self.emit('Use "return" before "quit" if you want to return to the startup pose.')
                 self.stop()
                 self.emit(
                     'Rotary joints remain enabled unless "joints disable" was '
@@ -642,7 +675,7 @@ class DemoMotionFlow:
             if not self.startup_fk_valid:
                 self.emit("Command rejected: startup FK validation is not valid")
                 continue
-            if command in ("init", "return-init"):
+            if command in ("return", "init", "return-init"):
                 try:
                     self.return_to_startup()
                 except Exception as exc:
@@ -725,14 +758,16 @@ class DemoMotionFlow:
                 f"stage {stage.name} failed with terminal status {result.status.value}"
             )
         states = self.runtime.controller.get_axis_states(_AXIS_ORDER)
-        state = _robot_axis_state(states)
-        self.emit(f"Stage {stage.name} verified after arrival:")
+        state = _robot_axis_state(states, require_idle=False)
+        self.emit(f"Stage {stage.name} state captured after confirmed arrival:")
         self._emit_states(states)
         return state
 
     def _run_stages(self, stages: Sequence[DemoStage]) -> bool:
+        active_stage = "EMPTY_PLAN"
         try:
             for stage in stages:
+                active_stage = stage.name
                 self.runtime.controller.validate_positions(stage.multi_axis_target)
                 if self.execute:
                     self.virtual_state = self._execute_stage(
@@ -750,17 +785,23 @@ class DemoMotionFlow:
             self.motion_interrupted = False
             return True
         except Exception as exc:
-            self._handle_plan_failure(stages[-1].name if stages else "EMPTY_PLAN", exc)
+            self._handle_plan_failure(active_stage, exc)
             return False
 
     def _handle_plan_failure(self, stage: str, exc: BaseException) -> None:
         self.emit(f"{stage} failed: {exc}")
         self.motion_interrupted = True
         if self.execute:
-            best_effort_stop_axes_once(
+            prior = (
+                exc.result.stop_report
+                if isinstance(exc, MultiAxisSubmissionError)
+                else None
+            )
+            self.last_stop_report = best_effort_stop_axes_once(
                 self.runtime,
                 _STOPPABLE_OR_REPORTED_AXES,
                 emit=self.emit,
+                prior=prior,
             )
 
     def _planning_state(self) -> RobotAxisState:
@@ -803,7 +844,12 @@ class DemoMotionFlow:
             DemoStage(
                 "TRANSIT",
                 transit_pose,
-                self.solver.solution_to_multi_axis_target(transit),
+                self.solver.solution_to_multi_axis_target(
+                    transit,
+                    axes=_changed_axes(
+                        self.solver, current_state, transit.axis_state()
+                    ),
+                ),
                 transit,
             )
         ]
@@ -817,7 +863,9 @@ class DemoMotionFlow:
                 DemoStage(
                     "LOWER",
                     target,
-                    self.solver.solution_to_multi_axis_target(final),
+                    self.solver.solution_to_multi_axis_target(
+                        final, axes=(AxisName.Z,)
+                    ),
                     final,
                 )
             )
@@ -1039,7 +1087,7 @@ class DemoMotionFlow:
         self.emit("  status")
         self.emit("  workspace")
         self.emit("  move <x_mm> <y_mm> <z_mm> [yaw_deg]")
-        self.emit("  init | return-init")
+        self.emit("  return | init | return-init")
         self.emit("  suction <grip|release|idle|status>")
         self.emit("  joints <enable|disable|status>")
         self.emit("  stop")
@@ -1306,7 +1354,11 @@ def _rotary_seed_state(states: Sequence[AxisState]) -> RobotAxisState:
     )
 
 
-def _robot_axis_state(states: Sequence[AxisState]) -> RobotAxisState:
+def _robot_axis_state(
+    states: Sequence[AxisState],
+    *,
+    require_idle: bool = True,
+) -> RobotAxisState:
     by_axis = {state.axis: state for state in states}
     if set(by_axis) != set(_AXIS_ORDER):
         raise DemoFlowError("five-axis state query did not return exactly all axes")
@@ -1321,7 +1373,7 @@ def _robot_axis_state(states: Sequence[AxisState]) -> RobotAxisState:
             )
         if not state.position_valid or state.current_position is None:
             raise DemoFlowError(f"axis {axis.value} position is invalid")
-        if state.busy is not False:
+        if require_idle and state.busy is not False:
             raise DemoFlowError(f"axis {axis.value} moving/busy is not confirmed false")
         if axis in (AxisName.SLIDE, AxisName.Z) and state.homed is not True:
             raise DemoFlowError(f"axis {axis.value} is not homed")
@@ -1341,6 +1393,41 @@ def _robot_axis_state(states: Sequence[AxisState]) -> RobotAxisState:
 
 def _target_positions(target: MultiAxisTarget) -> dict[AxisName, float]:
     return {item.axis: item.position for item in target.targets}
+
+
+def _changed_axes(
+    solver: BaseFrameFiveAxisSolver,
+    previous: RobotAxisState,
+    current: RobotAxisState,
+) -> tuple[AxisName, ...]:
+    before = {
+        AxisName.SLIDE: previous.slide_mm,
+        AxisName.Z: previous.z_mm,
+        AxisName.SHOULDER: previous.shoulder_deg,
+        AxisName.ELBOW: previous.elbow_deg,
+        AxisName.ROTATION: previous.rotation_deg,
+    }
+    after = {
+        AxisName.SLIDE: current.slide_mm,
+        AxisName.Z: current.z_mm,
+        AxisName.SHOULDER: current.shoulder_deg,
+        AxisName.ELBOW: current.elbow_deg,
+        AxisName.ROTATION: current.rotation_deg,
+    }
+    return tuple(
+        axis
+        for axis in AxisName
+        if not math.isclose(
+            before[axis],
+            after[axis],
+            rel_tol=0.0,
+            abs_tol=(
+                solver.config.position_equality_tolerance_mm
+                if axis in (AxisName.SLIDE, AxisName.Z)
+                else solver.config.angle_equality_tolerance_deg
+            ),
+        )
+    )
 
 
 def _state_with_overrides(

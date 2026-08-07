@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 import threading
 from types import SimpleNamespace
 import unittest
@@ -90,6 +91,8 @@ class FakeJoint:
         self.config = config
         self.commands: list[tuple[float, float]] = []
         self.states: list[object] = []
+        self.state_reads = 0
+        self.state_error: Exception | None = None
         self.stop_calls = 0
         self.initialize_calls = 0
         self.command_error: Exception | None = None
@@ -104,12 +107,16 @@ class FakeJoint:
         return object()
 
     def get_state(self) -> object:
+        self.state_reads += 1
+        if self.state_error is not None:
+            raise self.state_error
         if self.states:
             return self.states.pop(0)
         return joint_state(0.0)
 
-    def stop(self) -> None:
+    def stop(self) -> object:
         self.stop_calls += 1
+        return SimpleNamespace(target_position_rad=0.0)
 
     def initialize(self) -> None:
         self.initialize_calls += 1
@@ -136,6 +143,7 @@ class FakeRotation:
         self.feedback: list[object] = []
         self.enable_calls = 0
         self.disable_calls = 0
+        self.stop_calls = 0
         self.enabled = True
 
     def command_position(self, position_rad: float, speed_raw: int) -> int:
@@ -146,6 +154,11 @@ class FakeRotation:
         if self.feedback:
             return self.feedback.pop(0)
         return rotation_feedback(0.0)
+
+    def stop(self) -> float:
+        self.stop_calls += 1
+        feedback = self.read_feedback()
+        return feedback.position_rad
 
     def enable_torque(self) -> None:
         self.enable_calls += 1
@@ -603,6 +616,30 @@ class SuctionAndRotaryLifecycleTests(ControllerTestCase):
         self.assertEqual(self.rotation.disable_calls, 0)
         self.assertTrue(self.controller.rotary_joints_enabled())
 
+    def test_can_stop_waits_for_stable_stationary_hold(self) -> None:
+        self.shoulder.states = [
+            joint_state(0.0, moving=True),
+            joint_state(0.0, moving=False),
+            joint_state(0.0, moving=False),
+        ]
+
+        result = self.controller.stop(AxisName.SHOULDER)
+
+        self.assertEqual(result.status, MotionCommandStatus.ABORTED)
+        self.assertEqual(self.shoulder.stop_calls, 1)
+        self.assertIn("current-position hold confirmed stationary", result.message)
+
+    def test_can_stop_fault_returns_fault_without_disable_fallback(self) -> None:
+        self.shoulder.states = [joint_state(0.0, fault=0x40)]
+
+        result = self.controller.stop(AxisName.SHOULDER)
+
+        self.assertEqual(result.status, MotionCommandStatus.FAULT)
+        self.assertEqual(result.error_code, MotionErrorCode.DEVICE_FAULT)
+        self.assertEqual(self.shoulder.stop_calls, 1)
+        self.assertEqual(self.shoulder.disable_calls, 0)
+        self.assertIn("no 0x81 fallback", result.message)
+
 
 class DescriptorAndDispatchTests(ControllerTestCase):
     def test_lists_five_axes_with_public_units(self) -> None:
@@ -610,7 +647,34 @@ class DescriptorAndDispatchTests(ControllerTestCase):
         self.assertEqual(tuple(item.name for item in descriptors), tuple(AxisName))
         self.assertEqual(descriptors[0].position_unit, "mm")
         self.assertEqual(descriptors[2].position_unit, "deg")
-        self.assertFalse(descriptors[-1].capabilities.stop)
+        self.assertTrue(descriptors[-1].capabilities.stop)
+
+    def test_rotation_stop_holds_position_and_confirms_stationary(self) -> None:
+        self.rotation.feedback = [
+            rotation_feedback(12.0, moving=True),
+            rotation_feedback(12.2, moving=True),
+            rotation_feedback(12.1, moving=False),
+        ]
+
+        result = self.controller.stop(AxisName.ROTATION)
+
+        self.assertEqual(result.status, MotionCommandStatus.ABORTED)
+        self.assertEqual(self.rotation.stop_calls, 1)
+        self.assertAlmostEqual(result.target_position, 12.0)
+        self.assertAlmostEqual(result.final_position or 0.0, 12.1)
+        self.assertIn("current-position hold confirmed stationary", result.message)
+        self.assertEqual(self.rotation.disable_calls, 0)
+
+    def test_rotation_stop_timeout_does_not_report_success_or_disable(self) -> None:
+        self.rotation.feedback = [rotation_feedback(12.0, moving=True)] * 300
+
+        result = self.controller.stop(AxisName.ROTATION)
+
+        self.assertEqual(result.status, MotionCommandStatus.TIMEOUT)
+        self.assertFalse(result.completed)
+        self.assertIn("stationary feedback was not confirmed", result.message)
+        self.assertEqual(self.rotation.stop_calls, 1)
+        self.assertEqual(self.rotation.disable_calls, 0)
 
     def test_linear_position_limits_are_required_valid_constructor_data(self) -> None:
         invalid_limits = (
@@ -839,11 +903,11 @@ class DescriptorAndDispatchTests(ControllerTestCase):
 class ArrivalAndTimeoutTests(ControllerTestCase):
     def test_joint_stable_window_resets_after_leaving_tolerance(self) -> None:
         self.shoulder.states = [
-            joint_state(0.0, moving=None),
-            joint_state(9.8, moving=None),
-            joint_state(8.0, moving=None),
-            joint_state(10.1, moving=None),
-            joint_state(10.1, moving=None),
+            joint_state(0.0, moving=False),
+            joint_state(9.8, moving=False),
+            joint_state(8.0, moving=False),
+            joint_state(10.1, moving=False),
+            joint_state(10.1, moving=False),
         ]
         handle = self.controller.submit_absolute(
             AxisTarget(AxisName.SHOULDER, 10.0, 2.0)
@@ -872,17 +936,52 @@ class ArrivalAndTimeoutTests(ControllerTestCase):
         self.assertEqual(result.status, MotionCommandStatus.ARRIVED)
         self.assertTrue(result.completed)
 
-    def test_unknown_busy_does_not_block_position_stability_arrival(self) -> None:
+    def test_unknown_busy_blocks_position_stability_arrival(self) -> None:
         self.shoulder.states = [joint_state(5.0, moving=None)] * 2
         handle = self.controller.submit_absolute(
             AxisTarget(AxisName.SHOULDER, 5.0, 2.0)
         )
         self.controller.get_command_result(handle)
         self.clock.advance(0.11)
+        result = self.controller.get_command_result(handle)
+        self.assertEqual(result.status, MotionCommandStatus.MOVING)
+        self.assertIn("stationary state is not confirmed false", result.message)
+
+    def test_joint_busy_resets_stationary_stable_window(self) -> None:
+        self.shoulder.states = [
+            joint_state(10.0, moving=True),
+            joint_state(10.0, moving=False),
+            joint_state(10.0, moving=True),
+            joint_state(10.0, moving=False),
+            joint_state(10.0, moving=False),
+        ]
+        handle = self.controller.submit_absolute(
+            AxisTarget(AxisName.SHOULDER, 10.0, 2.0)
+        )
+
         self.assertEqual(
             self.controller.get_command_result(handle).status,
-            MotionCommandStatus.ARRIVED,
+            MotionCommandStatus.MOVING,
         )
+        self.clock.advance(0.01)
+        self.assertEqual(
+            self.controller.get_command_result(handle).status,
+            MotionCommandStatus.MOVING,
+        )
+        self.clock.advance(0.06)
+        self.assertEqual(
+            self.controller.get_command_result(handle).status,
+            MotionCommandStatus.MOVING,
+        )
+        self.clock.advance(0.01)
+        self.assertEqual(
+            self.controller.get_command_result(handle).status,
+            MotionCommandStatus.MOVING,
+        )
+        self.clock.advance(0.11)
+        result = self.controller.get_command_result(handle)
+        self.assertEqual(result.status, MotionCommandStatus.ARRIVED)
+        self.assertIn("within tolerance and stationary", result.message)
 
     def test_fault_terminates_and_attempts_joint_software_stop(self) -> None:
         self.elbow.states = [joint_state(0.0, fault=0x40)]
@@ -902,14 +1001,15 @@ class ArrivalAndTimeoutTests(ControllerTestCase):
         result = self.controller.wait(handle, timeout_s=0.03)
         self.assertEqual(result.status, MotionCommandStatus.TIMEOUT)
         self.assertEqual(self.shoulder.stop_calls, 1)
-        self.assertIn("not an emergency stop", result.message)
+        self.assertIn("current-position hold confirmed stationary", result.message)
 
-    def test_rotation_timeout_does_not_invent_stop_or_disable_torque(self) -> None:
+    def test_rotation_timeout_attempts_position_hold_without_disabling_torque(self) -> None:
         self.rotation.feedback = [rotation_feedback(0.0)] * 20
         handle = self.controller.submit_absolute(AxisTarget(AxisName.ROTATION, 10.0))
         result = self.controller.wait(handle, timeout_s=0.03)
         self.assertEqual(result.status, MotionCommandStatus.TIMEOUT)
-        self.assertIn("no verified independent stop", result.message)
+        self.assertIn("current-position hold confirmed stationary", result.message)
+        self.assertEqual(self.rotation.stop_calls, 1)
         self.assertEqual(self.rotation.disable_calls, 0)
 
     def test_rotation_feedback_error_maps_to_fault(self) -> None:
@@ -1249,7 +1349,7 @@ class STM32HomingStateTests(ControllerTestCase):
         result = self.controller.home_reference(AxisName.Z, timeout_s=0.03)
         self.assertEqual(result.status, MotionCommandStatus.TIMEOUT)
         self.assertEqual(self.stm32.stop_calls, ["z"])
-        self.assertIn("best-effort software stop", result.message)
+        self.assertIn("stop result aborted", result.message)
         self.assertIn("not an emergency stop", result.message)
 
 
@@ -1280,8 +1380,8 @@ class MultiAxisTests(ControllerTestCase):
             (
                 AxisTarget(AxisName.SLIDE, 2.0, 60.0, 180.0),
                 AxisTarget(AxisName.Z, 2.0, 8.0, 25.0),
-                AxisTarget(AxisName.SHOULDER, 2.0, 10.0),
-                AxisTarget(AxisName.ELBOW, -2.0, 10.0),
+                AxisTarget(AxisName.SHOULDER, 2.0),
+                AxisTarget(AxisName.ELBOW, -2.0),
                 AxisTarget(AxisName.ROTATION, 2.0),
             )
         )
@@ -1292,6 +1392,181 @@ class MultiAxisTests(ControllerTestCase):
         self.assertEqual(self.shoulder.commands, [])
         self.assertEqual(self.elbow.commands, [])
         self.assertEqual(self.rotation.commands, [])
+        self.assertEqual(self.shoulder.state_reads, 0)
+        self.assertEqual(self.elbow.state_reads, 0)
+
+    def test_default_joint_velocities_are_coordinated_by_absolute_distance(self) -> None:
+        self.shoulder.states = [joint_state(10.0)]
+        self.elbow.states = [joint_state(-10.0)]
+
+        self.controller.submit_positions(
+            MultiAxisTarget(
+                (
+                    AxisTarget(AxisName.SHOULDER, -10.0),
+                    AxisTarget(AxisName.ELBOW, 30.0),
+                )
+            )
+        )
+
+        self.assertAlmostEqual(math.degrees(self.shoulder.commands[0][1]), 3.0)
+        self.assertAlmostEqual(math.degrees(self.elbow.commands[0][1]), 6.0)
+
+    def test_single_effective_joint_move_uses_its_default_velocity(self) -> None:
+        self.shoulder.states = [joint_state(0.0)]
+        self.elbow.states = [joint_state(0.0)]
+
+        self.controller.submit_positions(
+            MultiAxisTarget(
+                (
+                    AxisTarget(AxisName.SHOULDER, 0.05),
+                    AxisTarget(AxisName.ELBOW, 12.0),
+                )
+            )
+        )
+
+        self.assertAlmostEqual(math.degrees(self.shoulder.commands[0][1]), 5.0)
+        self.assertAlmostEqual(math.degrees(self.elbow.commands[0][1]), 6.0)
+
+    def test_two_noop_joint_targets_keep_default_velocities(self) -> None:
+        self.shoulder.states = [joint_state(0.0)]
+        self.elbow.states = [joint_state(0.0)]
+
+        self.controller.submit_positions(
+            MultiAxisTarget(
+                (
+                    AxisTarget(AxisName.SHOULDER, 0.05),
+                    AxisTarget(AxisName.ELBOW, -0.05),
+                )
+            )
+        )
+
+        self.assertAlmostEqual(math.degrees(self.shoulder.commands[0][1]), 5.0)
+        self.assertAlmostEqual(math.degrees(self.elbow.commands[0][1]), 6.0)
+
+    def test_coordinated_velocity_clamps_to_a4_protocol_minimum(self) -> None:
+        self.shoulder.states = [joint_state(0.0)]
+        self.elbow.states = [joint_state(0.0)]
+
+        self.controller.submit_positions(
+            MultiAxisTarget(
+                (
+                    AxisTarget(AxisName.SHOULDER, 0.11),
+                    AxisTarget(AxisName.ELBOW, 160.0),
+                )
+            )
+        )
+
+        self.assertAlmostEqual(
+            math.degrees(self.shoulder.commands[0][1]),
+            1.0 / SHOULDER_JOINT_CONFIG.gear_ratio,
+        )
+        self.assertAlmostEqual(math.degrees(self.elbow.commands[0][1]), 6.0)
+
+    def test_any_explicit_joint_velocity_disables_auto_coordination(self) -> None:
+        self.controller.submit_positions(
+            MultiAxisTarget(
+                (
+                    AxisTarget(AxisName.SHOULDER, 20.0, 4.0),
+                    AxisTarget(AxisName.ELBOW, -10.0),
+                )
+            )
+        )
+
+        self.assertEqual(self.shoulder.state_reads, 0)
+        self.assertEqual(self.elbow.state_reads, 0)
+        self.assertAlmostEqual(math.degrees(self.shoulder.commands[0][1]), 4.0)
+        self.assertAlmostEqual(math.degrees(self.elbow.commands[0][1]), 6.0)
+
+    def test_invalid_joint_feedback_rejects_group_before_any_motion_write(self) -> None:
+        self.shoulder.states = [joint_state(0.0, valid=False)]
+        target = MultiAxisTarget(
+            (
+                AxisTarget(AxisName.SLIDE, 2.0),
+                AxisTarget(AxisName.SHOULDER, 10.0),
+                AxisTarget(AxisName.ELBOW, -10.0),
+            )
+        )
+
+        with self.assertRaises(MultiAxisSubmissionError) as failure:
+            self.controller.submit_positions(target)
+
+        self.assertEqual(failure.exception.error_code, MotionErrorCode.POSITION_INVALID)
+        self.assertEqual(failure.exception.axis, AxisName.SHOULDER)
+        self.assertEqual(self.stm32.submissions, [])
+        self.assertEqual(self.shoulder.commands, [])
+        self.assertEqual(self.elbow.commands, [])
+
+    def test_busy_joint_rejects_group_before_any_motion_write(self) -> None:
+        self.shoulder.states = [joint_state(0.0, moving=True)]
+
+        with self.assertRaises(MultiAxisSubmissionError) as failure:
+            self.controller.submit_positions(
+                MultiAxisTarget(
+                    (
+                        AxisTarget(AxisName.SHOULDER, 10.0),
+                        AxisTarget(AxisName.ELBOW, -10.0),
+                    )
+                )
+            )
+
+        self.assertEqual(failure.exception.error_code, MotionErrorCode.BUSY)
+        self.assertEqual(self.shoulder.commands, [])
+        self.assertEqual(self.elbow.commands, [])
+
+    def test_faulted_joint_rejects_group_before_any_motion_write(self) -> None:
+        self.shoulder.states = [joint_state(0.0, fault=0x40)]
+
+        with self.assertRaises(MultiAxisSubmissionError) as failure:
+            self.controller.submit_positions(
+                MultiAxisTarget(
+                    (
+                        AxisTarget(AxisName.SHOULDER, 10.0),
+                        AxisTarget(AxisName.ELBOW, -10.0),
+                    )
+                )
+            )
+
+        self.assertEqual(failure.exception.error_code, MotionErrorCode.DEVICE_FAULT)
+        self.assertEqual(self.shoulder.commands, [])
+        self.assertEqual(self.elbow.commands, [])
+
+    def test_joint_feedback_error_rejects_group_before_any_motion_write(self) -> None:
+        self.shoulder.state_error = RuntimeError("feedback unavailable")
+
+        with self.assertRaises(MultiAxisSubmissionError) as failure:
+            self.controller.submit_positions(
+                MultiAxisTarget(
+                    (
+                        AxisTarget(AxisName.SHOULDER, 10.0),
+                        AxisTarget(AxisName.ELBOW, -10.0),
+                    )
+                )
+            )
+
+        self.assertEqual(failure.exception.error_code, MotionErrorCode.BACKEND_ERROR)
+        self.assertEqual(self.shoulder.commands, [])
+        self.assertEqual(self.elbow.commands, [])
+
+    def test_invalid_coordination_config_rejects_before_any_motion_write(self) -> None:
+        self.shoulder.config = SimpleNamespace(
+            position_tolerance_rad=SHOULDER_JOINT_CONFIG.position_tolerance_rad,
+            max_velocity_rad_s=SHOULDER_JOINT_CONFIG.max_velocity_rad_s,
+            gear_ratio=0.0,
+        )
+
+        with self.assertRaises(MultiAxisSubmissionError) as failure:
+            self.controller.submit_positions(
+                MultiAxisTarget(
+                    (
+                        AxisTarget(AxisName.SHOULDER, 10.0),
+                        AxisTarget(AxisName.ELBOW, -10.0),
+                    )
+                )
+            )
+
+        self.assertEqual(failure.exception.error_code, MotionErrorCode.BACKEND_ERROR)
+        self.assertEqual(self.shoulder.commands, [])
+        self.assertEqual(self.elbow.commands, [])
 
     def test_two_axis_submission_preserves_input_order(self) -> None:
         handle = self.controller.submit_positions(
@@ -1355,6 +1630,19 @@ class MultiAxisTests(ControllerTestCase):
             )
         result = failure.exception.result
         self.assertEqual(self.shoulder.stop_calls, 1)
+        self.assertEqual(self.elbow.stop_calls, 1)
+        self.assertEqual(
+            result.stop_report.attempted_axes,
+            frozenset((AxisName.SHOULDER, AxisName.ELBOW)),
+        )
+        self.assertEqual(
+            result.stop_report.submitted_axes,
+            frozenset((AxisName.SHOULDER, AxisName.ELBOW)),
+        )
+        self.assertEqual(
+            result.stop_report.methods[AxisName.SHOULDER],
+            "current_position_hold",
+        )
         self.assertEqual(result.status, MotionCommandStatus.REJECTED)
         self.assertEqual(len(result.results), 3)
         self.assertEqual(result.results[0].status, MotionCommandStatus.ABORTED)
@@ -1378,8 +1666,8 @@ class MultiAxisTests(ControllerTestCase):
             clock=self.clock,
             sleep=self.clock.advance,
         )
-        self.shoulder.states = [joint_state(10.0)]
-        self.elbow.states = [joint_state(-10.0)]
+        self.shoulder.states = [joint_state(0.0), joint_state(10.0)]
+        self.elbow.states = [joint_state(0.0), joint_state(-10.0)]
         handle = controller.submit_positions(
             MultiAxisTarget(
                 (
@@ -1392,6 +1680,51 @@ class MultiAxisTests(ControllerTestCase):
         self.assertEqual(result.status, MotionCommandStatus.ARRIVED)
         self.assertTrue(result.completed)
         self.assertEqual(len(result.results), 2)
+
+    def test_group_waits_until_every_axis_is_stationary(self) -> None:
+        controller = UnifiedMotionController(
+            stm32_client=self.stm32,
+            shoulder_joint=self.shoulder,
+            elbow_joint=self.elbow,
+            rotation_axis=self.rotation,
+            linear_position_limits=linear_position_limits(),
+            linear_motion_limits=linear_motion_limits(),
+            arrival_configs=arrival_configs(stable_time_s=0.0),
+            default_motion_parameters={
+                AxisName.SHOULDER: (2.0, None),
+                AxisName.ELBOW: (2.0, None),
+            },
+            authorization=motion_authorization(),
+            clock=self.clock,
+            sleep=self.clock.advance,
+        )
+        self.shoulder.states = [
+            joint_state(0.0, moving=False),
+            joint_state(10.0, moving=True),
+            joint_state(10.0, moving=False),
+        ]
+        self.elbow.states = [
+            joint_state(0.0, moving=False),
+            joint_state(-10.0, moving=False),
+        ]
+        handle = controller.submit_positions(
+            MultiAxisTarget(
+                (
+                    AxisTarget(AxisName.SHOULDER, 10.0),
+                    AxisTarget(AxisName.ELBOW, -10.0),
+                )
+            )
+        )
+
+        first = controller.get_group_result(handle)
+        self.assertEqual(first.status, MotionCommandStatus.MOVING)
+        self.assertEqual(
+            tuple(item.status for item in first.results),
+            (MotionCommandStatus.MOVING, MotionCommandStatus.ARRIVED),
+        )
+        second = controller.get_group_result(handle)
+        self.assertEqual(second.status, MotionCommandStatus.ARRIVED)
+        self.assertTrue(second.completed)
 
     def test_one_axis_fault_fails_group_and_stops_peer(self) -> None:
         self.shoulder.states = [joint_state(0.0)]
@@ -1407,7 +1740,12 @@ class MultiAxisTests(ControllerTestCase):
         result = self.controller.wait_group(handle, timeout_s=0.5)
         self.assertEqual(result.status, MotionCommandStatus.FAULT)
         self.assertEqual(len(result.results), 2)
-        self.assertGreaterEqual(self.shoulder.stop_calls, 1)
+        self.assertEqual(self.shoulder.stop_calls, 1)
+        self.assertEqual(self.elbow.stop_calls, 1)
+        self.assertEqual(
+            result.stop_report.attempted_axes,
+            frozenset((AxisName.SHOULDER, AxisName.ELBOW)),
+        )
 
     def test_group_timeout_marks_each_unfinished_axis_and_stops_them(self) -> None:
         self.shoulder.states = [joint_state(0.0)] * 20
@@ -1429,10 +1767,10 @@ class MultiAxisTests(ControllerTestCase):
         self.assertEqual(self.shoulder.stop_calls, 1)
         self.assertEqual(self.elbow.stop_calls, 1)
 
-    def test_rotation_stop_is_explicitly_unsupported(self) -> None:
+    def test_rotation_stop_uses_position_hold_and_preserves_torque(self) -> None:
         result = self.controller.stop(AxisName.ROTATION)
-        self.assertEqual(result.status, MotionCommandStatus.REJECTED)
-        self.assertEqual(result.error_code, MotionErrorCode.UNSUPPORTED_COMMAND)
+        self.assertEqual(result.status, MotionCommandStatus.ABORTED)
+        self.assertEqual(self.rotation.stop_calls, 1)
         self.assertEqual(self.rotation.disable_calls, 0)
 
 

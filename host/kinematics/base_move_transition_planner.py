@@ -141,6 +141,12 @@ class BaseMoveTransitionPlanner:
             except FiveAxisNoSolutionError:
                 pass
             else:
+                direct_stage = self._stage(
+                    BaseMoveStageKind.DIRECT,
+                    base_T_tool_target,
+                    direct_solution,
+                    previous_state=current_state,
+                )
                 return BaseMovePlan(
                     current_base_T_tool=current_base,
                     requested_base_T_tool_target=base_T_tool_target,
@@ -151,13 +157,7 @@ class BaseMoveTransitionPlanner:
                     requires_side_switch_clearance=False,
                     clearance_lift_mm=0.0,
                     clearance_base_z_mm=None,
-                    stages=(
-                        self._stage(
-                            BaseMoveStageKind.DIRECT,
-                            base_T_tool_target,
-                            direct_solution,
-                        ),
-                    ),
+                    stages=(() if direct_stage is None else (direct_stage,)),
                 )
 
         final_solution = self.solver.solve_base_target(
@@ -180,6 +180,7 @@ class BaseMoveTransitionPlanner:
                 BaseMoveStageKind.DIRECT,
                 base_T_tool_target,
                 final_solution,
+                previous_state=current_state,
             )
             return BaseMovePlan(
                 current_base_T_tool=current_base,
@@ -191,7 +192,7 @@ class BaseMoveTransitionPlanner:
                 requires_side_switch_clearance=False,
                 clearance_lift_mm=0.0,
                 clearance_base_z_mm=None,
-                stages=(stage,),
+                stages=(() if stage is None else (stage,)),
             )
 
         current_z = float(current_base.translation_mm[2])
@@ -257,15 +258,29 @@ class BaseMoveTransitionPlanner:
             raise StageValidationFailedError(
                 f"LOWER stage validation failed at {exc.stage}: {exc}"
             ) from exc
-        stages = (
-            self._stage(BaseMoveStageKind.LIFT, lift_target, lift_solution),
+        candidates = (
+            self._stage(
+                BaseMoveStageKind.LIFT,
+                lift_target,
+                lift_solution,
+                previous_state=current_state,
+                forced_axes=(AxisName.Z,),
+            ),
             self._stage(
                 BaseMoveStageKind.TRANSIT,
                 transit_target,
                 transit_solution,
+                previous_state=lift_solution.axis_state(),
             ),
-            self._stage(BaseMoveStageKind.LOWER, base_T_tool_target, lower_solution),
+            self._stage(
+                BaseMoveStageKind.LOWER,
+                base_T_tool_target,
+                lower_solution,
+                previous_state=transit_solution.axis_state(),
+                forced_axes=(AxisName.Z,),
+            ),
         )
+        stages = tuple(stage for stage in candidates if stage is not None)
         return BaseMovePlan(
             current_base_T_tool=current_base,
             requested_base_T_tool_target=base_T_tool_target,
@@ -313,12 +328,49 @@ class BaseMoveTransitionPlanner:
         kind: BaseMoveStageKind,
         target: RigidTransform,
         solution: FiveAxisSolution,
-    ) -> BaseMoveStage:
+        *,
+        previous_state: RobotAxisState,
+        forced_axes: tuple[AxisName, ...] | None = None,
+    ) -> BaseMoveStage | None:
+        changed_axes = self._changed_axes(previous_state, solution.axis_state())
+        axes = (
+            tuple(axis for axis in forced_axes if axis in changed_axes)
+            if forced_axes is not None
+            else changed_axes
+        )
+        if not axes:
+            return None
         return BaseMoveStage(
             kind=kind,
             base_T_tool_target=target,
             solution=solution,
-            multi_axis_target=self.solver.solution_to_multi_axis_target(solution),
+            multi_axis_target=self.solver.solution_to_multi_axis_target(
+                solution, axes=axes
+            ),
+        )
+
+    def _changed_axes(
+        self,
+        previous: RobotAxisState,
+        current: RobotAxisState,
+    ) -> tuple[AxisName, ...]:
+        before = _axis_state_positions(previous)
+        after = _axis_state_positions(current)
+        linear_tolerance = self.solver.config.position_equality_tolerance_mm
+        angular_tolerance = self.solver.config.angle_equality_tolerance_deg
+        return tuple(
+            axis
+            for axis in AxisName
+            if not math.isclose(
+                before[axis],
+                after[axis],
+                rel_tol=0.0,
+                abs_tol=(
+                    linear_tolerance
+                    if axis in (AxisName.SLIDE, AxisName.Z)
+                    else angular_tolerance
+                ),
+            )
         )
 
     def _base_planar_pose_equal(
@@ -354,6 +406,16 @@ def _pose_with_z(source: RigidTransform, z_mm: float) -> RigidTransform:
         pitch_deg=pitch_deg,
         yaw_deg=yaw_deg,
     )
+
+
+def _axis_state_positions(state: RobotAxisState) -> dict[AxisName, float]:
+    return {
+        AxisName.SLIDE: state.slide_mm,
+        AxisName.Z: state.z_mm,
+        AxisName.SHOULDER: state.shoulder_deg,
+        AxisName.ELBOW: state.elbow_deg,
+        AxisName.ROTATION: state.rotation_deg,
+    }
 
 
 def _branch_name(elbow_deg: float) -> str:

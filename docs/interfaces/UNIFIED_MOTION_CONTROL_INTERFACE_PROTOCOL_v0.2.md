@@ -711,10 +711,13 @@ z
 ### 11.4 `stop()`
 
 - `slide`、`z`：映射 STM32 stop；
-- `shoulder`、`elbow`：映射 MG4010E software stop；
-- `rotation`：第一版返回不支持，除非后续确认可靠的独立停止语义；
+- `shoulder`、`elbow`：读取故障、使能状态、速度和当前位置后，以 `A4` 写回多圈位置并确认稳定静止；不得自动回退到 `0x81`；
+- `rotation`：读取当前反馈位置并立即写回 goal，以保留转矩的当前位置保持方式进行软件制动；
+- 三个旋转轴显式 stop 最多等待 2 秒确认稳定静止；未确认时必须返回失败，不能报告已停止；
+- Rotation 的当前位置保持尚未完成真机验证，不等价于厂商独立 stop；
 - stop 不等价于 emergency stop；
 - stop 不自动清除故障。
+- 协调停止返回 `StopReport`，逐轴保留 `MotionCommandResult`、停止方式、命令是否已提交以及是否确认；上层必须复用该报告，不能对已尝试轴重复停止。
 
 ---
 
@@ -1303,7 +1306,7 @@ Slide Home → startup safe pose。Movement completion does not disable rotary j
 
 - `stop`：停止可停止轴的当前运动，保留电机使能与位置保持力。
 - `disable_rotary_joints`：先确认静止，再按 Rotation → Elbow → Shoulder 移除保持力。
-- Rotation 没有已验证的独立 stop；若反馈仍在 moving，失能请求必须拒绝。
+- Rotation 使用尚未完成真机验证的当前位置保持式软件制动；若反馈仍在 moving，失能请求必须拒绝。
 
 Stop does not remove joint holding torque. Joint torque is removed only by an explicit disable
 command. 支撑好机构后才能执行 `joints disable`。

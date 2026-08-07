@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Feetech Rotation backend maintenance.
 
-Rotation has no verified independent stop; this CLI intentionally has no stop command.
+This low-level CLI has no raw stop command.  The unified controller implements
+Rotation stop as a read-current-position-and-hold operation with confirmation.
 """
 
 from __future__ import annotations

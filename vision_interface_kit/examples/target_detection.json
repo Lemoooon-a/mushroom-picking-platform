@@ -1,0 +1,15 @@
+{
+  "protocol_version": 1,
+  "type": "target_detection",
+  "request_id": "capture-000001",
+  "frame_id": "camera_color_optical_frame",
+  "timestamp": 1786060800.125,
+  "target_id": "mushroom-001",
+  "confidence": 0.95,
+  "position_mm": {
+    "x": 12.4,
+    "y": -35.1,
+    "z": 428.7
+  },
+  "orientation": null
+}

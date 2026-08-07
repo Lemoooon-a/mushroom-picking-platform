@@ -171,7 +171,7 @@ class AxisState:
 
 @dataclass(frozen=True)
 class RotaryJointEnableStatus:
-    """三个保持姿态旋转关节的真实使能状态快照。"""
+    """三个旋转关节的协议/设备使能状态；不证明机械保持力矩。"""
 
     shoulder: bool | None
     elbow: bool | None
@@ -194,6 +194,8 @@ class MotionCommandResult:
     position_error: float | None
     error_code: MotionErrorCode | None
     message: str
+    stop_method: str | None = None
+    command_submitted: bool | None = None
 
     def __post_init__(self) -> None:
         expected = _RESULT_SEMANTICS[self.status]
@@ -209,6 +211,47 @@ class MotionCommandResult:
 
 
 @dataclass(frozen=True)
+class StopReport:
+    """一次协调停止中每个轴的最终结果。"""
+
+    results: tuple[MotionCommandResult, ...] = ()
+
+    @property
+    def attempted_axes(self) -> frozenset[AxisName]:
+        return frozenset(item.axis for item in self.results)
+
+    @property
+    def submitted_axes(self) -> frozenset[AxisName]:
+        return frozenset(
+            item.axis for item in self.results if item.command_submitted is True
+        )
+
+    @property
+    def methods(self) -> dict[AxisName, str]:
+        return {
+            item.axis: item.stop_method
+            for item in self.results
+            if item.stop_method is not None
+        }
+
+    @property
+    def confirmed_axes(self) -> frozenset[AxisName]:
+        return frozenset(
+            item.axis
+            for item in self.results
+            if item.status is MotionCommandStatus.ABORTED
+        )
+
+    @property
+    def failed_axes(self) -> frozenset[AxisName]:
+        return self.attempted_axes - self.confirmed_axes
+
+    @property
+    def all_confirmed(self) -> bool:
+        return bool(self.results) and not self.failed_axes
+
+
+@dataclass(frozen=True)
 class MultiAxisCommandResult:
     group_id: str
     status: MotionCommandStatus
@@ -216,6 +259,7 @@ class MultiAxisCommandResult:
     accepted: bool
     completed: bool | None
     message: str
+    stop_report: StopReport | None = None
 
     def __post_init__(self) -> None:
         if not self.results:
@@ -297,4 +341,5 @@ __all__ = [
     "MultiAxisCommandResult",
     "MultiAxisTarget",
     "RotaryJointEnableStatus",
+    "StopReport",
 ]

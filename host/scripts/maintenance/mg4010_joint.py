@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""MG4010 Shoulder/Elbow backend maintenance.
-
-The 0x81 operation is named software stop and is not a power-removal command.
-"""
+"""MG4010 Shoulder/Elbow backend maintenance."""
 
 from __future__ import annotations
 
@@ -54,18 +51,23 @@ def build_parser() -> argparse.ArgumentParser:
     move.add_argument("--execute", action="store_true")
     move.add_argument("--confirm-motion", action="store_true")
 
-    stop = commands.add_parser("software-stop")
+    stop = commands.add_parser("protocol-stop-0x81")
     stop.add_argument("--joint", choices=tuple(JOINT_CONFIGS), required=True)
     stop.add_argument("--execute", action="store_true")
-    stop.add_argument("--confirm-software-stop", action="store_true")
+    stop.add_argument("--confirm-free-motion-risk", action="store_true")
     return parser
 
 
 def _validate_confirmations(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     if args.command == "move" and args.execute != args.confirm_motion:
         parser.error("move requires --execute and --confirm-motion")
-    if args.command == "software-stop" and args.execute != args.confirm_software_stop:
-        parser.error("software-stop requires --execute and --confirm-software-stop")
+    if (
+        args.command == "protocol-stop-0x81"
+        and args.execute != args.confirm_free_motion_risk
+    ):
+        parser.error(
+            "protocol-stop-0x81 requires --execute and --confirm-free-motion-risk"
+        )
 
 
 def _joint(runtime: object, name: str):
@@ -122,7 +124,7 @@ def _print_diagnostic_logical_angle(joint: object, *, emit=print) -> None:
 
 def run(args: argparse.Namespace, *, runtime_factory=None, emit=print) -> int:
     runtime_factory = runtime_factory or create_configured_runtime
-    write = args.command in ("move", "software-stop") and args.execute
+    write = args.command in ("move", "protocol-stop-0x81") and args.execute
     runtime = runtime_factory(RuntimeMode.MOTION if write else RuntimeMode.READ_ONLY)
     joint = _joint(runtime, args.joint)
 
@@ -135,8 +137,11 @@ def run(args: argparse.Namespace, *, runtime_factory=None, emit=print) -> int:
             f"velocity={args.velocity_deg_s} deg/s; no CAN command was sent"
         )
         return 0
-    if args.command == "software-stop" and not args.execute:
-        emit(f"preview joint={args.joint} software stop (0x81); no CAN command was sent")
+    if args.command == "protocol-stop-0x81" and not args.execute:
+        emit(
+            f"preview joint={args.joint} raw protocol stop (0x81); "
+            "holding torque may be removed; no CAN command was sent"
+        )
         return 0
 
     with runtime:
@@ -173,9 +178,12 @@ def run(args: argparse.Namespace, *, runtime_factory=None, emit=print) -> int:
                 "is not implied"
             )
         else:
-            emit(f"sending joint={args.joint} software stop (0x81)")
-            joint.stop()
-            emit("software stop (0x81) accepted")
+            emit(
+                f"sending joint={args.joint} raw protocol stop (0x81); "
+                "holding torque may be removed"
+            )
+            joint.driver.protocol_stop_0x81()
+            emit("raw protocol stop (0x81) accepted")
     return 0
 
 

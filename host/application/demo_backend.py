@@ -58,6 +58,10 @@ class DemoFlowApplicationBackend:
     def execute_base_plan(self, plan: object) -> object:
         return self.flow.execute_plan(plan)
 
+    @property
+    def last_stop_report(self) -> object | None:
+        return getattr(self.flow, "last_stop_report", None)
+
     def return_to_startup(self) -> object:
         return self.flow.return_to_startup()
 

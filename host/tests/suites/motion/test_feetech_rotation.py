@@ -124,6 +124,41 @@ class AxisTests(unittest.TestCase):
         self.assertEqual(feedback.load_raw, 0x5678)
         self.assertTrue(feedback.moving)
 
+    def test_stop_reads_feedback_then_holds_current_position(self) -> None:
+        data = bytes.fromhex("a0 0f 34 12 78 56 78 1e 01 00")
+        bus = FakeBus(data)
+        axis = FeetechRotationAxis(bus, make_config())  # type: ignore[arg-type]
+
+        held_position = axis.stop()
+
+        self.assertAlmostEqual(held_position, 0.0)
+        self.assertEqual(bus.last_read, (1, 0x38, 10))
+        self.assertEqual(
+            bus.writes,
+            [(1, 0x2A, bytes.fromhex("a0 0f 00 00 e8 03"), True)],
+        )
+        self.assertFalse(any(address == 0x28 for _, address, _, _ in bus.writes))
+
+    def test_stop_does_not_write_when_feedback_position_is_invalid(self) -> None:
+        data = bytes.fromhex("d0 07 00 00 00 00 78 1e 01 00")
+        bus = FakeBus(data)
+        axis = FeetechRotationAxis(bus, make_config())  # type: ignore[arg-type]
+
+        with self.assertRaises(FeetechRotationPositionError):
+            axis.stop()
+
+        self.assertEqual(bus.writes, [])
+
+    def test_stop_does_not_write_when_feedback_reports_device_error(self) -> None:
+        data = bytes.fromhex("a0 0f 00 00 00 00 78 1e 00 07")
+        bus = FakeBus(data)
+        axis = FeetechRotationAxis(bus, make_config())  # type: ignore[arg-type]
+
+        with self.assertRaisesRegex(Exception, "device error 7"):
+            axis.stop()
+
+        self.assertEqual(bus.writes, [])
+
 
 if __name__ == "__main__":
     unittest.main()

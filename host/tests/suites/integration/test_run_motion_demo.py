@@ -88,7 +88,7 @@ def _descriptors() -> dict[AxisName, AxisDescriptor]:
             capabilities=AxisCapabilities(
                 query_state=True,
                 move_absolute=True,
-                stop=axis is not AxisName.ROTATION,
+                stop=True,
                 reference_home=linear,
                 configurable_velocity=axis is not AxisName.ROTATION,
                 configurable_acceleration=linear,
@@ -139,12 +139,13 @@ def _axis_state(
     homed: bool | None,
     valid: bool = True,
     enabled: bool = True,
+    busy: bool | None = False,
 ) -> AxisState:
     return AxisState(
         axis=axis,
         connected=True,
         enabled=enabled,
-        busy=False,
+        busy=busy,
         homed=homed,
         position_valid=valid,
         current_position=position if valid else None,
@@ -371,19 +372,6 @@ class _FakeController:
 
     def stop(self, axis: AxisName) -> MotionCommandResult:
         self.log.append(f"stop:{axis.value}")
-        if axis is AxisName.ROTATION:
-            return MotionCommandResult(
-                command_id="rotation-stop",
-                axis=axis,
-                status=MotionCommandStatus.REJECTED,
-                accepted=False,
-                completed=False,
-                target_position=0.0,
-                final_position=None,
-                position_error=None,
-                error_code=MotionErrorCode.UNSUPPORTED_COMMAND,
-                message="unsupported",
-            )
         return MotionCommandResult(
             command_id=f"stop-{axis.value}",
             axis=axis,
@@ -543,6 +531,85 @@ class StartupExecutionTests(unittest.TestCase):
         )
         self.assertTrue(flow.startup_fk_valid)
 
+    def test_startup_reuses_verified_stage_state_without_second_read(self) -> None:
+        runtime = _FakeRuntime()
+        flow, _output = _flow(runtime, execute=True)
+        original_get_axis_states = runtime.controller.get_axis_states
+        reads_after_wait = 0
+
+        def transient_busy_on_second_read(axes=None):
+            nonlocal reads_after_wait
+            states = original_get_axis_states(axes)
+            if "wait-group" not in runtime.log:
+                return states
+            reads_after_wait += 1
+            if reads_after_wait != 2:
+                return states
+            return tuple(
+                _axis_state(
+                    item.axis,
+                    item.current_position,
+                    homed=item.homed,
+                    busy=True if item.axis is AxisName.SHOULDER else item.busy,
+                )
+                for item in states
+            )
+
+        runtime.controller.get_axis_states = transient_busy_on_second_read  # type: ignore[method-assign]
+        flow.startup()
+
+        self.assertEqual(reads_after_wait, 1)
+        self.assertTrue(flow.startup_fk_valid)
+        self.assertIsNotNone(flow.virtual_state)
+
+    def test_startup_accepts_transient_busy_after_controller_confirmed_arrival(self) -> None:
+        runtime = _FakeRuntime()
+        flow, _output = _flow(runtime, execute=True)
+        original_get_axis_states = runtime.controller.get_axis_states
+
+        def busy_on_first_post_wait_read(axes=None):
+            states = original_get_axis_states(axes)
+            if "wait-group" not in runtime.log:
+                return states
+            return tuple(
+                _axis_state(
+                    item.axis,
+                    item.current_position,
+                    homed=item.homed,
+                    busy=True if item.axis is AxisName.SHOULDER else item.busy,
+                )
+                for item in states
+            )
+
+        runtime.controller.get_axis_states = busy_on_first_post_wait_read  # type: ignore[method-assign]
+        flow.startup()
+
+        self.assertTrue(flow.startup_fk_valid)
+        self.assertFalse(flow.motion_interrupted)
+
+    def test_failure_reports_the_active_stage_instead_of_the_last_stage(self) -> None:
+        runtime = _FakeRuntime()
+        flow, output = _flow(runtime, execute=True)
+        flow.startup()
+        original_wait_group = runtime.controller.wait_group
+
+        def fail_transit(handle, *, timeout_s=None):
+            result = original_wait_group(handle, timeout_s=timeout_s)
+            return MultiAxisCommandResult(
+                group_id=result.group_id,
+                status=MotionCommandStatus.TIMEOUT,
+                results=result.results,
+                accepted=True,
+                completed=False,
+                message="transit timeout",
+            )
+
+        runtime.controller.wait_group = fail_transit  # type: ignore[method-assign]
+
+        self.assertFalse(flow.move(200.0, 250.0, 120.0, 0.0))
+        self.assertTrue(any(line.startswith("TRANSIT failed:") for line in output))
+        self.assertFalse(any(line.startswith("LOWER failed:") for line in output))
+
     def test_home_fault_or_timeout_never_runs_later_steps(self) -> None:
         cases = (
             (MotionCommandStatus.FAULT, MotionCommandStatus.ARRIVED, "z"),
@@ -600,6 +667,17 @@ class StartupExecutionTests(unittest.TestCase):
         )
         self.assertTrue(flow.startup_fk_valid)
 
+    def test_execute_stop_attempts_rotation_position_hold(self) -> None:
+        runtime = _FakeRuntime()
+        flow, _output = _flow(runtime, execute=True)
+
+        flow.stop()
+
+        self.assertEqual(
+            [item for item in runtime.log if item.startswith("stop:")],
+            [f"stop:{axis.value}" for axis in AxisName],
+        )
+
     def test_cli_suction_and_joint_commands_and_quit_lifecycle(self) -> None:
         runtime = _FakeRuntime()
         flow, output = _flow(runtime, execute=True)
@@ -629,6 +707,27 @@ class StartupExecutionTests(unittest.TestCase):
         self.assertTrue(runtime.controller.rotary_enabled)
         self.assertTrue(any("Disabling joint torque" in line for line in output))
         self.assertTrue(any("remain enabled" in line for line in output))
+
+    def test_cli_return_alias_uses_return_to_startup_flow(self) -> None:
+        runtime = _FakeRuntime()
+        flow, output = _flow(runtime, execute=True)
+        flow.startup()
+        runtime.log.clear()
+
+        with patch("builtins.input", side_effect=["return", "quit"]):
+            flow.command_loop(_application_controller(runtime, flow))
+
+        self.assertTrue(any(line == "Return-to-startup plan:" for line in output))
+        self.assertFalse(any(item.startswith("submit:") for item in runtime.log))
+
+    def test_interrupted_move_recovery_message_uses_return_command(self) -> None:
+        runtime = _FakeRuntime()
+        flow, _output = _flow(runtime, execute=True)
+        flow.startup()
+        flow.motion_interrupted = True
+
+        with self.assertRaisesRegex(DemoFlowError, 'then "return"'):
+            flow.require_base_motion_ready()
 
     def test_cli_workspace_and_outside_move_reject_without_motion_command(self) -> None:
         runtime = _FakeRuntime()
@@ -726,6 +825,10 @@ class DemoPlanningTests(unittest.TestCase):
         runtime.log.clear()
         stages = flow.plan_to_base_pose(200.0, 250.0, 120.0, 0.0)
         self.assertEqual(tuple(stage.name for stage in stages), ("TRANSIT", "LOWER"))
+        self.assertEqual(
+            tuple(item.axis for item in stages[-1].multi_axis_target.targets),
+            (AxisName.Z,),
+        )
         self.assertEqual(
             sum(item.startswith("validate:") for item in runtime.log),
             2,

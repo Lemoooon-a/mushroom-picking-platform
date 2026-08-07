@@ -47,7 +47,10 @@ Camera frame 坐标，也不支持任意 roll/pitch。
 `plan_to_base_pose()` 在调用 `BaseFrameRobotBackend` 前先调用
 `TrayWorkspace.require_xyz_allowed()`。越界时不会读取规划状态、调用 IK、调用 transition planner
 或提交硬件命令。`move_to_base_pose()` 必须先调用同一个 `plan_to_base_pose()`，再把得到的计划交给
-`execute_base_plan()`；执行入口不重新解算，也没有第二套门限。
+`execute_base_plan()`；执行入口不重新解算。后端返回字面值 `False` 表示计划未成功执行，
+应用控制器会将其转换为 `BaseMotionExecutionError`，调用方不得继续报告成功或执行后续抓取阶段。
+到位和静止稳定窗由统一控制器确认，阶段后的状态快照不再用单次 `busy` 样本推翻已确认的
+`ARRIVED`；后续阶段提交仍执行忙碌保护。
 
 `plan_base_target(BaseToolTarget, enforce_tray_workspace=...)` 是 Robot Service 和 PickPlanner 的统一值对象入口。只有已知的 pre-grasp/retreat 中间高位阶段可设置 `False`；这不会绕过 Base solver、OffsetWorkspace、轴/关节限位或 RobotMotionEnvelope。
 

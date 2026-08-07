@@ -18,6 +18,7 @@ from motion.unified_protocol import (
     AxisState,
     MotionCommandResult,
     MultiAxisCommandResult,
+    StopReport,
 )
 
 
@@ -92,7 +93,8 @@ def format_command_result(result: MotionCommandResult) -> str:
         f"accepted={result.accepted} completed={result.completed} "
         f"target={result.target_position:.6f} "
         f"final={result.final_position} error={result.position_error} "
-        f"error_code={error_code} message={result.message!r}"
+        f"error_code={error_code} stop_method={result.stop_method} "
+        f"command_submitted={result.command_submitted} message={result.message!r}"
     )
 
 
@@ -162,10 +164,12 @@ def best_effort_stop_axes_once(
     axes: Iterable[AxisName],
     *,
     emit: Callable[[str], None] = print,
-) -> None:
+    prior: StopReport | None = None,
+) -> StopReport:
     """对每个可 stop 轴最多调用一次统一 software stop，并吞掉 stop 自身异常。"""
 
-    attempted: set[AxisName] = set()
+    results = list(prior.results if prior is not None else ())
+    attempted: set[AxisName] = {item.axis for item in results}
     for axis in axes:
         if axis in attempted:
             continue
@@ -183,6 +187,8 @@ def best_effort_stop_axes_once(
             emit(f"axis={axis.value}: best-effort software stop failed: {exc}")
         else:
             emit(f"best-effort software stop: {format_command_result(result)}")
+            results.append(result)
+    return StopReport(tuple(results))
 
 
 def positive_float(value: str) -> float:

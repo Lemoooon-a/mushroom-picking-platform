@@ -111,25 +111,24 @@ class MG4010MaintenanceTests(unittest.TestCase):
         runtime.elbow_joint.command_position.assert_called_once()
 
     @patch("scripts.maintenance.mg4010_joint.create_configured_runtime")
-    def test_software_stop_is_one_0x81_semantic_call(self, create) -> None:
+    def test_raw_protocol_stop_requires_explicit_risk_confirmation(self, create) -> None:
         runtime = self.runtime()
         create.return_value = runtime
         output = io.StringIO()
         with redirect_stdout(output):
             self.assertEqual(main([
-                "software-stop", "--joint", "shoulder", "--execute", "--confirm-software-stop"
+                "protocol-stop-0x81", "--joint", "shoulder", "--execute",
+                "--confirm-free-motion-risk"
             ]), 0)
-        runtime.shoulder_joint.stop.assert_called_once_with()
-        self.assertIn("software stop (0x81)", output.getvalue())
-        self.assertNotIn("emergency", output.getvalue().lower())
-        self.assertNotIn("disabled", output.getvalue().lower())
-        self.assertNotIn("torque", output.getvalue().lower())
+        runtime.shoulder_joint.driver.protocol_stop_0x81.assert_called_once_with()
+        self.assertIn("raw protocol stop (0x81)", output.getvalue())
+        self.assertIn("holding torque may be removed", output.getvalue())
 
     @patch("scripts.maintenance.mg4010_joint.create_configured_runtime")
     def test_confirmation_gate_and_no_disable_option(self, create) -> None:
         with redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
-                main(["software-stop", "--joint", "elbow", "--execute"])
+                main(["protocol-stop-0x81", "--joint", "elbow", "--execute"])
             with self.assertRaises(SystemExit):
                 main(["--disable"])
         create.assert_not_called()

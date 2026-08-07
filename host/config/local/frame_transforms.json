@@ -2,14 +2,14 @@
   "schema_version": 1,
   "base_T_slide_zero": {
     "translation_mm": [
-      -49.346054046664335,
-      112.7679332328427,
-      420.0
+      -55.49220745294622,
+      129.82095958735334,
+      440.0
     ],
     "rotation_rpy_deg": [
       0.0,
       0.0,
-      0.10163194444445622
+      0.11347569444446039
     ]
   },
   "tool_T_camera": {
@@ -29,11 +29,26 @@
     "tool_camera_method": "measured_mount_center_plus_rgb_optical_center_offset",
     "tool_camera_frame_id": "camera_color_optical_frame",
     "tool_camera_validated": false,
-    "base_slide_calibrated_at": "2026-08-04T08:48:17.686987+00:00",
-    "base_slide_calibration_method": "recomputed_from_recorded_axis_pose",
+    "base_slide_calibrated_at": "2026-08-06T13:07:50.631576+00:00",
+    "base_slide_calibration_method": "single_known_base_tcp_pose",
     "base_slide_recomputed_at": "2026-08-04",
     "validated": true,
-    "git_commit": "dd4d420974273ff955f36ab570cc45613df48716",
+    "active_transform_override": {
+      "reason": "operator_requested_zero_base_slide_yaw",
+      "previous_rotation_rpy_deg": [
+        0.0,
+        0.0,
+        0.10163194444445622
+      ],
+      "active_rotation_rpy_deg": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "applied_at": "2026-08-06",
+      "hardware_revalidation_required": true
+    },
+    "git_commit": "a6c2e46d8c19fdd2e259bc8b6f717599f73b7ccc",
     "fk_provider": "kinematics.five_axis:load_local_five_axis_kinematics",
     "fk_geometry": {
       "link_lengths_mm": [
@@ -78,15 +93,15 @@
     "captured_axis_positions": {
       "slide_mm": 0.0,
       "z_mm": 0.0,
-      "shoulder_deg": 32.99995833333333,
-      "elbow_deg": -89.00002777777779,
-      "rotation_deg": 55.8984375
+      "shoulder_deg": 31.99980555555554,
+      "elbow_deg": -91.0,
+      "rotation_deg": 58.88671875
     },
     "reference_base_T_tool": {
       "translation_mm": [
-        510.0,
+        490.0,
         0.0,
-        180.0
+        200.0
       ],
       "rotation_rpy_deg": [
         0.0,
@@ -96,39 +111,69 @@
     },
     "computed_base_T_slide_zero": {
       "translation_mm": [
-        -49.346054046664335,
-        112.7679332328427,
-        420.0
+        -55.49220745294622,
+        129.82095958735334,
+        440.0
       ],
       "rotation_rpy_deg": [
         0.0,
         -0.0,
-        0.10163194444445622
+        0.11347569444446039
       ]
     },
     "computed_slide_zero_T_base": {
       "translation_mm": [
-        49.145947400669286,
-        -112.85528640552836,
-        -420.0
+        55.2349851979543,
+        -129.9306085815187,
+        -440.0
       ],
       "rotation_rpy_deg": [
         0.0,
         -0.0,
-        -0.10163194444445622
+        -0.11347569444446039
       ]
     },
     "calibration_checks": {
-      "position_residual_mm": 5.688254509362935e-14,
+      "position_residual_mm": 5.818755025955795e-14,
       "yaw_residual_deg": 0.0,
       "estimated_roll_deg": 0.0,
       "estimated_pitch_deg": -0.0,
-      "estimated_yaw_deg": 0.10163194444445622,
+      "estimated_yaw_deg": 0.11347569444446039,
       "expected_yaw_deg": 0.0,
-      "yaw_alignment_error_deg": 0.10163194444444912,
+      "yaw_alignment_error_deg": 0.11347569444447458,
       "valid": true,
       "warnings": []
     },
-    "operator_notes": "Recomputed from the recorded axis pose with reference Base TCP z changed from 65 mm to 180 mm and Tool/TCP offset changed from -180 mm to -240 mm."
+    "operator_notes": "Base-Slide recalibration at TCP [490, 0, 200] mm, yaw 0 deg; joints [32, -91, 59] deg",
+    "base_slide_validated_at": "2026-08-06T13:15:56.744879+00:00",
+    "validation_fk_provider": "kinematics.five_axis:load_local_five_axis_kinematics",
+    "validation_axis_positions": {
+      "slide_mm": 99.99,
+      "z_mm": -20.0,
+      "shoulder_deg": 31.999763888888875,
+      "elbow_deg": -91.00012500000001,
+      "rotation_deg": 58.88671875
+    },
+    "validation_reference_base_T_tool": {
+      "translation_mm": [
+        490.0,
+        100.0,
+        180.0
+      ],
+      "rotation_rpy_deg": [
+        0.0,
+        -0.0,
+        0.0
+      ]
+    },
+    "validation_errors": {
+      "position_xyz_mm": [
+        -0.19887405311453676,
+        -0.011043729483233733,
+        0.0
+      ],
+      "position_mm": 0.19918045326563155,
+      "yaw_deg": -0.00016666666667219943
+    }
   }
 }

@@ -5,8 +5,8 @@
   "x_max_mm": 480.0,
   "y_min_mm": 20.0,
   "y_max_mm": 700.0,
-  "z_min_mm": 0.0,
-  "z_max_mm": 180.0,
+  "z_min_mm": 10.0,
+  "z_max_mm": 200.0,
   "boundary_tolerance_mm": 0.000001,
   "metadata": {
     "validated": true,

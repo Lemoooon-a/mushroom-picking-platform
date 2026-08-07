@@ -59,7 +59,7 @@ class UpperMotionSmokeTests(unittest.TestCase):
         self.assertTrue(matrix["slide"].home)
         self.assertFalse(matrix["shoulder"].arrival_event)
         self.assertTrue(matrix["rotation"].disable)
-        self.assertFalse(matrix["rotation"].stop)
+        self.assertTrue(matrix["rotation"].stop)
         self.assertTrue(matrix["vacuum"].arrival_event)
 
 

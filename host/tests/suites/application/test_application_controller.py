@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from application.controller import (
+    BaseMotionExecutionError,
     MushroomRobotController,
     UnsupportedToolGoalOrientationError,
 )
@@ -23,6 +24,7 @@ class FakeBaseBackend:
         self.solver_calls = 0
         self.planner_calls = 0
         self.submit_calls = 0
+        self.execute_result: object = "moved"
 
     def startup(self) -> str:
         self.calls.append(("startup",))
@@ -39,10 +41,10 @@ class FakeBaseBackend:
         self.planner_calls += 1
         return "planned"
 
-    def execute_base_plan(self, plan: object) -> str:
+    def execute_base_plan(self, plan: object) -> object:
         self.calls.append(("execute", plan))
         self.submit_calls += 1
-        return "moved"
+        return self.execute_result
 
     def return_to_startup(self) -> str:
         self.calls.append(("return",))
@@ -297,6 +299,23 @@ class ApplicationControllerTests(unittest.TestCase):
             [call[0] for call in self.backend.calls],
             ["startup", "return", "preflight"],
         )
+
+    def test_literal_false_execution_result_is_an_explicit_failure(self) -> None:
+        controller = MushroomRobotController(
+            base_backend=self.backend,
+            tray_workspace=self.workspace,
+        )
+        self.backend.execute_result = False
+
+        with self.assertRaisesRegex(
+            BaseMotionExecutionError,
+            "plan execution failed",
+        ):
+            controller.execute_base_plan("plan")
+        with self.assertRaises(BaseMotionExecutionError):
+            controller.move_to_base_pose(1, 2, 3, 4)
+
+        self.assertEqual(self.backend.submit_calls, 2)
 
     def test_validated_vision_target_outside_workspace_never_calls_backend(self) -> None:
         resolver, provider = self.resolver(validated=True)
