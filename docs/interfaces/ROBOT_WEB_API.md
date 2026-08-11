@@ -57,7 +57,7 @@ cd /Users/sd/Projects/mushroom-picking-platform/host
 | 方法 | 路径 | Service 调用 | 说明 |
 | --- | --- | --- | --- |
 | GET | `/api/health` | 无 | 仅表示 Web 进程存活 |
-| GET | `/api/status` | `status()` | 返回真实 Service 状态 |
+| GET | `/api/status` | `status()` | 返回 Service 状态；仅空闲 runtime 附带实时 backend 状态 |
 | GET | `/api/capabilities` | `capabilities` | 返回当前能力门禁 |
 | POST | `/api/startup` | `startup()` | 显式启动 Service |
 | POST | `/api/shutdown` | `shutdown()` | 每个进程最多调用 Service 一次 |
@@ -68,14 +68,29 @@ cd /Users/sd/Projects/mushroom-picking-platform/host
 | POST | `/api/axes/{axis}/move-relative` | `move_axis_relative()` | raw/manual 相对运动 |
 | POST | `/api/motion/base/plan` | `plan_base_target()` | 只规划，不运动 |
 | POST | `/api/motion/base/execute` | `move_base_target()` | 通过既有完整 Base 规划/执行链 |
+| GET | `/api/motion/base/current` | `get_current_tcp_pose()` | 读取五轴位置并通过现有 FK 返回 Base-frame TCP |
+| POST | `/api/motion/return-to-startup` | `return_to_startup()` | 返回已配置的 startup-safe pose；仅 execute/READY |
 | POST | `/api/joints/enable` | `enable_joints()` | 保留既有 holding 状态复核 |
 | POST | `/api/joints/disable` | `disable_joints()` | 保留既有状态转换 |
 | POST | `/api/suction` | `suction()` | `grip`、`release` 或 `idle` |
 | POST | `/api/vision/observe` | `request_observation()` | 无请求体 |
+| POST | `/api/vision/plan` | `request_observation()` → `resolve_camera_point()` → `plan_base_target()` | 新拍一帧，按 capture 快照转换到 Base 后只规划；不执行运动 |
 | POST | `/api/pick` | `pick()` | 无请求体，使用已加载 GraspProfile |
+| POST | `/api/scan-pick` | `scan_and_pick()` | 无请求体；同步完成固定 8 区域扫描、区域内重复抓取与固定位置放置 |
 
-第一版前端通过 `GET /api/status` 轮询状态。当前没有 WebSocket、后台任务队列、operation
-handle、鉴权、数据库或前端页面。
+`web/` 前端通过 `GET /api/status` 每秒轮询进程级状态。Service 仅在 `READY` 或
+`DISABLED` 读取实时 backend 状态；活动状态和 `FAULT` 的 `backend_status` 为 `null`。
+前端也只在 `READY/DISABLED` 且没有写请求时轮询选中轴，运动期间保留最后显示值并在请求
+结束后刷新。Current TCP 由后端现有正运动学计算，页面初次进入 `READY` 以及 Jog、Return、
+Base Execute 完成后更新；前端不复制运动学。Startup 仅在 `CREATED/SHUTDOWN` 启用，
+Return 仅在 execute/READY 启用。当前没有 WebSocket、后台任务队列、operation handle、
+鉴权或数据库。
+
+`/api/scan-pick` 的成功响应包含 `result`、`total_picked` 和
+`visited_scan_positions`。每个区域记录 `scan_index`、`detected_count`、`picked_count` 与
+`final_reason`。运行时默认从 ignored 的 `host/config/local/scan_pick.json` 读取参数；tracked
+模板 `host/config/examples/scan_pick.json` 不含真实坐标且默认 `validated=false`。配置未确认时
+接口 fail-closed。
 
 ## 4. 请求示例
 
@@ -170,5 +185,34 @@ Base 目标规划或执行：
 
 不接受通配源 `*`。如显式绑定 `0.0.0.0`，必须先确认网络隔离；在增加鉴权前不得暴露公网。
 
-手眼标定、GraspProfile 或真实视觉 producer 不满足门禁时，观察、视觉规划和抓取仍按现有
-Service 语义 fail-closed，Web API 不提供绕过入口。
+抓取相关的手眼标定、GraspProfile 或真实视觉 producer 不满足门禁时，`/api/pick` 和
+`plan_observation()` 仍按现有 Service 语义 fail-closed。仅 `/api/vision/plan` 可把明确标记为
+provisional 的 `tool_T_camera` 用于打印、人工检查和 dry-run Base 规划；该路由没有运动执行
+调用。
+
+## 7. 本机真实视觉只规划联调
+
+`host/config/local/vision_runtime.json` 可配置本机 Vision Gateway Protocol v1 服务。当前本机
+配置使用 `127.0.0.1:9000` 和 `camera_color_optical_frame`。启动时必须显式选择 socket
+gateway；Web API 启动后还要初始化 dry-run 离线规划后端：
+
+```bash
+cd /Users/sd/Projects/mushroom-picking-platform/host
+
+.venv/bin/python scripts/robot_web_api.py \
+  --mode dry-run \
+  --vision-gateway socket \
+  --host 127.0.0.1 \
+  --port 8000
+
+curl -X POST http://127.0.0.1:8000/api/startup
+curl -X POST http://127.0.0.1:8000/api/vision/observe
+curl -X POST http://127.0.0.1:8000/api/vision/plan
+```
+
+`/api/vision/plan` 会重新拍摄一帧，并返回 `request_id`、Camera 点、capture 五轴快照，以及
+Base 下的 `raw_position_mm`、`target_compensation_base_mm` 和最终 `position_mm`。最终点用于
+现有 Base planner；响应还包含 `tool_T_camera` 的 provisional/validated 状态、完整计划和最终
+五轴解。成功路径只调用规划接口；不会调用 `move_base_target()`、`execute_base_plan()`、
+`/api/pick` 或任何吸盘接口。422 规划错误额外返回现有 `rejection_reason`（例如
+`outside_tray_workspace`、`outside_offset_workspace` 或 `planar_unreachable`）。

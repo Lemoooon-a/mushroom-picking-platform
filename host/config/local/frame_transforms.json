@@ -28,7 +28,16 @@
     "tool_camera_source": "manual_measurement",
     "tool_camera_method": "measured_mount_center_plus_rgb_optical_center_offset",
     "tool_camera_frame_id": "camera_color_optical_frame",
-    "tool_camera_validated": false,
+    "tool_camera_validated": true,
+    "tool_camera_validated_at": "2026-08-11T07:04:55Z",
+    "tool_camera_validation_method": "operator_confirmation_for_plan_test",
+    "tool_camera_target_compensation_base_mm": [
+      -10.0,
+      10.0,
+      -10.0
+    ],
+    "tool_camera_target_compensation_source": "operator_measured_tcp_bias",
+    "tool_camera_target_compensation_set_at": "2026-08-11T07:25:37Z",
     "base_slide_calibrated_at": "2026-08-06T13:07:50.631576+00:00",
     "base_slide_calibration_method": "single_known_base_tcp_pose",
     "base_slide_recomputed_at": "2026-08-04",

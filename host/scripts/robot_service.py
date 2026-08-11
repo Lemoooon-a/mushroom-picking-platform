@@ -34,6 +34,7 @@ from application.tray_workspace import TrayWorkspace  # noqa: E402
 from calibration.hand_eye import hand_eye_from_frame_document  # noqa: E402
 from config.frame_transforms import load_frame_transforms_document  # noqa: E402
 from config.project.grasp_strategy import load_validated_grasp_profile  # noqa: E402
+from config.project.scan_pick import load_validated_scan_pick_profile  # noqa: E402
 from config.project.vision_runtime import (  # noqa: E402
     DEFAULT_VISION_RUNTIME_CONFIG, VisionRuntimeConfig, load_vision_runtime_config,
 )
@@ -52,6 +53,7 @@ DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "local" / "frame_transforms.json"
 DEFAULT_TRAY_CONFIG = HOST_ROOT / "config" / "local" / "tray_workspace.json"
 DEFAULT_VISION_CONFIG = HOST_ROOT / "config" / "local" / "vision_runtime.json"
 DEFAULT_GRASP_CONFIG = HOST_ROOT / "config" / "local" / "grasp_profile.json"
+DEFAULT_SCAN_PICK_CONFIG = HOST_ROOT / "config" / "local" / "scan_pick.json"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tray-workspace-config", type=Path, default=DEFAULT_TRAY_CONFIG)
     parser.add_argument("--vision-runtime-config", type=Path, default=DEFAULT_VISION_CONFIG)
     parser.add_argument("--grasp-profile-config", type=Path, default=DEFAULT_GRASP_CONFIG)
+    parser.add_argument("--scan-pick-config", type=Path, default=DEFAULT_SCAN_PICK_CONFIG)
     parser.add_argument("--vision-gateway", choices=("fake", "socket"), default="fake")
     parser.add_argument("--fake-position", nargs=3, type=float, metavar=("X", "Y", "Z"))
     parser.add_argument("--fake-confidence", type=float, default=0.95)
@@ -128,6 +131,14 @@ def create_service(args: argparse.Namespace, *, emit: Callable[[str], None] = pr
             profile = load_validated_grasp_profile(args.grasp_profile_config)
         except ValueError as exc:
             emit(f"Grasp profile unavailable: {exc}")
+    scan_pick_profile = None
+    if args.scan_pick_config.exists():
+        try:
+            scan_pick_profile = load_validated_scan_pick_profile(
+                args.scan_pick_config
+            )
+        except ValueError as exc:
+            emit(f"Scan-pick profile unavailable: {exc}")
     recorder = None
     if args.record_jsonl is not None:
         recorder = JsonLinesExecutionRecorder(args.record_jsonl, repository_root=REPOSITORY_ROOT)
@@ -137,9 +148,11 @@ def create_service(args: argparse.Namespace, *, emit: Callable[[str], None] = pr
         workflow=workflow,
         mode=mode,
         grasp_profile=profile,
+        scan_pick_profile=scan_pick_profile,
         recorder=recorder,
         activate_controller_on_startup=mode is not RobotServiceMode.READ_ONLY,
         vision_gateway_description=description,
+        allow_dry_run_state_advance=mode is RobotServiceMode.DRY_RUN,
     )
 
 

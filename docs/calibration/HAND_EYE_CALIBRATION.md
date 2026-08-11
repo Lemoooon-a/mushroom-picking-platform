@@ -49,6 +49,7 @@ class HandEyeCalibration:
     source: str
     method: str
     created_at: str | None = None
+    target_compensation_base_mm: tuple[float, float, float] = (0, 0, 0)
 ```
 
 状态严格区分：
@@ -66,13 +67,20 @@ class HandEyeCalibration:
     "tool_camera_source": "...",
     "tool_camera_method": "...",
     "tool_camera_set_at": "...",
-    "tool_camera_validated": false
+    "tool_camera_validated": false,
+    "tool_camera_target_compensation_base_mm": [0, 0, 0]
   }
 }
 ```
 
 上例仅说明 schema；不得把全零或 identity 当作真实外参。`metadata.validated` 是
 Base–Slide-zero 状态，不能替代 `tool_camera_validated`。
+
+`tool_camera_target_compensation_base_mm` 是可选的 Base-frame 目标平移补偿，缺失时严格等于
+`[0, 0, 0]`。它在完成 Camera→Base 变换后相加，不随 Camera 或 Tool 姿态旋转，也不修改
+`tool_T_camera` 外参或目标 yaw。配置必须是三个有限数；例如 `[-10, 10, -10]` 表示最终
+Base 目标 X 减少 10 mm、Y 增加 10 mm、Z 降低 10 mm。完整抓取的 approach/contact/retreat
+偏置在该补偿之后应用。
 
 ## 5. Provisional 录入
 

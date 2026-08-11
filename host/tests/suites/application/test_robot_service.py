@@ -125,6 +125,7 @@ class RobotServiceTests(unittest.TestCase):
         *,
         validated: bool = False,
         states: tuple[AxisState, ...] | None = None,
+        compensation: tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> tuple[MushroomRobotService, _PoseProvider, Mock, HandEyeCalibration]:
         base_T_tool = RigidTransform.from_xyz_yaw_deg(
             x_mm=100.0,
@@ -145,6 +146,7 @@ class RobotServiceTests(unittest.TestCase):
             validated=validated,
             source="manual_measurement",
             method="measured_mount_center_plus_rgb_optical_center_offset",
+            target_compensation_base_mm=compensation,
         )
         provider = _PoseProvider(base_T_tool)
         resolver = VisionTargetResolver(
@@ -180,6 +182,36 @@ class RobotServiceTests(unittest.TestCase):
         self.assertEqual(self.backend.calls, [])
         with self.assertRaisesRegex(RobotServiceCapabilityError, "read-only"):
             service.plan_base_target(BaseToolTarget(1, 2, 3, 4))
+
+    def test_status_reads_backend_only_when_idle_runtime_is_usable(self) -> None:
+        service = self.service(RobotServiceMode.EXECUTE)
+        service.startup()
+
+        for state in (RobotServiceState.READY, RobotServiceState.DISABLED):
+            with self.subTest(state=state):
+                service.state = state
+                self.backend.calls.clear()
+                status = service.status()
+                self.assertEqual(status.backend_status.backend_status, "ok")
+                self.assertEqual(self.backend.calls, ["status"])
+
+        for state in (
+            RobotServiceState.CREATED,
+            RobotServiceState.STARTING,
+            RobotServiceState.OBSERVING,
+            RobotServiceState.PLANNING,
+            RobotServiceState.EXECUTING,
+            RobotServiceState.FAULT,
+            RobotServiceState.SHUTDOWN,
+        ):
+            with self.subTest(state=state):
+                service.state = state
+                service.fault = "test fault" if state is RobotServiceState.FAULT else None
+                self.backend.calls.clear()
+                status = service.status()
+                self.assertIsNone(status.backend_status)
+                self.assertEqual(status.fault, service.fault)
+                self.assertEqual(self.backend.calls, [])
 
     def test_dry_run_plans_without_submit(self) -> None:
         service = self.service(RobotServiceMode.DRY_RUN)
@@ -296,6 +328,55 @@ class RobotServiceTests(unittest.TestCase):
         ):
             service.plan_observation(object())
 
+    def test_resolve_camera_point_reports_raw_and_compensated_base_points(self) -> None:
+        service, provider, runtime_controller, _ = self.camera_point_service(
+            validated=True,
+            compensation=(-10.0, 10.0, -10.0),
+        )
+
+        result = service.resolve_camera_point(20.0, -15.0, 450.0)
+
+        assert result.raw_base_point_mm is not None
+        for actual, expected in zip(
+            result.raw_base_point_mm,
+            (185.0, 212.5, 44.85),
+            strict=True,
+        ):
+            self.assertAlmostEqual(actual, expected)
+        for actual, expected in zip(
+            result.base_point_mm,
+            (175.0, 222.5, 34.85),
+            strict=True,
+        ):
+            self.assertAlmostEqual(actual, expected)
+        self.assertEqual(
+            result.target_compensation_base_mm,
+            (-10.0, 10.0, -10.0),
+        )
+        self.assertEqual(
+            provider.calls,
+            [RobotAxisState(1.0, -2.0, 3.0, 4.0, 5.0)],
+        )
+        runtime_controller.submit_positions.assert_not_called()
+
+    def test_resolve_camera_point_uses_capture_snapshot_without_axis_read(self) -> None:
+        service, provider, runtime_controller, _ = self.camera_point_service(
+            validated=False
+        )
+        capture_state = RobotAxisState(10.0, -20.0, 30.0, -40.0, 50.0)
+
+        result = service.resolve_camera_point(
+            20.0,
+            -15.0,
+            450.0,
+            capture_axis_state=capture_state,
+        )
+
+        self.assertFalse(result.tool_camera_validated)
+        self.assertEqual(provider.calls, [capture_state])
+        runtime_controller.get_axis_states.assert_not_called()
+        runtime_controller.submit_positions.assert_not_called()
+
     def test_resolve_camera_point_rejects_moving_or_invalid_axis_state(self) -> None:
         service, provider, _, _ = self.camera_point_service(
             states=_axis_states(busy_axis=AxisName.ELBOW)
@@ -316,6 +397,21 @@ class RobotServiceTests(unittest.TestCase):
         ):
             service.resolve_camera_point(1.0, 2.0, 3.0)
         self.assertEqual(provider.calls, [])
+
+    def test_current_tcp_pose_uses_real_axis_state_and_existing_fk(self) -> None:
+        service, provider, runtime_controller, _ = self.camera_point_service()
+
+        pose = service.get_current_tcp_pose()
+
+        self.assertEqual(
+            (pose.x_mm, pose.y_mm, pose.z_mm, pose.yaw_deg, pose.frame_id),
+            (100.0, 200.0, 300.0, 0.0, "base"),
+        )
+        runtime_controller.get_axis_states.assert_called_once_with(tuple(AxisName))
+        self.assertEqual(
+            provider.calls,
+            [RobotAxisState(1.0, -2.0, 3.0, 4.0, 5.0)],
+        )
 
     def test_resolve_camera_point_validates_input_before_hardware_read(self) -> None:
         service, _, runtime_controller, _ = self.camera_point_service()

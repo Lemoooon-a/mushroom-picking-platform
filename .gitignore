@@ -32,6 +32,7 @@ build/
 dist/
 install/
 log/
+node_modules/
 *.egg-info/
 
 # Runtime logs

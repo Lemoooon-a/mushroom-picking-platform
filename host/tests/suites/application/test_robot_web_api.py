@@ -8,9 +8,12 @@ import unittest
 from fastapi.testclient import TestClient
 
 from application.robot_service import RobotServiceStateError
+from application.robot_service import ResolvedCameraPoint
 from application.runtime_state import RobotServiceMode, RobotServiceState
+from application.scan_pick import ScanAndPickResult, ScanPositionResult
 from application.tray_workspace import TargetOutsideTrayWorkspace
 from application.web_api import create_robot_web_app
+from kinematics.frame_chain import RobotAxisState
 from motion.unified_protocol import (
     AxisCapabilities,
     AxisDescriptor,
@@ -19,16 +22,19 @@ from motion.unified_protocol import (
     AxisState,
 )
 from scripts import robot_web_api
+from vision.observation import CaptureMotionState, Vector3, VisionTargetObservation
 
 
 @dataclass(frozen=True)
 class FakeResult:
     operation: str
     completed: bool = True
+    stages: tuple[object, ...] = ()
 
 
 class FakeRobotService:
     def __init__(self) -> None:
+        self.mode = RobotServiceMode.DRY_RUN
         self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
         self.failures: dict[str, Exception] = {}
         self.shutdown_calls = 0
@@ -89,6 +95,20 @@ class FakeRobotService:
         self._record("move_base_target", target)
         return FakeResult("base-execute")
 
+    def get_current_tcp_pose(self):
+        self._record("get_current_tcp_pose")
+        return {
+            "x_mm": 250.0,
+            "y_mm": 200.0,
+            "z_mm": 200.0,
+            "yaw_deg": 0.0,
+            "frame_id": "base",
+        }
+
+    def return_to_startup(self):
+        self._record("return_to_startup")
+        return FakeResult("return-to-startup")
+
     def enable_joints(self):
         self._record("enable_joints")
         return FakeResult("joints-enable")
@@ -103,11 +123,41 @@ class FakeRobotService:
 
     def request_observation(self):
         self._record("request_observation")
-        return FakeResult("observe")
+        return VisionTargetObservation(
+            request_id="capture-000001",
+            frame_id="camera_color_optical_frame",
+            timestamp=100.0,
+            position_mm=Vector3(20.0, -15.0, 450.0),
+            confidence=0.95,
+            target_id=None,
+            orientation=None,
+            capture_axis_state=RobotAxisState(1.0, -2.0, 3.0, 4.0, 5.0),
+            capture_motion_state=CaptureMotionState.STATIONARY,
+        )
+
+    def resolve_camera_point(self, x_mm, y_mm, z_mm, **kwargs):
+        self._record("resolve_camera_point", x_mm, y_mm, z_mm, **kwargs)
+        return ResolvedCameraPoint(
+            camera_point_mm=(x_mm, y_mm, z_mm),
+            base_point_mm=(175.0, 222.5, 34.85),
+            frame_id=kwargs["frame_id"],
+            tool_camera_source="manual_measurement",
+            tool_camera_validated=False,
+            raw_base_point_mm=(185.0, 212.5, 44.85),
+            target_compensation_base_mm=(-10.0, 10.0, -10.0),
+        )
 
     def pick(self):
         self._record("pick")
         return FakeResult("pick")
+
+    def scan_and_pick(self):
+        self._record("scan_and_pick")
+        return ScanAndPickResult(
+            "completed",
+            (ScanPositionResult(1, 2, 2, "no_target"),),
+            2,
+        )
 
 
 class RobotWebApiTests(unittest.TestCase):
@@ -197,18 +247,108 @@ class RobotWebApiTests(unittest.TestCase):
                 (300.0, 400.0, 120.0, 0.0),
             )
 
+        current = self.client.get("/api/motion/base/current")
+        self.assertEqual(current.status_code, 200)
+        self.assertEqual(
+            current.json(),
+            {
+                "x_mm": 250.0,
+                "y_mm": 200.0,
+                "z_mm": 200.0,
+                "yaw_deg": 0.0,
+                "frame_id": "base",
+            },
+        )
+        self.assertEqual(self.service.calls[-1][0], "get_current_tcp_pose")
+
+        returned = self.client.post("/api/motion/return-to-startup")
+        self.assertEqual(returned.status_code, 200)
+        self.assertEqual(returned.json()["operation"], "return-to-startup")
+        self.assertEqual(self.service.calls[-1][0], "return_to_startup")
+
         routes = (
             ("/api/joints/enable", None, "enable_joints"),
             ("/api/joints/disable", None, "disable_joints"),
             ("/api/suction", {"action": "grip"}, "suction"),
             ("/api/vision/observe", None, "request_observation"),
             ("/api/pick", None, "pick"),
+            ("/api/scan-pick", None, "scan_and_pick"),
         )
         for path, body, expected_call in routes:
             response = self.client.post(path, json=body) if body else self.client.post(path)
             self.assertEqual(response.status_code, 200, path)
             self.assertEqual(self.service.calls[-1][0], expected_call)
-        self.assertEqual(self.service.calls[-3][1], ("grip",))
+        suction_call = next(
+            call for call in self.service.calls if call[0] == "suction"
+        )
+        self.assertEqual(suction_call[1], ("grip",))
+
+    def test_vision_plan_observes_resolves_capture_snapshot_and_only_plans(self) -> None:
+        self.service.calls.clear()
+
+        response = self.client.post("/api/vision/plan")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["request_id"], "capture-000001")
+        self.assertEqual(
+            payload["camera"]["position_mm"],
+            {"x": 20.0, "y": -15.0, "z": 450.0},
+        )
+        self.assertEqual(
+            payload["capture_joint_state"],
+            {
+                "slide_mm": 1.0,
+                "z_mm": -2.0,
+                "shoulder_deg": 3.0,
+                "elbow_deg": 4.0,
+                "rotation_deg": 5.0,
+            },
+        )
+        self.assertEqual(
+            payload["base"]["position_mm"],
+            {"x": 175.0, "y": 222.5, "z": 34.85},
+        )
+        self.assertEqual(
+            payload["base"]["raw_position_mm"],
+            {"x": 185.0, "y": 212.5, "z": 44.85},
+        )
+        self.assertEqual(
+            payload["base"]["target_compensation_base_mm"],
+            {"x": -10.0, "y": 10.0, "z": -10.0},
+        )
+        self.assertFalse(payload["base"]["tool_camera_validated"])
+        self.assertTrue(payload["planner"]["succeeded"])
+        self.assertEqual(
+            [call[0] for call in self.service.calls],
+            ["request_observation", "resolve_camera_point", "plan_base_target"],
+        )
+        planned_target = self.service.calls[-1][1][0]
+        self.assertEqual(
+            (
+                planned_target.x_mm,
+                planned_target.y_mm,
+                planned_target.z_mm,
+                planned_target.yaw_deg,
+            ),
+            (175.0, 222.5, 34.85, None),
+        )
+        self.assertFalse(
+            any(call[0] == "move_base_target" for call in self.service.calls)
+        )
+
+    def test_planning_rejection_exposes_existing_stage_reason(self) -> None:
+        self.service.failures["plan_base_target"] = TargetOutsideTrayWorkspace(
+            "target is outside tray"
+        )
+
+        response = self.client.post("/api/vision/plan")
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json()["error"]["rejection_reason"],
+            "outside_tray_workspace",
+        )
 
     def test_invalid_requests_and_axis_return_400(self) -> None:
         invalid_body = self.client.post(
@@ -287,6 +427,8 @@ class RobotWebApiTests(unittest.TestCase):
         schema = self.client.get("/openapi.json")
         self.assertEqual(schema.status_code, 200)
         self.assertIn("/api/status", schema.json()["paths"])
+        self.assertIn("/api/vision/plan", schema.json()["paths"])
+        self.assertIn("/api/scan-pick", schema.json()["paths"])
 
         response = self.client.options(
             "/api/status",

@@ -8,12 +8,22 @@ import threading
 
 from application.controller import MushroomRobotController
 from application.execution_record import ExecutionRecorder, NullExecutionRecorder
-from application.grasp_profile import GraspProfile
+from application.grasp_profile import GraspProfile, GraspYawMode
 from application.motion_target import BaseToolTarget
 from application.ports import _AxisMotionPort
 from application.pick_planner import PickPlan
-from application.pick_workflow import PickOutcome, PickResult, VisionPickWorkflow
+from application.pick_workflow import (
+    NoVisionTarget,
+    PickOutcome,
+    PickResult,
+    VisionPickWorkflow,
+)
 from application.runtime_state import RobotServiceMode, RobotServiceState
+from application.scan_pick import (
+    ScanAndPickResult,
+    ScanPickProfile,
+    ScanPositionResult,
+)
 from calibration.hand_eye import HandEyeCalibrationStatus
 from geometry.rigid_transform import RigidTransform
 from kinematics.frame_chain import RobotAxisState
@@ -100,12 +110,27 @@ class MotionResult:
 
 
 @dataclass(frozen=True)
+class CurrentTcpPose:
+    x_mm: float
+    y_mm: float
+    z_mm: float
+    yaw_deg: float
+    frame_id: str = "base"
+
+
+@dataclass(frozen=True)
 class ResolvedCameraPoint:
     camera_point_mm: tuple[float, float, float]
     base_point_mm: tuple[float, float, float]
     frame_id: str
     tool_camera_source: str
     tool_camera_validated: bool
+    raw_base_point_mm: tuple[float, float, float] | None = None
+    target_compensation_base_mm: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        if self.raw_base_point_mm is None:
+            object.__setattr__(self, "raw_base_point_mm", self.base_point_mm)
 
     @property
     def transform_status(self) -> HandEyeCalibrationStatus:
@@ -124,10 +149,12 @@ class MushroomRobotService:
         workflow: VisionPickWorkflow | None,
         mode: RobotServiceMode,
         grasp_profile: GraspProfile | None = None,
+        scan_pick_profile: ScanPickProfile | None = None,
         axis_motion: _AxisMotionPort | None = None,
         recorder: ExecutionRecorder | None = None,
         activate_controller_on_startup: bool | None = None,
         vision_gateway_description: str = "unavailable",
+        allow_dry_run_state_advance: bool = False,
     ) -> None:
         if not isinstance(controller, MushroomRobotController):
             raise TypeError("controller must be a MushroomRobotController")
@@ -137,11 +164,16 @@ class MushroomRobotService:
             raise TypeError("mode must be a RobotServiceMode")
         if grasp_profile is not None and not isinstance(grasp_profile, GraspProfile):
             raise TypeError("grasp_profile must be a GraspProfile or None")
+        if scan_pick_profile is not None and not isinstance(
+            scan_pick_profile, ScanPickProfile
+        ):
+            raise TypeError("scan_pick_profile must be a ScanPickProfile or None")
         self._axis_motion = axis_motion
         self._controller = controller
         self._workflow = workflow
         self.mode = mode
         self.grasp_profile = grasp_profile
+        self.scan_pick_profile = scan_pick_profile
         self.recorder = recorder or NullExecutionRecorder()
         self.activate_controller_on_startup = (
             mode is not RobotServiceMode.READ_ONLY
@@ -149,6 +181,7 @@ class MushroomRobotService:
             else bool(activate_controller_on_startup)
         )
         self.vision_gateway_description = vision_gateway_description
+        self._allow_dry_run_state_advance = bool(allow_dry_run_state_advance)
         self.state = RobotServiceState.CREATED
         self.fault: str | None = None
         self._started_controller = False
@@ -310,9 +343,9 @@ class MushroomRobotService:
             fault = self.fault
             started_controller = self._started_controller
         backend_status = None
-        if started_controller and state not in (
-            RobotServiceState.SHUTDOWN,
-            RobotServiceState.CREATED,
+        if started_controller and state in (
+            RobotServiceState.READY,
+            RobotServiceState.DISABLED,
         ):
             try:
                 backend_status = self._controller.get_status()
@@ -609,8 +642,9 @@ class MushroomRobotService:
         z_mm: float,
         *,
         frame_id: str = _CAMERA_COLOR_OPTICAL_FRAME,
+        capture_axis_state: RobotAxisState | None = None,
     ) -> ResolvedCameraPoint:
-        """把当前真实姿态下的 Camera 点只读转换到 Base frame。"""
+        """把 Camera 点按当前姿态或已确认的拍照快照转换到 Base frame。"""
 
         self._require_ready("resolve-camera-point")
         camera_point = (
@@ -630,21 +664,57 @@ class MushroomRobotService:
         if resolver is None or calibration is None:
             raise RobotServiceCapabilityError("tool_T_camera is not configured.")
 
+        if capture_axis_state is None:
+            axis_state = self._read_current_axis_state()
+        elif isinstance(capture_axis_state, RobotAxisState):
+            axis_state = capture_axis_state
+        else:
+            raise TypeError("capture_axis_state must be a RobotAxisState or None")
+        base_T_tool = resolver.pose_provider.forward_kinematics_base(axis_state)
+        if not isinstance(base_T_tool, RigidTransform):
+            raise RobotServiceError(
+                "current pose provider returned a non-RigidTransform base_T_tool"
+            )
+        raw_base_point = tuple(
+            float(value)
+            for value in (base_T_tool @ calibration.tool_T_camera).transform_point(
+                camera_point
+            )
+        )
+        base_point = calibration.compensate_base_point(raw_base_point)
+        return ResolvedCameraPoint(
+            camera_point_mm=camera_point,
+            base_point_mm=base_point,
+            frame_id=frame_id,
+            tool_camera_source=calibration.source,
+            tool_camera_validated=calibration.validated,
+            raw_base_point_mm=raw_base_point,
+            target_compensation_base_mm=calibration.target_compensation_base_mm,
+        )
+
+    def get_current_tcp_pose(self) -> CurrentTcpPose:
+        """Read the current five-axis state and resolve Base-frame TCP pose."""
+
+        self._require_ready("current TCP pose")
+        resolver = self._controller.target_resolver
+        if resolver is None:
+            raise RobotServiceCapabilityError(
+                "Current Base-frame TCP pose provider is unavailable."
+            )
         axis_state = self._read_current_axis_state()
         base_T_tool = resolver.pose_provider.forward_kinematics_base(axis_state)
         if not isinstance(base_T_tool, RigidTransform):
             raise RobotServiceError(
                 "current pose provider returned a non-RigidTransform base_T_tool"
             )
-        base_point = (
-            base_T_tool @ calibration.tool_T_camera
-        ).transform_point(camera_point)
-        return ResolvedCameraPoint(
-            camera_point_mm=camera_point,
-            base_point_mm=tuple(float(value) for value in base_point),
-            frame_id=frame_id,
-            tool_camera_source=calibration.source,
-            tool_camera_validated=calibration.validated,
+        x_mm, y_mm, z_mm = (
+            float(value) for value in base_T_tool.translation_mm
+        )
+        return CurrentTcpPose(
+            x_mm=x_mm,
+            y_mm=y_mm,
+            z_mm=z_mm,
+            yaw_deg=float(base_T_tool.yaw_deg),
         )
 
     def plan_base_target(self, target: BaseToolTarget) -> object:
@@ -857,6 +927,196 @@ class MushroomRobotService:
             final_status=final_state.value,
             stage_result=result,
         )
+        return result
+
+    def scan_and_pick(self) -> ScanAndPickResult:
+        """以单个 Service operation 完成固定八区域扫描、抓取和放置。"""
+
+        self._require_not_read_only("scan-pick")
+        if not self._controller.capabilities.vision_target_resolution:
+            raise RobotServiceCapabilityError(
+                "Hand-eye calibration is missing or not validated."
+            )
+        workflow = self._require_workflow()
+        grasp_profile = self._require_profile(None)
+        scan_profile = self._require_scan_pick_profile()
+        if (
+            grasp_profile.yaw_mode is not GraspYawMode.FIXED
+            or grasp_profile.fixed_yaw_deg != 0.0
+        ):
+            raise RobotServiceCapabilityError(
+                "scan-pick requires the validated grasp profile to use fixed yaw 0"
+            )
+        if (
+            self.mode is RobotServiceMode.DRY_RUN
+            and not self._allow_dry_run_state_advance
+        ):
+            raise RobotServiceCapabilityError(
+                "scan-pick dry-run requires the offline simulated-state backend"
+            )
+
+        token = self._begin_write_operation(
+            kind="scan-pick",
+            allowed_states=(RobotServiceState.READY,),
+            active_state=RobotServiceState.PLANNING,
+        )
+        visited: list[ScanPositionResult] = []
+        total_picked = 0
+
+        for scan_index, scan_pose in enumerate(scan_profile.scan_poses, start=1):
+            try:
+                self._require_scan_operation_state(
+                    token, RobotServiceState.PLANNING, "scan motion planning"
+                )
+                scan_motion = self._controller.plan_base_target(scan_pose)
+            except Exception as exc:
+                self._finish_operation(token, final_state=RobotServiceState.READY)
+                self._record(
+                    "scan-pick",
+                    final_status="rejected",
+                    error=str(exc),
+                )
+                raise
+            try:
+                self._execute_scan_motion(token, scan_motion)
+            except Exception as exc:
+                self._fail_scan_task(token, exc)
+                raise
+
+            detected_count = 0
+            picked_count = 0
+            while picked_count < scan_profile.max_picks_per_scan_pose:
+                self._require_scan_operation_state(
+                    token, RobotServiceState.OBSERVING, "observation"
+                )
+                try:
+                    observation = workflow.request_observation()
+                except NoVisionTarget:
+                    visited.append(
+                        ScanPositionResult(
+                            scan_index,
+                            detected_count,
+                            picked_count,
+                            "no_target",
+                        )
+                    )
+                    break
+                except Exception as exc:
+                    self._finish_operation(token, final_state=RobotServiceState.READY)
+                    self._record(
+                        "scan-pick",
+                        final_status="rejected",
+                        error=str(exc),
+                    )
+                    raise
+
+                detected_count += 1
+                self._require_scan_operation_state(
+                    token, RobotServiceState.PLANNING, "pick planning"
+                )
+                try:
+                    pick_plan = workflow.plan_observation(
+                        observation, grasp_profile
+                    )
+                except Exception as exc:
+                    visited.append(
+                        ScanPositionResult(
+                            scan_index,
+                            detected_count,
+                            picked_count,
+                            f"target_rejected:{type(exc).__name__}",
+                        )
+                    )
+                    self._record(
+                        "scan-pick-target",
+                        request_id=observation.request_id,
+                        final_status="rejected",
+                        error=str(exc),
+                    )
+                    break
+
+                try:
+                    self._require_scan_operation_state(
+                        token,
+                        (
+                            RobotServiceState.EXECUTING
+                            if self.mode is RobotServiceMode.EXECUTE
+                            else RobotServiceState.PLANNING
+                        ),
+                        "pick execution",
+                    )
+                    pick_result = workflow.execute_pick_plan(
+                        pick_plan,
+                        execute=True,
+                    )
+                    if pick_result.outcome is PickOutcome.FAILED:
+                        raise RobotServiceError(pick_result.message)
+
+                    self._require_scan_operation_state(
+                        token, RobotServiceState.PLANNING, "place planning"
+                    )
+                    place_pre = scan_profile.place_pre_pose
+                    place_motions = self._controller.plan_base_target_sequence(
+                        (place_pre, scan_profile.place_pose, place_pre),
+                        enforce_tray_workspace=(False, True, False),
+                    )
+                    self._require_scan_operation_state(
+                        token,
+                        (
+                            RobotServiceState.EXECUTING
+                            if self.mode is RobotServiceMode.EXECUTE
+                            else RobotServiceState.PLANNING
+                        ),
+                        "place execution",
+                    )
+                    self._controller.execute_base_plan(place_motions[0])
+                    self._controller.execute_base_plan(place_motions[1])
+                    self._controller.suction_release()
+                    self._controller.execute_base_plan(place_motions[2])
+
+                    self._require_scan_operation_state(
+                        token, RobotServiceState.PLANNING, "scan return planning"
+                    )
+                    return_motion = self._controller.plan_base_target(scan_pose)
+                    self._execute_scan_motion(token, return_motion)
+                except Exception as exc:
+                    self._fail_scan_task(token, exc)
+                    raise
+
+                picked_count += 1
+                total_picked += 1
+                self._record(
+                    "scan-pick-target",
+                    request_id=observation.request_id,
+                    selected_plan=pick_plan,
+                    final_status="simulated" if self.mode is RobotServiceMode.DRY_RUN else "placed",
+                    stage_result=pick_result,
+                )
+            else:
+                visited.append(
+                    ScanPositionResult(
+                        scan_index,
+                        detected_count,
+                        picked_count,
+                        "max_picks_per_scan_pose_reached",
+                    )
+                )
+                result = ScanAndPickResult(
+                    "stopped_max_picks_per_scan_pose",
+                    tuple(visited),
+                    total_picked,
+                )
+                self._finish_operation(token, final_state=RobotServiceState.READY)
+                self._record(
+                    "scan-pick",
+                    final_status=result.result,
+                    stage_result=result,
+                )
+                return result
+
+        result = ScanAndPickResult("completed", tuple(visited), total_picked)
+        self._finish_operation(token, final_state=RobotServiceState.READY)
+        self._record("scan-pick", final_status="completed", stage_result=result)
         return result
 
     def return_to_startup(self) -> object:
@@ -1187,6 +1447,53 @@ class MushroomRobotService:
         if profile is None:
             raise RobotServiceCapabilityError("Grasp profile is missing or not validated.")
         return profile
+
+    def _require_scan_pick_profile(self) -> ScanPickProfile:
+        if self.scan_pick_profile is None:
+            raise RobotServiceCapabilityError(
+                "Scan-pick profile is missing or not validated."
+            )
+        return self.scan_pick_profile
+
+    def _require_scan_operation_state(
+        self,
+        token: _ActiveOperation,
+        state: RobotServiceState,
+        stage: str,
+    ) -> None:
+        if not self._set_operation_state(token, state):
+            raise RobotServiceStateError(f"scan-pick was cancelled before {stage}")
+
+    def _execute_scan_motion(
+        self,
+        token: _ActiveOperation,
+        plan: object,
+    ) -> None:
+        self._require_scan_operation_state(
+            token,
+            (
+                RobotServiceState.EXECUTING
+                if self.mode is RobotServiceMode.EXECUTE
+                else RobotServiceState.PLANNING
+            ),
+            "motion execution",
+        )
+        self._controller.execute_base_plan(plan)
+
+    def _fail_scan_task(
+        self,
+        token: _ActiveOperation,
+        exc: Exception,
+    ) -> None:
+        if not self._operation_is_current(token):
+            return
+        self._best_effort_stop()
+        self._finish_operation(
+            token,
+            final_state=RobotServiceState.FAULT,
+            fault=f"scan-pick: {exc}",
+        )
+        self._record("scan-pick", final_status="fault", error=str(exc))
 
     def _rotary_holding_snapshot(self) -> bool | None:
         state_reader = getattr(self._axis_motion, "get_axis_states", None)

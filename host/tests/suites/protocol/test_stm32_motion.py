@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
+import time
 import unittest
 import warnings
 
@@ -48,6 +50,92 @@ class FakeTransport:
         self.closed = True
 
 
+class ConcurrentTransport:
+    """让两个 Host 线程争用读取，并以乱序 sequence 返回完整机器行。"""
+
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+        self.writes: list[str] = []
+        self.first_read_entered = threading.Event()
+        self.release_first_read = threading.Event()
+        self._guard = threading.Lock()
+        self._first_read = True
+        self.active_reads = 0
+        self.maximum_active_reads = 0
+        self.close_calls = 0
+
+    def write_line(self, line: str) -> None:
+        sequence = line.split(maxsplit=1)[0][1:]
+        command = line.split(maxsplit=2)[1]
+        with self._guard:
+            self.writes.append(line)
+            if command == "QS":
+                self.lines.append(
+                    f"={sequence} ST S 1 1 0 1 1 9990 0"
+                )
+            elif command == "MR":
+                # 后发 ACK 放在先发 QS 响应之前，验证按 sequence 缓冲。
+                self.lines.insert(0, f"={sequence} OK")
+                self.lines.append(f"!{sequence} DONE S 19990")
+            else:
+                raise AssertionError(f"unexpected command: {line}")
+
+    def read_line(self) -> str | None:
+        with self._guard:
+            self.active_reads += 1
+            self.maximum_active_reads = max(
+                self.maximum_active_reads,
+                self.active_reads,
+            )
+            block = self._first_read
+            self._first_read = False
+        try:
+            if block:
+                self.first_read_entered.set()
+                self.release_first_read.wait(timeout=1.0)
+            with self._guard:
+                return self.lines.pop(0) if self.lines else None
+        finally:
+            with self._guard:
+                self.active_reads -= 1
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+class BlockingPollTransport(FakeTransport):
+    def __init__(self) -> None:
+        super().__init__(["=0 OK"])
+        self.block_next_read = False
+        self.read_entered = threading.Event()
+        self.release_read = threading.Event()
+
+    def write_line(self, line: str) -> None:
+        super().write_line(line)
+        if line.endswith("ST S"):
+            sequence = line.split(maxsplit=1)[0][1:]
+            self.lines.append(f"={sequence} OK")
+
+    def read_line(self) -> str | None:
+        if self.block_next_read:
+            self.block_next_read = False
+            self.read_entered.set()
+            self.release_read.wait(timeout=1.0)
+            return None
+        return super().read_line()
+
+
+class CountingErrorTransport(FakeTransport):
+    def __init__(self) -> None:
+        super().__init__()
+        self.read_error = OSError("disconnected")
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+        super().close()
+
+
 class ParserTests(unittest.TestCase):
     def test_axis_fault_values_match_machine_protocol_v2(self) -> None:
         self.assertEqual(tuple(int(value) for value in AxisFault), (0, 1, 2, 3, 4))
@@ -82,6 +170,102 @@ class ParserTests(unittest.TestCase):
 
 
 class ClientTests(unittest.TestCase):
+    def test_concurrent_query_and_motion_reads_are_serialized_and_routed(self) -> None:
+        transport = ConcurrentTransport()
+        client = STM32MotionClient(transport)
+        query_results = []
+        submissions = []
+        errors: list[BaseException] = []
+
+        def query() -> None:
+            try:
+                query_results.append(client.query_axis("slide"))
+            except BaseException as exc:
+                errors.append(exc)
+
+        def submit() -> None:
+            try:
+                submissions.append(
+                    client.submit_move_relative("slide", 10000, 5000, 10000)
+                )
+            except BaseException as exc:
+                errors.append(exc)
+
+        query_thread = threading.Thread(target=query)
+        submit_thread = threading.Thread(target=submit)
+        query_thread.start()
+        self.assertTrue(transport.first_read_entered.wait(timeout=1.0))
+        submit_thread.start()
+        time.sleep(0.02)
+        self.assertEqual(transport.maximum_active_reads, 1)
+        transport.release_first_read.set()
+        query_thread.join(timeout=1.0)
+        submit_thread.join(timeout=1.0)
+
+        self.assertFalse(query_thread.is_alive())
+        self.assertFalse(submit_thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(query_results[0].position_um, 9990)
+        self.assertEqual(client.poll_command(submissions[0]).kind, "DONE")
+        self.assertEqual(transport.maximum_active_reads, 1)
+
+    def test_stop_waits_only_for_one_active_read_not_motion_completion(self) -> None:
+        transport = BlockingPollTransport()
+        client = STM32MotionClient(transport)
+        submission = client.submit_move_relative("slide", 10000, 5000, 10000)
+        transport.block_next_read = True
+        poll_results = []
+        stop_completed = threading.Event()
+
+        poll_thread = threading.Thread(
+            target=lambda: poll_results.append(client.poll_command(submission))
+        )
+        stop_thread = threading.Thread(
+            target=lambda: (client.stop("slide"), stop_completed.set())
+        )
+        poll_thread.start()
+        self.assertTrue(transport.read_entered.wait(timeout=1.0))
+        stop_thread.start()
+        time.sleep(0.02)
+        self.assertFalse(stop_completed.is_set())
+        transport.release_read.set()
+        stop_thread.join(timeout=1.0)
+        poll_thread.join(timeout=1.0)
+
+        self.assertTrue(stop_completed.is_set())
+        self.assertEqual(poll_results, [None])
+        transport.lines.append("!0 ABORT S 9990")
+        self.assertEqual(client.poll_command(submission).kind, "ABORT")
+
+    def test_concurrent_transport_error_disconnects_and_closes_once(self) -> None:
+        transport = CountingErrorTransport()
+        client = STM32MotionClient(transport)
+        barrier = threading.Barrier(3)
+        errors: list[BaseException] = []
+
+        def query() -> None:
+            barrier.wait()
+            try:
+                client.query_axis("slide")
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=query) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join(timeout=1.0)
+
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(len(errors), 2)
+        self.assertTrue(all(isinstance(exc, ProtocolDisconnectedError) for exc in errors))
+        self.assertEqual(transport.close_calls, 1)
+        self.assertFalse(client.pending_sync_sequences)
+        self.assertFalse(client.pending_async_sequences)
+        with self.assertRaises(ProtocolDisconnectedError):
+            client.query_axis("slide")
+
     def test_version_handshake_and_resynchronization_order(self) -> None:
         transport = FakeTransport(
             [
@@ -273,11 +457,11 @@ class ClientTests(unittest.TestCase):
                 "z", 2**31, 1, 1
             )
 
-    def test_timeout_is_explicit_and_keeps_sequence_reserved(self) -> None:
+    def test_timeout_is_explicit_and_releases_sync_sequence(self) -> None:
         client = STM32MotionClient(FakeTransport())
         with self.assertRaises(ProtocolTimeoutError):
             client.query_axis("z", timeout=0.001)
-        self.assertEqual(client.pending_sync_sequences, frozenset({0}))
+        self.assertFalse(client.pending_sync_sequences)
 
 
 class FirmwareContractTests(unittest.TestCase):

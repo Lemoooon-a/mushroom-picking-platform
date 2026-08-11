@@ -8,6 +8,7 @@
   "metadata": {
     "base_slide_calibrated_at": null,
     "base_slide_calibration_method": null,
+    "tool_camera_target_compensation_base_mm": [0.0, 0.0, 0.0],
     "validated": false,
     "git_commit": null,
     "notes": "Example only. Replace values with measured or calibrated values."

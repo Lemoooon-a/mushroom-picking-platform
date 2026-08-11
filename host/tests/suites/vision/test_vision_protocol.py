@@ -25,6 +25,20 @@ class VisionProtocolTests(unittest.TestCase):
         without_orientation["orientation"] = None
         self.assertIsNone(decode_message(json.dumps(without_orientation)).orientation)
 
+        all_optional_null = TargetDetection(
+            "capture-2",
+            "camera_color_optical_frame",
+            None,
+            None,
+            None,
+            Vector3(1, 2, 3),
+            None,
+        )
+        self.assertEqual(
+            decode_message(encode_message(all_optional_null)),
+            all_optional_null,
+        )
+
     def test_no_target_and_error(self) -> None:
         self.assertEqual(decode_message(encode_message(NoTarget("capture-1", "no_detection"))), NoTarget("capture-1", "no_detection"))
         error = VisionError("capture-1", "INVALID_DEPTH", "bad depth")

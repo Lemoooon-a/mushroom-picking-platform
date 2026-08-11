@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum, IntEnum
 import math
+import threading
 import time
 from collections.abc import Callable
 from typing import Protocol
@@ -518,6 +519,7 @@ class STM32MotionClient:
         self._pending_sync: dict[int, str] = {}
         self._pending_async: dict[int, STM32CommandSubmission] = {}
         self._disconnected_reason: str | None = None
+        self._protocol_lock = threading.RLock()
 
     def close(self) -> None:
         self.disconnect("client closed")
@@ -525,6 +527,12 @@ class STM32MotionClient:
     def disconnect(self, reason: str = "serial transport disconnected") -> None:
         """Invalidate all local pending state without assuming device motion stopped."""
 
+        with self._protocol_lock:
+            self._disconnect_locked(reason)
+
+    def _disconnect_locked(self, reason: str) -> None:
+        if self._disconnected_reason is not None:
+            return
         self._disconnected_reason = reason
         self._pending_sync.clear()
         self._pending_async.clear()
@@ -533,11 +541,13 @@ class STM32MotionClient:
 
     @property
     def pending_sync_sequences(self) -> frozenset[int]:
-        return frozenset(self._pending_sync)
+        with self._protocol_lock:
+            return frozenset(self._pending_sync)
 
     @property
     def pending_async_sequences(self) -> frozenset[int]:
-        return frozenset(self._pending_async)
+        with self._protocol_lock:
+            return frozenset(self._pending_async)
 
     def _require_connected(self) -> None:
         if self._disconnected_reason is not None:
@@ -545,13 +555,14 @@ class STM32MotionClient:
 
     def _mark_disconnected(self, exc: Exception) -> ProtocolDisconnectedError:
         reason = f"STM32 serial transport disconnected: {exc}"
-        try:
-            self.disconnect(reason)
-        except Exception:
-            self._disconnected_reason = reason
-            self._pending_sync.clear()
-            self._pending_async.clear()
-            self._pending_messages.clear()
+        with self._protocol_lock:
+            try:
+                self._disconnect_locked(reason)
+            except Exception:
+                self._disconnected_reason = reason
+                self._pending_sync.clear()
+                self._pending_async.clear()
+                self._pending_messages.clear()
         return ProtocolDisconnectedError(reason)
 
     def _next_sequence(self) -> int:
@@ -568,18 +579,19 @@ class STM32MotionClient:
         raise STM32MotionConfigurationError("all protocol sequences are pending")
 
     def _send(self, command: str) -> int:
-        self._require_connected()
-        sequence = self._next_sequence()
-        frame = f"@{sequence} {command}"
-        if len(frame.encode("ascii")) > MAX_LINE_LENGTH:
-            raise STM32MotionConfigurationError("command exceeds protocol line limit")
-        self._pending_sync[sequence] = command
-        try:
-            self.transport.write_line(frame)
-        except Exception as exc:
-            self._pending_sync.pop(sequence, None)
-            raise self._mark_disconnected(exc) from exc
-        return sequence
+        with self._protocol_lock:
+            self._require_connected()
+            sequence = self._next_sequence()
+            frame = f"@{sequence} {command}"
+            if len(frame.encode("ascii")) > MAX_LINE_LENGTH:
+                raise STM32MotionConfigurationError("command exceeds protocol line limit")
+            self._pending_sync[sequence] = command
+            try:
+                self.transport.write_line(frame)
+            except Exception as exc:
+                self._pending_sync.pop(sequence, None)
+                raise self._mark_disconnected(exc) from exc
+            return sequence
 
     def _take_buffered(self, sequence: int, channel: str) -> STM32Message | None:
         for index, message in enumerate(self._pending_messages):
@@ -588,40 +600,46 @@ class STM32MotionClient:
         return None
 
     def _read_message(self) -> STM32Message | None:
-        self._require_connected()
-        try:
-            line = self.transport.read_line()
-        except Exception as exc:
-            raise self._mark_disconnected(exc) from exc
-        return None if line is None else self._parser.parse(line)
+        with self._protocol_lock:
+            self._require_connected()
+            try:
+                line = self.transport.read_line()
+            except Exception as exc:
+                raise self._mark_disconnected(exc) from exc
+            return None if line is None else self._parser.parse(line)
 
     def _wait(self, sequence: int, channel: str, timeout: float) -> STM32Message:
         if not math.isfinite(timeout) or timeout <= 0:
             raise STM32MotionConfigurationError("timeout must be finite and positive")
-        buffered = self._take_buffered(sequence, channel)
-        if buffered is not None:
-            return buffered
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            message = self._read_message()
-            if message is None:
-                continue
-            if message.sequence == sequence and message.channel == channel:
-                return message
-            self._pending_messages.append(message)
+            with self._protocol_lock:
+                self._require_connected()
+                buffered = self._take_buffered(sequence, channel)
+                if buffered is not None:
+                    return buffered
+                message = self._read_message()
+                if message is None:
+                    continue
+                if message.sequence == sequence and message.channel == channel:
+                    return message
+                self._pending_messages.append(message)
         raise ProtocolTimeoutError(
             f"timed out waiting for {channel}{sequence} after {timeout:.3f}s"
         )
 
     def _sync(self, command: str, timeout: float = 2.0) -> STM32Message:
         sequence = self._send(command)
-        response = self._wait(sequence, "=", timeout)
-        self._pending_sync.pop(sequence, None)
-        if response.kind == "ERR":
-            raise ProtocolCommandError(
-                sequence, _parse_int(response.arguments[0], "protocol_error")
-            )
-        return response
+        try:
+            response = self._wait(sequence, "=", timeout)
+            if response.kind == "ERR":
+                raise ProtocolCommandError(
+                    sequence, _parse_int(response.arguments[0], "protocol_error")
+                )
+            return response
+        finally:
+            with self._protocol_lock:
+                self._pending_sync.pop(sequence, None)
 
     def _nonblocking(
         self,
@@ -646,37 +664,43 @@ class STM32MotionClient:
         sync_timeout: float,
     ) -> STM32CommandSubmission:
         sequence = self._send(command)
-        response = self._wait(sequence, "=", sync_timeout)
-        self._pending_sync.pop(sequence, None)
-        if response.kind == "ERR":
-            raise ProtocolCommandError(
-                sequence, _parse_int(response.arguments[0], "protocol_error")
+        try:
+            response = self._wait(sequence, "=", sync_timeout)
+            if response.kind == "ERR":
+                raise ProtocolCommandError(
+                    sequence, _parse_int(response.arguments[0], "protocol_error")
+                )
+            if response.kind != "OK" or response.arguments:
+                raise ProtocolFrameError("motion acceptance must be '=seq OK'")
+            submission = STM32CommandSubmission(
+                sequence, axis, command.split(maxsplit=1)[0]
             )
-        if response.kind != "OK" or response.arguments:
-            raise ProtocolFrameError("motion acceptance must be '=seq OK'")
-        submission = STM32CommandSubmission(
-            sequence, axis, command.split(maxsplit=1)[0]
-        )
-        self._pending_async[sequence] = submission
-        return submission
+            with self._protocol_lock:
+                self._require_connected()
+                self._pending_async[sequence] = submission
+            return submission
+        finally:
+            with self._protocol_lock:
+                self._pending_sync.pop(sequence, None)
 
     def _complete_async(
         self,
         submission: STM32CommandSubmission,
         event: STM32Message,
     ) -> STM32Message:
-        tracked = self._pending_async.get(submission.sequence)
-        if tracked != submission:
-            raise ProtocolFrameError(
-                f"sequence {submission.sequence} is not pending for this submission"
-            )
-        if event.arguments[0] != submission.axis:
-            raise ProtocolFrameError(
-                f"event target {event.arguments[0]!r} does not match "
-                f"submission target {submission.axis!r}"
-            )
-        self._pending_async.pop(submission.sequence, None)
-        return event
+        with self._protocol_lock:
+            tracked = self._pending_async.get(submission.sequence)
+            if tracked != submission:
+                raise ProtocolFrameError(
+                    f"sequence {submission.sequence} is not pending for this submission"
+                )
+            if event.arguments[0] != submission.axis:
+                raise ProtocolFrameError(
+                    f"event target {event.arguments[0]!r} does not match "
+                    f"submission target {submission.axis!r}"
+                )
+            self._pending_async.pop(submission.sequence, None)
+            return event
 
     def poll_command(
         self,
@@ -684,20 +708,21 @@ class STM32MotionClient:
     ) -> STM32Message | None:
         """Return the command event if already available, otherwise poll once."""
 
-        if self._pending_async.get(submission.sequence) != submission:
-            raise ProtocolFrameError(
-                f"sequence {submission.sequence} is not pending for this submission"
-            )
-        message = self._take_buffered(submission.sequence, "!")
-        if message is not None:
-            return self._complete_async(submission, message)
-        message = self._read_message()
-        if message is None:
+        with self._protocol_lock:
+            if self._pending_async.get(submission.sequence) != submission:
+                raise ProtocolFrameError(
+                    f"sequence {submission.sequence} is not pending for this submission"
+                )
+            message = self._take_buffered(submission.sequence, "!")
+            if message is not None:
+                return self._complete_async(submission, message)
+            message = self._read_message()
+            if message is None:
+                return None
+            if message.sequence == submission.sequence and message.channel == "!":
+                return self._complete_async(submission, message)
+            self._pending_messages.append(message)
             return None
-        if message.sequence == submission.sequence and message.channel == "!":
-            return self._complete_async(submission, message)
-        self._pending_messages.append(message)
-        return None
 
     def wait_for_command(
         self,
@@ -707,10 +732,11 @@ class STM32MotionClient:
     ) -> STM32Message:
         """Wait for and return DONE, ABORT, or FAULT for a submission."""
 
-        if self._pending_async.get(submission.sequence) != submission:
-            raise ProtocolFrameError(
-                f"sequence {submission.sequence} is not pending for this submission"
-            )
+        with self._protocol_lock:
+            if self._pending_async.get(submission.sequence) != submission:
+                raise ProtocolFrameError(
+                    f"sequence {submission.sequence} is not pending for this submission"
+                )
         event = self._wait(submission.sequence, "!", timeout)
         return self._complete_async(submission, event)
 
@@ -786,19 +812,21 @@ class STM32MotionClient:
     def reconnect(self, timeout: float = 2.0) -> ConnectionSnapshot:
         """Reopen a transport and rebuild state without using stale position caches."""
 
-        self._pending_sync.clear()
-        self._pending_async.clear()
-        self._pending_messages.clear()
-        try:
-            self.transport.close()
-            opener = getattr(self.transport, "open", None)
-            if not callable(opener):
-                raise STM32MotionConfigurationError("transport does not support reconnect")
-            opener()
-        except Exception as exc:
-            raise self._mark_disconnected(exc) from exc
-        self._disconnected_reason = None
-        return self.resynchronize(timeout)
+        with self._protocol_lock:
+            self._pending_sync.clear()
+            self._pending_async.clear()
+            self._pending_messages.clear()
+            try:
+                self.transport.close()
+                opener = getattr(self.transport, "open", None)
+                if not callable(opener):
+                    raise STM32MotionConfigurationError("transport does not support reconnect")
+                opener()
+            except Exception as exc:
+                self._disconnected_reason = None
+                raise self._mark_disconnected(exc) from exc
+            self._disconnected_reason = None
+            return self.resynchronize(timeout)
 
     def move_relative(
         self,

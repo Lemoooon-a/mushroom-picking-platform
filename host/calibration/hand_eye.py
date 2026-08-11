@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
+import math
 
 from config.frame_transforms import FrameTransformsDocument
 from geometry.rigid_transform import RigidTransform
@@ -24,6 +26,7 @@ class HandEyeCalibration:
     source: str
     method: str
     created_at: str | None = None
+    target_compensation_base_mm: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     def __post_init__(self) -> None:
         if not isinstance(self.tool_T_camera, RigidTransform):
@@ -36,6 +39,14 @@ class HandEyeCalibration:
                 raise ValueError(f"{field_name} must be a non-empty string")
         if self.created_at is not None and not isinstance(self.created_at, str):
             raise TypeError("created_at must be a string or None")
+        object.__setattr__(
+            self,
+            "target_compensation_base_mm",
+            _finite_triplet(
+                "target_compensation_base_mm",
+                self.target_compensation_base_mm,
+            ),
+        )
 
     @property
     def status(self) -> HandEyeCalibrationStatus:
@@ -44,6 +55,33 @@ class HandEyeCalibration:
             if self.validated
             else HandEyeCalibrationStatus.PROVISIONAL
         )
+
+    def compensate_base_point(
+        self,
+        point_xyz_mm: Sequence[float],
+    ) -> tuple[float, float, float]:
+        """把 Base 点加上不随 Camera/Tool 姿态旋转的目标补偿。"""
+
+        point = _finite_triplet("point_xyz_mm", point_xyz_mm)
+        return tuple(
+            coordinate + offset
+            for coordinate, offset in zip(
+                point,
+                self.target_compensation_base_mm,
+                strict=True,
+            )
+        )
+
+    def compensate_base_pose(self, pose: RigidTransform) -> RigidTransform:
+        """只补偿 Base 位姿平移，保持原始旋转不变。"""
+
+        if not isinstance(pose, RigidTransform):
+            raise TypeError("pose must be a RigidTransform")
+        matrix = pose.matrix.copy()
+        matrix[:3, 3] = self.compensate_base_point(
+            tuple(float(value) for value in pose.translation_mm)
+        )
+        return RigidTransform(matrix)
 
 
 def hand_eye_status(
@@ -79,7 +117,30 @@ def hand_eye_from_frame_document(
         source=str(metadata.get("tool_camera_source") or source),
         method=str(method or "unspecified"),
         created_at=created_at if isinstance(created_at, str) else None,
+        target_compensation_base_mm=metadata.get(
+            "tool_camera_target_compensation_base_mm",
+            (0.0, 0.0, 0.0),
+        ),
     )
+
+
+def _finite_triplet(
+    name: str,
+    value: object,
+) -> tuple[float, float, float]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise TypeError(f"{name} must be a sequence of three finite numbers")
+    if len(value) != 3:
+        raise ValueError(f"{name} must contain exactly three numbers")
+    result: list[float] = []
+    for index, item in enumerate(value):
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            raise TypeError(f"{name}[{index}] must be a finite real number")
+        converted = float(item)
+        if not math.isfinite(converted):
+            raise ValueError(f"{name}[{index}] must be finite")
+        result.append(converted)
+    return result[0], result[1], result[2]
 
 
 __all__ = [

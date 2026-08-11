@@ -25,6 +25,7 @@ from application.robot_service import (
     RobotServiceError,
     RobotServiceStateError,
 )
+from application.runtime_state import RobotServiceMode
 from motion.unified_protocol import AxisName
 
 
@@ -235,6 +236,14 @@ def create_robot_web_app(
     def execute_base(request: BaseTargetRequest) -> JSONResponse:
         return _invoke(service.move_base_target, _base_target(request))
 
+    @app.get("/api/motion/base/current", tags=["base motion"])
+    def current_base_tcp() -> JSONResponse:
+        return _invoke(service.get_current_tcp_pose)
+
+    @app.post("/api/motion/return-to-startup", tags=["base motion"])
+    def return_to_startup() -> JSONResponse:
+        return _invoke(service.return_to_startup)
+
     @app.post("/api/joints/enable", tags=["joints"])
     def enable_joints() -> JSONResponse:
         return _invoke(service.enable_joints)
@@ -251,11 +260,89 @@ def create_robot_web_app(
     def observe() -> JSONResponse:
         return _invoke(service.request_observation)
 
+    @app.post("/api/vision/plan", tags=["vision and pick"])
+    def plan_vision_target() -> JSONResponse:
+        return _invoke(_observe_and_plan_vision_target, service)
+
     @app.post("/api/pick", tags=["vision and pick"])
     def pick() -> JSONResponse:
         return _invoke(service.pick)
 
+    @app.post("/api/scan-pick", tags=["vision and pick"])
+    def scan_pick() -> JSONResponse:
+        return _invoke(service.scan_and_pick)
+
     return app
+
+
+def _observe_and_plan_vision_target(
+    service: MushroomRobotService,
+) -> dict[str, object]:
+    """拍照、按 capture 快照转换坐标并只做 Base 规划。"""
+
+    observation = service.request_observation()
+    resolved = service.resolve_camera_point(
+        observation.position_mm.x,
+        observation.position_mm.y,
+        observation.position_mm.z,
+        frame_id=observation.frame_id,
+        capture_axis_state=observation.capture_axis_state,
+    )
+    if (
+        not resolved.tool_camera_validated
+        and service.mode is not RobotServiceMode.DRY_RUN
+    ):
+        raise RobotServiceCapabilityError(
+            "Provisional tool_T_camera is allowed only for dry-run vision planning."
+        )
+    base_x, base_y, base_z = resolved.base_point_mm
+    raw_base_x, raw_base_y, raw_base_z = resolved.raw_base_point_mm
+    compensation_x, compensation_y, compensation_z = (
+        resolved.target_compensation_base_mm
+    )
+    plan = service.plan_base_target(
+        BaseToolTarget(base_x, base_y, base_z, yaw_deg=None)
+    )
+    stages = getattr(plan, "stages", ())
+    final_solution = stages[-1].solution if stages else None
+    return {
+        "request_id": observation.request_id,
+        "camera": {
+            "frame_id": observation.frame_id,
+            "position_mm": observation.position_mm,
+            "confidence": observation.confidence,
+            "timestamp": observation.timestamp,
+            "target_id": observation.target_id,
+            "orientation": observation.orientation,
+        },
+        "capture_joint_state": observation.capture_axis_state,
+        "base": {
+            "frame_id": "base",
+            "raw_position_mm": {
+                "x": raw_base_x,
+                "y": raw_base_y,
+                "z": raw_base_z,
+            },
+            "target_compensation_base_mm": {
+                "x": compensation_x,
+                "y": compensation_y,
+                "z": compensation_z,
+            },
+            "position_mm": {
+                "x": base_x,
+                "y": base_y,
+                "z": base_z,
+            },
+            "tool_camera_source": resolved.tool_camera_source,
+            "tool_camera_validated": resolved.tool_camera_validated,
+            "transform_status": resolved.transform_status,
+        },
+        "planner": {
+            "succeeded": True,
+            "five_axis_solution": final_solution,
+            "plan": plan,
+        },
+    }
 
 
 def _normalize_origins(origins: Sequence[str] | None) -> tuple[str, ...]:
@@ -316,7 +403,13 @@ def _exception_response(exc: Exception) -> JSONResponse:
     else:
         message = "Internal server error."
     error_type = type(exc).__name__ if status_code != 500 else "InternalServerError"
-    return _error_payload(status_code, error_type, message)
+    rejection_reason = _planning_rejection_reason(exc) if status_code == 422 else None
+    return _error_payload(
+        status_code,
+        error_type,
+        message,
+        rejection_reason=rejection_reason,
+    )
 
 
 def _exception_status(exc: Exception) -> int:
@@ -347,11 +440,27 @@ def _error_payload(
     status_code: int,
     error_type: str,
     message: str,
+    *,
+    rejection_reason: str | None = None,
 ) -> JSONResponse:
+    error = {"type": error_type, "message": message}
+    if rejection_reason is not None:
+        error["rejection_reason"] = rejection_reason
     return JSONResponse(
         status_code=status_code,
-        content={"error": {"type": error_type, "message": message}},
+        content={"error": error},
     )
+
+
+def _planning_rejection_reason(exc: Exception) -> str:
+    stage = getattr(exc, "stage", None)
+    if isinstance(stage, str) and stage:
+        return stage
+    if "TargetOutsideTrayWorkspace" in {
+        item.__name__ for item in type(exc).__mro__
+    }:
+        return "outside_tray_workspace"
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", type(exc).__name__).lower()
 
 
 def _jsonable(value: object) -> object:

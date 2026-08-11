@@ -33,6 +33,9 @@
 | `project/grasp_strategy.py` | validated loader | 是 | 否 | 按 Robot Service 加载 | 只接受完整且 `validated=true` 的 GraspProfile |
 | `examples/grasp_profile.json` | template | 是 | 否 | 否 | 所有真实 offset 保持 `null` |
 | `local/grasp_profile.json` | local JSON | 否，ignored | 是 | 可选 | 经确认的真实抓取策略 |
+| `project/scan_pick.py` | validated loader | 是 | 否 | 按 Robot Service 加载 | 校验固定 2×4 扫描点、固定放置位和单区域抓取上限 |
+| `examples/scan_pick.json` | template | 是 | 否 | 否 | 扫描、放置坐标保持 `null`，yaw 固定为 0 |
+| `local/scan_pick.json` | local JSON | 否，ignored | 是 | 可选 | 经确认的真实扫描与放置策略 |
 
 ## 配置来源规则
 
@@ -43,7 +46,7 @@
 - `project/robot_motion_envelope.py` 只描述 startup 与中间安全阶段策略，不是碰撞模型或安全认证。
 - `local/tray_workspace.json` 只描述 Base frame 中普通最终任务 TCP 的绝对允许范围，不是机械极限。
 - `host/calibration/` 只保存标定算法、状态模型和 capture/solve 逻辑；机器专属标定结果统一保存在 ignored `host/config/local/`。
-- `vision_runtime` 和 `grasp_profile` 的 tracked example 都默认 fail-closed；不得把 example 复制后的 placeholder 当作 validated 数据。
+- `vision_runtime`、`grasp_profile` 和 `scan_pick` 的 tracked example 都默认 fail-closed；不得把 example 复制后的 placeholder 当作 validated 数据。
 
 ## 三类工作区与安全策略
 

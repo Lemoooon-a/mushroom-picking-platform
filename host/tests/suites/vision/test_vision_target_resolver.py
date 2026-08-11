@@ -68,12 +68,18 @@ class VisionTargetResolverTests(unittest.TestCase):
             confidence=0.9,
         )
 
-    def calibration(self, *, validated: bool) -> HandEyeCalibration:
+    def calibration(
+        self,
+        *,
+        validated: bool,
+        compensation: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    ) -> HandEyeCalibration:
         return HandEyeCalibration(
             tool_T_camera=self.tool_T_camera,
             validated=validated,
             source="synthetic-test",
             method="fixture",
+            target_compensation_base_mm=compensation,
         )
 
     def test_validated_synthetic_chain_matches_expected_matrix(self) -> None:
@@ -94,6 +100,40 @@ class VisionTargetResolverTests(unittest.TestCase):
         )
         np.testing.assert_allclose(actual.matrix, expected.matrix, atol=1e-12)
         self.assertEqual(provider.calls, [self.capture_state])
+
+    def test_base_compensation_applies_once_before_grasp_offset(self) -> None:
+        provider = FakePoseProvider(self.base_T_tool)
+        compensation = (-10.0, 10.0, -10.0)
+        resolver = VisionTargetResolver(
+            pose_provider=provider,
+            hand_eye_calibration=self.calibration(
+                validated=True,
+                compensation=compensation,
+            ),
+        )
+
+        raw_object = (
+            self.base_T_tool @ self.tool_T_camera @ self.camera_T_target
+        )
+        expected_object_matrix = raw_object.matrix.copy()
+        expected_object_matrix[:3, 3] += compensation
+        expected_object = RigidTransform(expected_object_matrix)
+
+        actual_object = resolver.resolve_object_in_base(self.observation)
+        actual_goal = resolver.resolve_tool_goal_in_base(
+            self.observation,
+            self.grasp_offset,
+        )
+
+        np.testing.assert_allclose(actual_object.matrix, expected_object.matrix)
+        np.testing.assert_allclose(
+            actual_goal.matrix,
+            (expected_object @ self.grasp_offset).matrix,
+        )
+        np.testing.assert_allclose(
+            actual_object.rotation_matrix,
+            raw_object.rotation_matrix,
+        )
 
     def test_missing_and_provisional_calibration_reject_before_fk(self) -> None:
         for calibration in (None, self.calibration(validated=False)):

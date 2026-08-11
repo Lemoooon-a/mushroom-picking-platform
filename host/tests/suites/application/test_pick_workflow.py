@@ -9,7 +9,12 @@ from application.pick_planner import (
     ObservationConfidenceError, ObservationOrientationUnavailable,
     ObservationStaleError, PickPlanner,
 )
-from application.pick_workflow import NoVisionTarget, PickOutcome, VisionPickWorkflow
+from application.pick_workflow import (
+    NoVisionTarget,
+    PickOutcome,
+    VisionPickWorkflow,
+    VisionWorkflowError,
+)
 from application.tray_workspace import TrayWorkspace
 from calibration.hand_eye import HandEyeCalibration
 from config.tray_workspace import TrayWorkspaceConfig
@@ -17,7 +22,7 @@ from geometry.rigid_transform import RigidTransform
 from kinematics.frame_chain import RobotAxisState
 from vision.gateway import FakeVisionGateway
 from vision.observation import CaptureMotionState, Quaternion, Vector3, VisionTargetObservation
-from vision.protocol import NoTarget, TargetDetection
+from vision.protocol import NoTarget, TargetDetection, VisionError
 from vision.target_resolver import HandEyeCalibrationUnavailable, VisionTargetResolver
 
 
@@ -112,6 +117,45 @@ class PickWorkflowTests(unittest.TestCase):
         self.assertEqual(plan.contact_target.yaw_deg, 20)
         self.assertEqual(len([item for item in self.backend.calls if isinstance(item, tuple) and item[0] == "plan"]), 3)
 
+    def test_hand_eye_compensation_precedes_grasp_stage_offsets(self) -> None:
+        calibration = HandEyeCalibration(
+            RigidTransform.identity(),
+            True,
+            "test",
+            "fixture",
+            target_compensation_base_mm=(-10.0, 10.0, -10.0),
+        )
+        controller = self.make_controller(calibration)
+
+        plan = self.planner(controller).plan(self.observation(), self.profile)
+        raw_point = self.provider.forward_kinematics_base(
+            self.state
+        ).transform_point((10.0, 20.0, 50.0))
+        expected_contact = (
+            float(raw_point[0]) - 10.0,
+            float(raw_point[1]) + 10.0,
+            float(raw_point[2]) - 10.0,
+        )
+
+        for actual, expected in zip(
+            (
+                plan.contact_target.x_mm,
+                plan.contact_target.y_mm,
+                plan.contact_target.z_mm,
+            ),
+            expected_contact,
+            strict=True,
+        ):
+            self.assertAlmostEqual(actual, expected)
+        self.assertEqual(
+            (
+                plan.pre_grasp_target.z_mm,
+                plan.contact_target.z_mm,
+                plan.retreat_target.z_mm,
+            ),
+            (120.0, 40.0, 130.0),
+        )
+
     def test_any_planning_failure_returns_no_partial_plan(self) -> None:
         self.backend.fail_plan_at = 2
         with self.assertRaisesRegex(ValueError, "planning failed"):
@@ -175,6 +219,19 @@ class PickWorkflowTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "changed"):
             workflow.request_observation()
+
+    def test_vision_error_maps_to_existing_workflow_error(self) -> None:
+        with self.assertRaisesRegex(
+            VisionWorkflowError,
+            "vision error CAMERA_UNAVAILABLE: acquisition failed",
+        ):
+            self.workflow(
+                VisionError(
+                    "capture-000001",
+                    "CAMERA_UNAVAILABLE",
+                    "acquisition failed",
+                )
+            ).request_observation()
 
     def test_execute_order_and_physical_pick_remains_unverified(self) -> None:
         plan = self.planner().plan(self.observation(), self.profile)
