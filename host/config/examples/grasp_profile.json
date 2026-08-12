@@ -4,6 +4,8 @@
   "approach_offset_mm": null,
   "contact_offset_mm": null,
   "retreat_offset_mm": null,
+  "retreat_z_mm": null,
+  "minimum_transit_z_mm": null,
   "yaw_mode": null,
   "fixed_yaw_deg": null,
   "minimum_confidence": null,

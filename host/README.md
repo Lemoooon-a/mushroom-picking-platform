@@ -354,49 +354,28 @@ This is coordinated point-to-point submission, not interpolated or strictly sync
 验证的当前位置保持式软件制动，不是可靠的独立 stop；timeout 不会自动 torque disable。所有真实运动仍要求显式硬件配置、已确认的默认
 速度/加速度、逐轴机械验证和现场安全措施；软件 stop 不是硬件急停。
 
-## Base-root frame chain and calibration
+## Mechanical Base / TCP frame chain
 
 公开坐标链现在统一为：
 
 ```text
-Base -> Slide-zero -> Tool / TCP -> Camera
+Base -> Slide + Z + Shoulder/Elbow -> TCP / Rotation center -> Camera
 ```
 
 `geometry.RigidTransform` 使用 `A_T_B`（把 B 转到 A）记号；组合顺序为
-`A_T_C = A_T_B @ B_T_C`。`config/examples/frame_transforms.json` 提供 schema 1 示例，
-本机生成的 `config/local/frame_transforms.json` 被 Git 忽略。Camera 外参允许完整 RPY，
-Base–Slide-zero 标定则检查“平移 + yaw”机械假设。
-
-Frame chain 不访问硬件，只接收调用方已经提供的五轴逻辑状态和完整 Slide-zero FK：
+`A_T_C = A_T_B @ B_T_C`。机械 FK 直接输出 `base_T_tool`：
 
 ```python
-from pathlib import Path
+from kinematics.five_axis import load_local_five_axis_kinematics
 
-from config.frame_transforms import load_frame_transforms
-from kinematics.frame_chain import RobotFrameChain
-
-transforms = load_frame_transforms(
-    Path("config/local/frame_transforms.json")
-)
-frame_chain = RobotFrameChain(
-    base_T_slide_zero=transforms.base_T_slide_zero,
-    tool_T_camera=transforms.tool_T_camera,
-    slide_zero_kinematics=confirmed_slide_zero_kinematics,
-)
-
-base_T_tool = frame_chain.base_T_tool(axis_state)
-base_point = frame_chain.transform_camera_point_to_base(
-    point_camera,
-    axis_state,
-)
+kinematics = load_local_five_axis_kinematics()
+base_T_tool = kinematics.forward_kinematics(axis_state)
 ```
 
-`kinematics/five_axis.py` 已提供参数化完整五轴 FK。真实连杆尺寸、Slide/Z 方向、平面安装
-变换和 `rotation_output_T_tool` 必须写入被 Git 忽略的
-`config/local/five_axis_geometry.json`，并显式设置 `geometry_confirmed=true`；脚本默认加载该
-文件，不会拿 Planar 2R 示例尺寸或 startup position 猜算。高级调用仍可用
-`--fk-provider module:attribute` 替换默认模型。
-三个工具均默认预览/只读，不自动 home、move、stop、enable 或 torque enable：
+`config/local/five_axis_geometry.json` 只保存真实连杆尺寸和现场测得的
+`tcp_height_at_z_zero_mm`，并要求 `geometry_confirmed=true`。Base XY/yaw、Slide +Y、Z +Z 和
+Rotation/TCP 同心关系由机械定义固定。历史 Base–Slide-zero 工具保留为审计工具，不参与正常
+FK、IK 或视觉规划；这些工具均默认预览/只读，不自动 home、move、stop、enable 或 torque enable：
 
 ```bash
 .venv/bin/python scripts/calibrate_base_slide_frame.py --help
@@ -404,8 +383,8 @@ base_point = frame_chain.transform_camera_point_to_base(
 .venv/bin/python scripts/set_tool_camera_transform.py --help
 ```
 
-完整坐标约定见 `docs/interfaces/ROBOT_FRAME_CONVENTIONS.md`；安全前提、保存与第二参考姿态
-验证流程见 `docs/calibration/BASE_SLIDE_FRAME_CALIBRATION.md`。
+完整坐标约定见 `docs/interfaces/ROBOT_FRAME_CONVENTIONS.md`。历史标定工具说明见
+`docs/calibration/BASE_SLIDE_FRAME_CALIBRATION.md`，仅用于兼容和审计。
 
 ## Upper motion runtime and safety modes
 

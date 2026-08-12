@@ -76,6 +76,10 @@ class HandEyeCalibrationTests(unittest.TestCase):
             calibration.target_compensation_base_mm,
             (0.0, 0.0, 0.0),
         )
+        self.assertEqual(
+            calibration.target_compensation_camera_mm,
+            (0.0, 0.0, 0.0),
+        )
 
     def test_base_target_compensation_is_loaded_and_preserves_rotation(self) -> None:
         calibration = hand_eye_from_frame_document(
@@ -112,6 +116,42 @@ class HandEyeCalibrationTests(unittest.TestCase):
             compensated.rotation_matrix,
             raw_pose.rotation_matrix,
         )
+
+    def test_camera_target_compensation_is_loaded_and_preserves_rotation(self) -> None:
+        calibration = hand_eye_from_frame_document(
+            self.document(
+                tool=self.tool_camera,
+                metadata={
+                    "tool_camera_validated": True,
+                    "tool_camera_target_compensation_camera_mm": [-5, -20, 10],
+                },
+            ),
+            source="fixture",
+        )
+        assert calibration is not None
+        raw_pose = RigidTransform.from_xyz_yaw_deg(
+            x_mm=100, y_mm=200, z_mm=300, yaw_deg=34
+        )
+        compensated = calibration.compensate_camera_pose(raw_pose)
+        np.testing.assert_allclose(
+            compensated.translation_mm,
+            (95.0, 180.0, 310.0),
+        )
+        np.testing.assert_allclose(
+            compensated.rotation_matrix,
+            raw_pose.rotation_matrix,
+        )
+
+    def test_camera_and_base_compensation_cannot_both_be_nonzero(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Camera or Base"):
+            HandEyeCalibration(
+                tool_T_camera=self.tool_camera,
+                validated=True,
+                source="fixture",
+                method="fixture",
+                target_compensation_base_mm=(20, 5, -10),
+                target_compensation_camera_mm=(-5, -20, 10),
+            )
 
     def test_target_compensation_rejects_invalid_values(self) -> None:
         invalid_values = (

@@ -117,6 +117,32 @@ class PickWorkflowTests(unittest.TestCase):
         self.assertEqual(plan.contact_target.yaw_deg, 20)
         self.assertEqual(len([item for item in self.backend.calls if isinstance(item, tuple) and item[0] == "plan"]), 3)
 
+    def test_planner_uses_absolute_retreat_base_z(self) -> None:
+        profile = GraspProfile(
+            80, 0, None, GraspYawMode.FIXED, 20, 0.8, 2,
+            retreat_z_mm=160, minimum_transit_z_mm=120,
+        )
+        plan = self.planner().plan(self.observation(), profile)
+        self.assertEqual(plan.contact_target.z_mm, 50)
+        self.assertEqual(plan.retreat_target.z_mm, 160)
+
+    def test_planner_rejects_high_stages_at_or_below_transit_floor(self) -> None:
+        for approach_offset, retreat_z, stage_name in (
+            (70, 160, "pre-grasp"),
+            (80, 120, "retreat"),
+        ):
+            with self.subTest(stage_name=stage_name), self.assertRaisesRegex(
+                ValueError, stage_name
+            ):
+                self.planner().plan(
+                    self.observation(),
+                    GraspProfile(
+                        approach_offset, 0, None, GraspYawMode.FIXED,
+                        20, 0.8, 2, retreat_z_mm=retreat_z,
+                        minimum_transit_z_mm=120,
+                    ),
+                )
+
     def test_hand_eye_compensation_precedes_grasp_stage_offsets(self) -> None:
         calibration = HandEyeCalibration(
             RigidTransform.identity(),

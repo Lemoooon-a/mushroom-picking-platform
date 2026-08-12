@@ -1,176 +1,98 @@
-# 机器人坐标系约定
+# 机器人坐标约定
 
-## 1. 公开根与坐标链
+## 1. 坐标链
 
-当前系统不引入 World frame。Base frame 是视觉、前端、标定、公开正运动学
-（Forward Kinematics, FK）和后续逆运动学（Inverse Kinematics, IK）目标的根：
-
-```text
-Base (B)
-  -> Slide-zero (S)
-  -> current five-axis kinematics
-  -> Tool / TCP (T)
-  -> Camera (C)
-```
-
-- **Base**：机器人对外的工作坐标根。
-- **Slide-zero**：Slide 和 Z 完成机械归零、逻辑位置均为 0 时，内部几何模型的参考坐标；
-  它不是 World、startup position 或视觉参考坐标。
-- **Tool**：原点位于吸盘工具中心点（Tool Center Point, TCP），安装在 Rotation 输出侧，
-  因此随 Rotation 转动。
-- **Camera**：刚性安装在 Rotation 输出侧，通过固定六自由度外参关联 Tool。
-
-仓库现在提供参数化五轴 FK 和 Base 根目标的完整五轴候选解算，但仍没有
-URDF（Unified Robot Description Format，统一机器人描述格式）。当前机器的实际连杆长度继续
-由本机几何配置提供。`host/config/local/five_axis_geometry.json` 必须由机械负责人填写并
-确认 Tool 右手轴方向、Rotation 零角语义、TCP 相对 Rotation 输出的固定几何，然后显式设置
-`geometry_confirmed=true`；实现不会猜测这些参数。
-
-内置五轴模型把 Rotation output frame 定义为：原点在第二连杆末端，Shoulder/Elbow/Rotation
-均为 0 时，其 x/y/z 与平面运动学 frame 一致；运行时绕局部 `+z` 旋转
-`shoulder + elbow + rotation`。Tool frame 通过配置的 `rotation_output_T_tool` 接到该输出。
-
-## 2. 变换记号和组合方向
-
-统一使用：
+公开根和运动学根统一为机械 Base：
 
 ```text
-A_T_B
+Base
+├── Slide +Y
+├── Z +Z（逻辑向下为负）
+├── Shoulder/Elbow planar 2R
+└── TCP / Rotation axis center
+    └── Camera
 ```
 
-它把 B 中表达的点或位姿转换到 A。组合从右向左应用：
+Slide=0 时，Base XY、肩关节平面原点 XY 和 Slide 零位机械 XY 重合；Base 相对肩肘平面的
+roll、pitch、yaw 都为 0。Rotation 输出轴中心和 TCP 位置同心。
 
-```python
+## 2. 变换记号
+
+`A_T_B` 把 B 中表达的点或位姿转换到 A，组合顺序为：
+
+```text
 A_T_C = A_T_B @ B_T_C
 ```
 
-固定变换：
+`tool_T_camera` 中的 `tool` 就是 TCP frame。该名称为兼容现有配置保留。
+
+## 3. 五轴 FK
+
+逻辑状态：
 
 ```text
-base_T_slide_zero
-tool_T_camera
+q = [slide_mm, z_mm, shoulder_deg, elbow_deg, rotation_deg]
 ```
 
-运行时变换：
+机械公式：
 
 ```text
-slide_zero_T_tool(q)
-base_T_tool(q)
-base_T_camera(q)
+tcp_base_x = planar_2r_fk_x(shoulder, elbow)
+tcp_base_y = slide_mm + planar_2r_fk_y(shoulder, elbow)
+tcp_base_z = tcp_height_at_z_zero_mm + z_mm
+tcp_base_yaw = shoulder_deg + elbow_deg + rotation_deg
 ```
 
-其中：
+Rotation 只改变 yaw，不改变 TCP XYZ。`z_mm=0` 时 TCP Base Z 必须严格等于
+`tcp_height_at_z_zero_mm`；`z_mm=-50` 时 TCP 下降 50 mm。
+
+## 4. 五轴 IK
+
+对 Base TCP 目标和固定 Slide 候选：
 
 ```text
-q = [slide, z, shoulder, elbow, rotation]
+arm_local_x = target_base_x
+arm_local_y = target_base_y - slide_mm
+z_mm = target_base_z - tcp_height_at_z_zero_mm
 ```
 
-## 3. 单位和旋转约定
+`arm_local_x/y` 进入既有 Planar 2R IK；Rotation 复用
+`rotation_deg = target_yaw - shoulder_deg - elbow_deg`，再枚举软限位内的 360° 周期等价值。
+每个候选都必须通过轴/关节限位和完整 FK 重建。
 
-- 平移和点：mm；
-- 对外角度：deg；
-- 内部三角函数：rad；
-- yaw：绕 `+z` 的右手正旋转；
-- RPY（Roll-Pitch-Yaw，横滚-俯仰-偏航）输入顺序为 roll、pitch、yaw；
-- 旋转矩阵统一为固定轴组合：
+## 5. 视觉链
 
-  ```text
-  R = Rz(yaw) @ Ry(pitch) @ Rx(roll)
-  ```
-
-这等价于对列向量先应用 roll，再应用 pitch，最后应用 yaw。
-
-`RigidTransform` 构造时拒绝非有限值、非法齐次末行、非正交旋转和 determinant 为负的
-reflection；不会静默修复严重非法矩阵。
-
-## 4. Base-root FK 与 Camera 点
-
-内部 FK 仍以 Slide-zero 为根：
+机器人静止采集并保存 `q_capture` 后：
 
 ```text
-base_T_tool(q)
-  = base_T_slide_zero @ slide_zero_T_tool(q)
+base_T_target_raw
+  = base_T_tool(q_capture)
+  @ tool_T_camera
+  @ compensated_camera_T_target
+
+base_target_final.xyz
+  = base_target_raw.xyz
+  + target_compensation_base_mm
 ```
 
-Camera 与 Tool 刚性连接：
+补偿只应用一次。相机安装变换和视觉协议不因机械 Base 简化而改变。
 
-```text
-base_T_camera(q)
-  = base_T_tool(q) @ tool_T_camera
-```
+## 6. 配置与历史兼容
 
-Camera 点转换到 Base：
+正式坐标核心参数：
 
-```text
-point_base
-  = base_T_camera(q) @ point_camera
-```
+- `tcp_height_at_z_zero_mm`；
+- `tool_T_camera`；
+- Base TCP workspace 的 XYZ min/max；
+- `target_compensation_base_mm`。
+- `target_compensation_camera_mm`（与 Base 补偿不能同时非零）。
 
-代码中由 `RobotFrameChain.transform_camera_point_to_base()` 集中完成；前端和视觉模块不应
-自行拼固定变换。
+连杆长度、关节零位、轴/关节软限位继续保留。历史 `base_T_slide_zero`、其 validation metadata
+和 Base 标定脚本可供审计，但正常 FK、IK、视觉目标转换和规划不读取其数值。
+`rotation_output_T_tool` 已从正式五轴几何配置移除。
 
-## 5. Base IK 目标转换
+## 7. 安全边界
 
-Base 中的目标先转换到内部 Slide-zero：
-
-```text
-slide_zero_T_base = inverse(base_T_slide_zero)
-
-target_slide_zero_T_tool
-  = slide_zero_T_base @ target_base_T_tool
-```
-
-`RobotFrameChain.transform_base_target_to_slide_zero()` 提供该薄包装；
-`BaseFrameFiveAxisSolver` 在输入边界做同一变换，然后在 Slide-zero 根下生成分层 Slide 候选、
-复用 Planar 2R 的两支 IK、反解 Z 和 Rotation、检查五轴软限位，并用完整 FK 重建筛选。
-
-完整目标链为：
-
-```text
-base_T_tool_target
-  -> slide_zero_T_base @ base_T_tool_target
-  -> five-axis IK in Slide-zero
-  -> MultiAxisTarget
-```
-
-`FiveAxisKinematics` 的内部根始终是 Slide-zero；外部笛卡尔目标根始终是 Base。
-`MultiAxisTarget` 不表达笛卡尔 frame，因为它只包含完成 IK 后的执行器空间逻辑目标：
-Slide/Z 使用 mm，Shoulder/Elbow/Rotation 使用 deg。不得向它加入 Base offset、frame ID 或
-startup position。
-
-当前 Base–Slide-zero 变换若仍标记为 `validated=false`，`plan-base` 直接拒绝使用，且不提供命令行
-override；这不改变配置中的验证状态。
-
-## 6. Z 轴和偏置工作区约定
-
-Base `+Z` 与 Z 逻辑正方向均竖直向上；顶部 Home 为 `z=0 mm`，向下伸出为负值，范围读取集中
-轴配置（当前为 `[-190, 0] mm`）。目标 Base Z 越低，反解 Z 越负。所有高度变化均通过正式
-frame chain/运动学 helper 转换，不能直接假定轴值增量等于 Base 高度增量。
-
-工作区在机械臂平面局部坐标定义：`local_x=[50,450] mm`，正侧
-`local_y=[150,350] mm`，负侧 `local_y=[-350,-150] mm`。这些矩形是强制运动学约束，不是
-显示提示；普通最终五轴解必须落在其中一侧。当前侧由当前五轴 FK 计算，目标侧由最终实际解
-计算，均不使用 Base 全局 Y 的符号。
-
-## 7. startup position 隔离
-
-startup position 只属于系统上电初始化；它不是坐标系，也不进入：
-
-- `base_T_slide_zero`；
-- FK/IK；
-- Tool/Camera 位姿；
-- Base 目标转换；
-- 视觉目标位置。
-
-禁止对运动学目标加减 startup position。肩、肘、Rotation 的逻辑零点、方向、减速比和
-raw count 转换继续由现有关节/驱动层负责。
-
-## 8. Rotation 职责边界
-
-Frame chain 只计算当前位姿。Tool 在 Base 中的目标 yaw 由运动学层按与 FK 相同的共享公式，
-根据 shoulder、elbow 反解 Rotation 逻辑角；周期等价角在 Rotation 软限位内按当前位置选择。
-该逻辑不进入统一控制器、驱动或 Base–Slide-zero 标定。
-
-五轴目标可能同时存在多个 Slide、肘正/肘负和 Rotation 周期候选。当前求解器只是按确定性规则
-选择一组优选解，不声称数学唯一，也不提供碰撞检测或路径最优保证。详细算法和限制见
-[`BASE_FRAME_FIVE_AXIS_KINEMATICS.md`](BASE_FRAME_FIVE_AXIS_KINEMATICS.md)。
+Base TCP workspace 是最终普通任务目标的绝对 Base XYZ 门限；arm-local offset workspace 只用于
+Shoulder/Elbow IK 构型和 Slide 候选，两者不能互换。离线 FK/IK、工作区和软限位通过不等于
+完成真实机构验证。

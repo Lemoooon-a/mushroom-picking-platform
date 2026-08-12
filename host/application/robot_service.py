@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import threading
+import time
 
 from application.controller import MushroomRobotController
 from application.execution_record import ExecutionRecorder, NullExecutionRecorder
@@ -127,6 +128,7 @@ class ResolvedCameraPoint:
     tool_camera_validated: bool
     raw_base_point_mm: tuple[float, float, float] | None = None
     target_compensation_base_mm: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    target_compensation_camera_mm: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     def __post_init__(self) -> None:
         if self.raw_base_point_mm is None:
@@ -270,7 +272,8 @@ class MushroomRobotService:
             if not self._operation_is_current(token):
                 self._record("startup", final_status="cancelled", error=str(exc))
                 raise
-            self._best_effort_stop()
+            if getattr(exc, "stop_report", None) is None:
+                self._best_effort_stop()
             compensation_errors: list[str] = []
             try:
                 self._controller.shutdown()
@@ -681,7 +684,16 @@ class MushroomRobotService:
                 camera_point
             )
         )
-        base_point = calibration.compensate_base_point(raw_base_point)
+        compensated_camera_point = calibration.compensate_camera_point(camera_point)
+        camera_compensated_base_point = tuple(
+            float(value)
+            for value in (base_T_tool @ calibration.tool_T_camera).transform_point(
+                compensated_camera_point
+            )
+        )
+        base_point = calibration.compensate_base_point(
+            camera_compensated_base_point
+        )
         return ResolvedCameraPoint(
             camera_point_mm=camera_point,
             base_point_mm=base_point,
@@ -690,6 +702,9 @@ class MushroomRobotService:
             tool_camera_validated=calibration.validated,
             raw_base_point_mm=raw_base_point,
             target_compensation_base_mm=calibration.target_compensation_base_mm,
+            target_compensation_camera_mm=(
+                calibration.target_compensation_camera_mm
+            ),
         )
 
     def get_current_tcp_pose(self) -> CurrentTcpPose:
@@ -986,6 +1001,11 @@ class MushroomRobotService:
             detected_count = 0
             picked_count = 0
             while picked_count < scan_profile.max_picks_per_scan_pose:
+                self._require_scan_operation_state(
+                    token, RobotServiceState.OBSERVING, "observation settling"
+                )
+                if scan_profile.scan_settle_time_s > 0.0:
+                    time.sleep(scan_profile.scan_settle_time_s)
                 self._require_scan_operation_state(
                     token, RobotServiceState.OBSERVING, "observation"
                 )

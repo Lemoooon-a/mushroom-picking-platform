@@ -15,7 +15,7 @@ arm-local 正负偏置区与 150 mm 跨区安全高度都不是培养槽边界�
 | 约束 | 坐标系 | 回答的问题 | 实现位置 |
 | --- | --- | --- | --- |
 | Cultivation-tray workspace permission | Base frame | 最终 TCP 目标是否属于允许操作的培养槽区域 | `host/config/tray_workspace.py`、`host/application/tray_workspace.py` |
-| Kinematic reachability | Slide-zero/五轴模型 | 机器人是否能在几何、关节和轴限位内到达 | `host/kinematics/base_frame_solver.py` |
+| Kinematic reachability | Base/五轴机械模型 | 机器人是否能在几何、关节和轴限位内到达 | `host/kinematics/base_frame_solver.py` |
 | Offset workspace validity | arm-local frame | 当前 Slide 下局部解是否位于正/负偏置矩形，是否需要换侧 | `host/config/project/workspace_planning.py` |
 | Robot motion envelope policy | Base Z + 轴逻辑位置 | startup/return 与跨区中间阶段采用什么固定策略 | `host/config/project/robot_motion_envelope.py` |
 
@@ -44,17 +44,17 @@ arm-local 正负偏置区与 150 mm 跨区安全高度都不是培养槽边界�
 当前用户确认值：
 
 ```text
-X: [20, 480] mm
-Y: [20, 700] mm
-Z: [0, 180] mm
+X: [100, 500] mm
+Y: [-120, 780] mm
+Z: [10, 200] mm
 frame: base
 ```
 
-数值来源：用户在 2026-08-05 对培养槽任务区域的明确输入。Z 是最终 TCP 在 Base frame 中的绝对
-高度，不是 Z 轴逻辑位置，也不是相对 Home 的位移。当前上限是静态快照：已验证的
-`base_T_slide_zero.z=420 mm` 加上 `rotation_output_T_tool.z=-240 mm`，得到 Z 轴回零时
-`TCP Base Z=180 mm`。若 Base 标定或 TCP 几何变化，必须重新计算并由用户确认配置；运行时不会
-自动推导。当前只完成配置加载与离线边界验证，没有据此执行真实硬件运动。
+数值来源：本机用户确认的 Base 工作区；现场输入 X `[10, 50] cm`、Y `[-12, 78] cm`，配置统一
+换算为 mm。Z 是最终 TCP 在 Base frame 中的绝对
+高度，不是 Z 轴逻辑位置，也不是相对 Home 的位移。工作区不会从历史 Base 标定或
+Rotation→TCP 偏移自动推导；现场填写 `tcp_height_at_z_zero_mm` 后，还必须独立复核这里的绝对
+Z 边界。当前只完成配置加载与离线边界验证，没有据此执行真实硬件运动。
 
 边界为闭区间，并使用默认 `1e-6 mm` 数值容差。配置不会把允许容差内的请求坐标改写到边界。
 JSON 的 `metadata.validated` 必须明确为 `true`；模板中的 `null` 和 `false` 不能用于运动入口。

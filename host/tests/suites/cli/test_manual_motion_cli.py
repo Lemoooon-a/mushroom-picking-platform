@@ -14,7 +14,6 @@ from config.frame_transforms import FixedFrameTransforms, FrameTransformsDocumen
 from geometry.rigid_transform import RigidTransform
 from kinematics.base_frame_solver import (
     FiveAxisNoSolutionError,
-    UnvalidatedBaseTransformError,
 )
 from kinematics.base_move_transition_planner import (
     BaseMovePlanningError,
@@ -53,15 +52,12 @@ from tests.helpers.motion_cli_test_support import (
 
 class ManualMotionTests(unittest.TestCase):
     @staticmethod
-    def _plan_model() -> FiveAxisKinematics:
+    def _plan_model(tcp_height_at_z_zero_mm: float = 300.0) -> FiveAxisKinematics:
         return FiveAxisKinematics(
             FiveAxisGeometry(
                 link1_length_mm=300,
                 link2_length_mm=300,
-                slide_direction_xyz=(0, 1, 0),
-                z_direction_xyz=(0, 0, 1),
-                slide_zero_T_planar_origin_at_zero=RigidTransform.identity(),
-                rotation_output_T_tool=RigidTransform.identity(),
+                tcp_height_at_z_zero_mm=tcp_height_at_z_zero_mm,
             )
         )
 
@@ -139,15 +135,8 @@ class ManualMotionTests(unittest.TestCase):
     def _plan_target(
         model: FiveAxisKinematics,
         state: tuple[float, float, float, float, float],
-        *,
-        base_z_mm: float = 300.0,
     ) -> RigidTransform:
-        return RigidTransform.from_xyz_yaw_deg(
-            x_mm=0,
-            y_mm=0,
-            z_mm=base_z_mm,
-            yaw_deg=0,
-        ) @ model.forward_kinematics(RobotAxisState(*state))
+        return model.forward_kinematics(RobotAxisState(*state))
 
     def test_inspect_and_state_are_read_only(self) -> None:
         runtime = fake_runtime()
@@ -246,11 +235,10 @@ class ManualMotionTests(unittest.TestCase):
         runtime.controller.submit_positions.assert_not_called()
 
     def test_plan_base_clearance_and_current_state_failures_are_explicit(self) -> None:
-        model = self._plan_model()
+        model = self._plan_model(149.0)
         target = self._plan_target(
             model,
             self._plan_state(model, 350, -250, -200),
-            base_z_mm=149.0,
         )
         with self.assertRaises(ClearanceHeightUnreachableError):
             run_plan_base(
@@ -269,13 +257,14 @@ class ManualMotionTests(unittest.TestCase):
                 emit=lambda _line: None,
             )
 
-    def test_plan_base_unvalidated_transform_is_always_rejected(self) -> None:
+    def test_plan_base_does_not_depend_on_historical_base_validation(self) -> None:
         model = self._plan_model()
-        target = RigidTransform.from_xyz_yaw_deg(
-            x_mm=300, y_mm=250, z_mm=-300, yaw_deg=0
+        target = self._plan_target(
+            model,
+            self._plan_state(model, 350, 250, -350),
         )
         runtime = self._plan_runtime(self._plan_state(model, 300, 250, -300))
-        with self.assertRaisesRegex(ValueError, "provisional"):
+        self.assertTrue(
             run_plan_base(
                 runtime,
                 target,
@@ -283,8 +272,9 @@ class ManualMotionTests(unittest.TestCase):
                 five_axis_kinematics=model,
                 emit=lambda _line: None,
             )
+        )
         runtime.controller.submit_positions.assert_not_called()
-        runtime.__enter__.assert_not_called()
+        runtime.__enter__.assert_called_once()
 
     def test_plan_base_missing_or_corrupt_frame_config_is_explicit(self) -> None:
         target = RigidTransform.from_xyz_yaw_deg(
@@ -311,8 +301,10 @@ class ManualMotionTests(unittest.TestCase):
                 )
 
     def test_plan_base_does_not_modify_provisional_frame_config(self) -> None:
-        target = RigidTransform.from_xyz_yaw_deg(
-            x_mm=100, y_mm=100, z_mm=0, yaw_deg=0
+        model = self._plan_model()
+        target = self._plan_target(
+            model,
+            self._plan_state(model, 350, 250, -350),
         )
         payload = """{
   "schema_version": 1,
@@ -327,14 +319,13 @@ class ManualMotionTests(unittest.TestCase):
             path = Path(directory) / "frame_transforms.json"
             path.write_text(payload, encoding="utf-8")
             before = path.read_bytes()
-            with self.assertRaisesRegex(ValueError, "provisional"):
-                run_plan_base(
-                    fake_runtime(),
-                    target,
-                    frame_config=path,
-                    five_axis_kinematics=self._plan_model(),
-                    emit=lambda _line: None,
-                )
+            run_plan_base(
+                self._plan_runtime(self._plan_state(model, 300, 250, -300)),
+                target,
+                frame_config=path,
+                five_axis_kinematics=model,
+                emit=lambda _line: None,
+            )
             self.assertEqual(path.read_bytes(), before)
 
     @patch("scripts.manual_motion.create_configured_runtime")
@@ -409,8 +400,8 @@ class ManualMotionTests(unittest.TestCase):
 
     @patch("scripts.manual_motion.run_plan_base")
     @patch("scripts.manual_motion.create_configured_runtime")
-    def test_plan_base_unvalidated_calibration_has_config_exit_code(self, create, plan) -> None:
-        plan.side_effect = UnvalidatedBaseTransformError("provisional calibration")
+    def test_plan_base_configuration_error_has_config_exit_code(self, create, plan) -> None:
+        plan.side_effect = ValueError("tcp_height_at_z_zero_mm is not measured")
         argv = [
             "plan-base",
             "--tcp-x-mm", "300",
@@ -421,7 +412,7 @@ class ManualMotionTests(unittest.TestCase):
         error = io.StringIO()
         with redirect_stdout(io.StringIO()), redirect_stderr(error):
             self.assertEqual(main(argv), 2)
-        self.assertIn("calibration unavailable", error.getvalue())
+        self.assertIn("tcp_height_at_z_zero_mm", error.getvalue())
 
     @patch("scripts.manual_motion.create_configured_runtime")
     def test_motion_and_rotation_confirmation_gates_precede_runtime(self, create) -> None:

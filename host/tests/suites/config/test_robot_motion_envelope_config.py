@@ -22,7 +22,7 @@ class RobotMotionEnvelopeConfigTests(unittest.TestCase):
         self.assertEqual(
             envelope.startup_pose,
             StartupSafePoseConfig(
-                base_x_mm=200.0,
+                base_x_mm=400.0,
                 base_y_mm=0.0,
                 tool_yaw_deg=0.0,
                 slide_mm=0.0,

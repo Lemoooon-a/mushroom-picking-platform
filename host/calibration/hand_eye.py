@@ -27,6 +27,7 @@ class HandEyeCalibration:
     method: str
     created_at: str | None = None
     target_compensation_base_mm: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    target_compensation_camera_mm: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     def __post_init__(self) -> None:
         if not isinstance(self.tool_T_camera, RigidTransform):
@@ -47,6 +48,20 @@ class HandEyeCalibration:
                 self.target_compensation_base_mm,
             ),
         )
+        object.__setattr__(
+            self,
+            "target_compensation_camera_mm",
+            _finite_triplet(
+                "target_compensation_camera_mm",
+                self.target_compensation_camera_mm,
+            ),
+        )
+        if any(self.target_compensation_base_mm) and any(
+            self.target_compensation_camera_mm
+        ):
+            raise ValueError(
+                "target compensation must be configured in Camera or Base, not both"
+            )
 
     @property
     def status(self) -> HandEyeCalibrationStatus:
@@ -71,6 +86,33 @@ class HandEyeCalibration:
                 strict=True,
             )
         )
+
+    def compensate_camera_point(
+        self,
+        point_xyz_mm: Sequence[float],
+    ) -> tuple[float, float, float]:
+        """在 Camera frame 中给检测点加目标补偿。"""
+
+        point = _finite_triplet("point_xyz_mm", point_xyz_mm)
+        return tuple(
+            coordinate + offset
+            for coordinate, offset in zip(
+                point,
+                self.target_compensation_camera_mm,
+                strict=True,
+            )
+        )
+
+    def compensate_camera_pose(self, pose: RigidTransform) -> RigidTransform:
+        """只补偿 Camera 下目标平移，保持目标旋转不变。"""
+
+        if not isinstance(pose, RigidTransform):
+            raise TypeError("pose must be a RigidTransform")
+        matrix = pose.matrix.copy()
+        matrix[:3, 3] = self.compensate_camera_point(
+            tuple(float(value) for value in pose.translation_mm)
+        )
+        return RigidTransform(matrix)
 
     def compensate_base_pose(self, pose: RigidTransform) -> RigidTransform:
         """只补偿 Base 位姿平移，保持原始旋转不变。"""
@@ -119,6 +161,10 @@ def hand_eye_from_frame_document(
         created_at=created_at if isinstance(created_at, str) else None,
         target_compensation_base_mm=metadata.get(
             "tool_camera_target_compensation_base_mm",
+            (0.0, 0.0, 0.0),
+        ),
+        target_compensation_camera_mm=metadata.get(
+            "tool_camera_target_compensation_camera_mm",
             (0.0, 0.0, 0.0),
         ),
     )

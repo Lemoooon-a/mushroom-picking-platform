@@ -322,14 +322,7 @@ def _five_axis_geometry_dict(
             geometry.link1_length_mm,
             geometry.link2_length_mm,
         ],
-        "slide_direction_xyz": list(geometry.slide_direction_xyz),
-        "z_direction_xyz": list(geometry.z_direction_xyz),
-        "slide_zero_T_planar_origin_at_zero": _transform_dict(
-            geometry.slide_zero_T_planar_origin_at_zero
-        ),
-        "rotation_output_T_tool": _transform_dict(
-            geometry.rotation_output_T_tool
-        ),
+        "tcp_height_at_z_zero_mm": geometry.tcp_height_at_z_zero_mm,
     }
 
 

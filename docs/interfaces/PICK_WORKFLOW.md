@@ -20,9 +20,10 @@ VisionGateway → VisionTargetObservation → VisionTargetResolver
 | --- | --- | --- | --- |
 | pre-grasp | object Z + `approach_offset_mm` | 不应用最终任务 Z 门限 | Base solver、OffsetWorkspace、轴/关节限位、RobotMotionEnvelope |
 | contact | object Z + `contact_offset_mm` | 必须通过 | 同上 |
-| retreat | object Z + `retreat_offset_mm` | 不应用最终任务 Z 门限 | 同上 |
+| retreat | `retreat_z_mm`，或 object Z + `retreat_offset_mm` | 不应用最终任务 Z 门限 | 同上 |
 
 三个目标都在规划阶段验证；任何一个失败都不返回部分 `PickPlan`。高位阶段只绕过 Tray 的最终目标门限，仍复用同一个 Base 规划出口。
+若配置 `minimum_transit_z_mm`，pre-grasp 和 retreat 必须严格高于该 Base Z；同 XY/yaw 的垂直接触段不应用此门限。
 
 ## 结果语义
 

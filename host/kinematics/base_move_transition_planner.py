@@ -303,9 +303,8 @@ class BaseMoveTransitionPlanner:
         *,
         allow_outside_workspace: bool,
     ) -> FiveAxisSolution:
-        slide_zero_target = self.solver.transform_base_target_to_slide_zero(target)
         local = self.solver.five_axis_kinematics.compute_arm_local_target(
-            slide_zero_target,
+            target,
             planar_state.slide_mm,
         )
         state = RobotAxisState(

@@ -41,6 +41,7 @@ def load_validated_scan_pick_profile(path: Path) -> ScanPickProfile:
             ),
             place_approach_height_mm=root.get("place_approach_height_mm"),
             max_picks_per_scan_pose=root.get("max_picks_per_scan_pose"),
+            scan_settle_time_s=root.get("scan_settle_time_s", 0.0),
         )
     except (TypeError, ValueError) as exc:
         raise ScanPickConfigError(str(exc)) from exc

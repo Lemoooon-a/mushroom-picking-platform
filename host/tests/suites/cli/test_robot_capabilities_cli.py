@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from calibration.hand_eye import HandEyeCalibrationStatus
 from config.frame_transforms import FixedFrameTransforms, save_frame_transforms
@@ -11,7 +12,8 @@ from scripts.robot_capabilities import format_capabilities, load_capabilities
 
 
 class RobotCapabilitiesCliTests(unittest.TestCase):
-    def test_missing_hand_eye_is_reported_without_disabling_base(self) -> None:
+    @patch("scripts.robot_capabilities.load_local_five_axis_kinematics")
+    def test_missing_hand_eye_is_reported_without_disabling_base(self, _load_geometry) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "frames.json"
             save_frame_transforms(
@@ -31,7 +33,8 @@ class RobotCapabilitiesCliTests(unittest.TestCase):
         self.assertIn("Hand-eye calibration: missing", rendered)
         self.assertIn("Vision target motion: unavailable", rendered)
 
-    def test_transform_without_validation_is_provisional(self) -> None:
+    @patch("scripts.robot_capabilities.load_local_five_axis_kinematics")
+    def test_transform_without_validation_is_provisional(self, _load_geometry) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "frames.json"
             save_frame_transforms(

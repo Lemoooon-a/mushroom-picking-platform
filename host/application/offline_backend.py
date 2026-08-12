@@ -19,7 +19,7 @@ from config.project.robot_motion_envelope import (
 from config.project.workspace_planning import DEFAULT_OFFSET_WORKSPACE_CONFIG, OffsetWorkspaceConfig
 from config.tray_workspace import load_tray_workspace_config
 from geometry.rigid_transform import RigidTransform
-from kinematics.base_frame_solver import BaseFrameFiveAxisSolver, BaseFrameSolverConfig, UnvalidatedBaseTransformError
+from kinematics.base_frame_solver import BaseFrameFiveAxisSolver, BaseFrameSolverConfig
 from kinematics.base_move_transition_planner import BaseMovePlan, BaseMoveTransitionPlanner
 from kinematics.five_axis import FiveAxisKinematics, load_local_five_axis_kinematics
 from kinematics.frame_chain import RobotAxisState
@@ -188,13 +188,9 @@ def create_offline_planning_controller(
     motion_envelope: RobotMotionEnvelopeConfig = DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
 ) -> tuple[MushroomRobotController, OfflinePlanningBackend]:
     document = load_frame_transforms_document(frame_config)
-    if document.metadata.get("validated") is not True:
-        raise UnvalidatedBaseTransformError("Base–Slide-zero transform must have metadata.validated=true")
     solver = BaseFrameFiveAxisSolver(
         five_axis_kinematics=load_local_five_axis_kinematics(),
-        base_T_slide_zero=document.transforms.base_T_slide_zero,
         axis_descriptors=_offline_descriptors(),
-        base_transform_validated=True,
         config=BaseFrameSolverConfig(workspace=offset_workspace_config),
     )
     backend = OfflinePlanningBackend(

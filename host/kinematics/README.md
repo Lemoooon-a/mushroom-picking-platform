@@ -27,17 +27,18 @@ solutions = kinematics.inverse(x=point.x, y=point.y)
 
 ## 参数化五轴正运动学
 
-`five_axis.FiveAxisKinematics` 在上述 Planar 2R 外组合 Slide、Z、Rotation 和 TCP 固定偏移，
-返回 `slide_zero_T_tool`：
+`five_axis.FiveAxisKinematics` 在上述 Planar 2R 外组合 Slide、Z 和 Rotation，直接返回
+`base_T_tool`：
 
 ```text
-Slide/Z translation
-  @ slide_zero_T_planar_origin_at_zero
-  @ planar_origin_T_rotation_output(shoulder, elbow, rotation)
-  @ rotation_output_T_tool
+x = planar_2r_fk_x(shoulder, elbow)
+y = slide_mm + planar_2r_fk_y(shoulder, elbow)
+z = tcp_height_at_z_zero_mm + z_mm
+yaw = shoulder_deg + elbow_deg + rotation_deg
 ```
 
-当前机器几何从被 Git 忽略的 `config/local/five_axis_geometry.json` 加载。模板位于
+Rotation 只影响 yaw，不影响 TCP XYZ；不再使用外部 Base→Slide-zero XY/yaw 或
+Rotation→TCP 位置偏移。当前机器几何从 `config/local/five_axis_geometry.json` 加载。模板位于
 `config/examples/five_axis_geometry.json`。
 该 example 故意把未知尺寸设为 `null` 且保持
 `geometry_confirmed=false`，避免示例数值进入真实标定。

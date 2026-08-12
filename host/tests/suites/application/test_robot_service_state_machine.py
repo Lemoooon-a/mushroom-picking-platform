@@ -262,6 +262,7 @@ class RobotServiceStateMachineTests(unittest.TestCase):
 
         service.stop()
         self.assertIs(service.state, RobotServiceState.FAULT)
+        self.assertIn("idle", backend.calls)
         axis_port.wait_release.set()
         thread.join(1.0)
 
@@ -280,7 +281,7 @@ class RobotServiceStateMachineTests(unittest.TestCase):
 
         service.shutdown()
         self.assertIs(service.state, RobotServiceState.SHUTDOWN)
-        self.assertEqual(backend.calls[-2:], ["stop", "shutdown"])
+        self.assertEqual(backend.calls[-3:], ["stop", "idle", "shutdown"])
         axis_port.wait_release.set()
         thread.join(1.0)
         self.assertIs(service.state, RobotServiceState.SHUTDOWN)

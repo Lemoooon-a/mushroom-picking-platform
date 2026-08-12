@@ -300,6 +300,9 @@ def _observe_and_plan_vision_target(
     compensation_x, compensation_y, compensation_z = (
         resolved.target_compensation_base_mm
     )
+    camera_compensation_x, camera_compensation_y, camera_compensation_z = (
+        resolved.target_compensation_camera_mm
+    )
     plan = service.plan_base_target(
         BaseToolTarget(base_x, base_y, base_z, yaw_deg=None)
     )
@@ -310,6 +313,11 @@ def _observe_and_plan_vision_target(
         "camera": {
             "frame_id": observation.frame_id,
             "position_mm": observation.position_mm,
+            "target_compensation_camera_mm": {
+                "x": camera_compensation_x,
+                "y": camera_compensation_y,
+                "z": camera_compensation_z,
+            },
             "confidence": observation.confidence,
             "timestamp": observation.timestamp,
             "target_id": observation.target_id,

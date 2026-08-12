@@ -52,15 +52,7 @@ def _model() -> FiveAxisKinematics:
         FiveAxisGeometry(
             link1_length_mm=400.0,
             link2_length_mm=400.0,
-            slide_direction_xyz=(0.0, 1.0, 0.0),
-            z_direction_xyz=(0.0, 0.0, 1.0),
-            slide_zero_T_planar_origin_at_zero=RigidTransform.identity(),
-            rotation_output_T_tool=RigidTransform.from_xyz_yaw_deg(
-                x_mm=0.0,
-                y_mm=0.0,
-                z_mm=-240.0,
-                yaw_deg=0.0,
-            ),
+            tcp_height_at_z_zero_mm=180.0,
         )
     )
 
@@ -101,26 +93,19 @@ def _descriptors() -> dict[AxisName, AxisDescriptor]:
 def _solver() -> BaseFrameFiveAxisSolver:
     return BaseFrameFiveAxisSolver(
         five_axis_kinematics=_model(),
-        base_T_slide_zero=RigidTransform.from_xyz_yaw_deg(
-            x_mm=-200.0,
-            y_mm=0.0,
-            z_mm=420.0,
-            yaw_deg=0.0,
-        ),
         axis_descriptors=_descriptors(),
-        base_transform_validated=True,
     )
 
 
 def _state_for_base_target(
     subject: BaseFrameFiveAxisSolver,
     *,
-    x_mm: float = 200.0,
+    x_mm: float = 400.0,
     y_mm: float,
     z_axis_mm: float,
     yaw_deg: float = 0.0,
 ) -> RobotAxisState:
-    base_z = -240.0 + z_axis_mm
+    base_z = subject.five_axis_kinematics.geometry.tcp_height_at_z_zero_mm + z_axis_mm
     return subject.solve_base_target(
         base_T_tool_target=RigidTransform.from_xyz_yaw_deg(
             x_mm=x_mm,
@@ -470,7 +455,7 @@ class StartupSafePoseSolverTests(unittest.TestCase):
         )
         self.assertAlmostEqual(solved.solution.slide_mm, 0.0)
         self.assertAlmostEqual(solved.solution.z_mm, 0.0)
-        self.assertAlmostEqual(solved.base_T_tool_target.translation_mm[0], 200.0)
+        self.assertAlmostEqual(solved.base_T_tool_target.translation_mm[0], 400.0)
         self.assertAlmostEqual(solved.base_T_tool_target.translation_mm[1], 0.0)
         self.assertIs(solved.solution.workspace_side, OffsetWorkspaceSide.OUTSIDE)
         self.assertLess(solved.solution.position_residual_mm, 1e-6)
@@ -496,7 +481,7 @@ class StartupSafePoseSolverTests(unittest.TestCase):
         self.assertEqual(near_negative.solution.elbow_branch, "elbow-negative")
 
     def test_custom_startup_pose_is_injected_into_demo_flow(self) -> None:
-        startup = StartupSafePoseConfig(base_x_mm=220.0)
+        startup = StartupSafePoseConfig(base_x_mm=420.0)
         envelope = RobotMotionEnvelopeConfig(startup_pose=startup)
         flow, _output = _flow(
             _FakeRuntime(),
@@ -507,7 +492,7 @@ class StartupSafePoseSolverTests(unittest.TestCase):
         self.assertIs(flow.startup_definition, startup)
         self.assertAlmostEqual(
             flow.startup_pose.base_T_tool_target.translation_mm[0],
-            220.0,
+            420.0,
         )
 
 
@@ -888,7 +873,7 @@ class DemoPlanningTests(unittest.TestCase):
         self.assertAlmostEqual(flow.virtual_state.slide_mm, 0.0)
         self.assertAlmostEqual(flow.virtual_state.z_mm, 0.0)
         pose = flow.solver.forward_kinematics_base(flow.virtual_state)
-        self.assertAlmostEqual(pose.translation_mm[0], 200.0)
+        self.assertAlmostEqual(pose.translation_mm[0], 400.0)
         self.assertAlmostEqual(pose.translation_mm[1], 0.0)
 
 

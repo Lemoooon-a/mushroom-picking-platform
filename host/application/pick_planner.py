@@ -57,7 +57,25 @@ class PickPlanner:
         x_mm, y_mm, object_z_mm = (float(value) for value in object_pose.translation_mm)
         pre = BaseToolTarget(x_mm, y_mm, object_z_mm + grasp_profile.approach_offset_mm, yaw)
         contact = BaseToolTarget(x_mm, y_mm, object_z_mm + grasp_profile.contact_offset_mm, yaw)
-        retreat = BaseToolTarget(x_mm, y_mm, object_z_mm + grasp_profile.retreat_offset_mm, yaw)
+        retreat_z_mm = (
+            float(grasp_profile.retreat_z_mm)
+            if grasp_profile.retreat_z_mm is not None
+            else object_z_mm + float(grasp_profile.retreat_offset_mm)
+        )
+        if retreat_z_mm < contact.z_mm:
+            raise PickPlanningError(
+                f"retreat Base Z {retreat_z_mm:g} mm is below contact Base Z "
+                f"{contact.z_mm:g} mm"
+            )
+        retreat = BaseToolTarget(x_mm, y_mm, retreat_z_mm, yaw)
+        if grasp_profile.minimum_transit_z_mm is not None:
+            minimum_transit_z = float(grasp_profile.minimum_transit_z_mm)
+            for stage_name, target in (("pre-grasp", pre), ("retreat", retreat)):
+                if target.z_mm <= minimum_transit_z:
+                    raise PickPlanningError(
+                        f"{stage_name} Base Z {target.z_mm:g} mm must be above "
+                        f"minimum transit Z {minimum_transit_z:g} mm"
+                    )
 
         # 三个阶段必须全部规划成功后才构造 PickPlan。只有 contact 是 Tray 最终任务目标。
         pre_motion, contact_motion, retreat_motion = self.controller.plan_base_target_sequence(

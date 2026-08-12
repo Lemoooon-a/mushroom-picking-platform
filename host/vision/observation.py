@@ -198,7 +198,7 @@ def require_snapshot_unchanged(
     *,
     axis_state: RobotAxisState,
     motion_state: CaptureMotionState,
-    tolerance: float = 1e-9,
+    tolerance: float | None = None,
 ) -> None:
     if not isinstance(snapshot, CaptureSnapshot):
         raise TypeError("snapshot must be a CaptureSnapshot")
@@ -206,13 +206,37 @@ def require_snapshot_unchanged(
         raise ValueError("robot moved while the vision request was in flight")
     if not isinstance(axis_state, RobotAxisState):
         raise TypeError("axis_state must be a RobotAxisState")
-    before = tuple(getattr(snapshot.axis_state, name) for name in _AXIS_FIELDS)
-    after = tuple(getattr(axis_state, name) for name in _AXIS_FIELDS)
-    if any(abs(left - right) > tolerance for left, right in zip(before, after, strict=True)):
-        raise ValueError("robot axis state changed while the vision request was in flight")
+    if tolerance is not None:
+        uniform_tolerance = _finite("tolerance", tolerance)
+        if uniform_tolerance < 0.0:
+            raise ValueError("tolerance must be non-negative")
+    else:
+        uniform_tolerance = None
+    for name in _AXIS_FIELDS:
+        before = getattr(snapshot.axis_state, name)
+        after = getattr(axis_state, name)
+        allowed = (
+            _CAPTURE_AXIS_TOLERANCES[name]
+            if uniform_tolerance is None
+            else uniform_tolerance
+        )
+        delta = abs(before - after)
+        if delta > allowed:
+            raise ValueError(
+                "robot axis state changed while the vision request was in flight: "
+                f"{name} delta={delta:g} exceeds tolerance={allowed:g}"
+            )
 
 
 _AXIS_FIELDS = ("slide_mm", "z_mm", "shoulder_deg", "elbow_deg", "rotation_deg")
+_CAPTURE_AXIS_TOLERANCES = {
+    # 仅吸收静止反馈量化，不替代 STATIONARY/busy 运动门禁。
+    "slide_mm": 0.01,
+    "z_mm": 0.01,
+    "shoulder_deg": 0.01,
+    "elbow_deg": 0.01,
+    "rotation_deg": 0.1,
+}
 
 
 def _vector3(value: Vector3 | Sequence[float]) -> Vector3:

@@ -39,8 +39,26 @@ class DemoFlowApplicationBackend:
         self.runtime.open()
         try:
             self.flow.startup()
-        except BaseException:
-            self.runtime.close()
+        except BaseException as startup_exc:
+            stop_error: BaseException | None = None
+            try:
+                # transport 仍打开时先尝试停止；关闭后已无法发送 hold/stop。
+                self.flow.stop()
+            except BaseException as exc:
+                stop_error = exc
+            stop_report = getattr(self.flow, "last_stop_report", None)
+            if stop_report is not None:
+                try:
+                    setattr(startup_exc, "stop_report", stop_report)
+                except (AttributeError, TypeError):
+                    pass
+            try:
+                self.runtime.close()
+            finally:
+                if stop_error is not None:
+                    startup_exc.add_note(
+                        f"startup compensation stop failed: {stop_error}"
+                    )
             raise
 
     def require_base_motion_ready(self) -> None:

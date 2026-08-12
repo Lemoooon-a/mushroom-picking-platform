@@ -18,7 +18,6 @@ from kinematics.base_frame_solver import (
     BaseFrameFiveAxisSolver,
     BaseFrameSolverError,
     FiveAxisNoSolutionError,
-    UnvalidatedBaseTransformError,
 )
 from kinematics.five_axis import FiveAxisGeometry, FiveAxisKinematics
 from kinematics.frame_chain import RobotAxisState
@@ -30,19 +29,11 @@ from motion.unified_protocol import (
 )
 
 
-def geometry(*, tool_z_mm: float = 0.0) -> FiveAxisGeometry:
+def geometry(*, tcp_height_at_z_zero_mm: float = 0.0) -> FiveAxisGeometry:
     return FiveAxisGeometry(
         link1_length_mm=300.0,
         link2_length_mm=300.0,
-        slide_direction_xyz=(0.0, 1.0, 0.0),
-        z_direction_xyz=(0.0, 0.0, 1.0),
-        slide_zero_T_planar_origin_at_zero=RigidTransform.identity(),
-        rotation_output_T_tool=RigidTransform.from_xyz_yaw_deg(
-            x_mm=0.0,
-            y_mm=0.0,
-            z_mm=tool_z_mm,
-            yaw_deg=0.0,
-        ),
+        tcp_height_at_z_zero_mm=tcp_height_at_z_zero_mm,
     )
 
 
@@ -80,17 +71,11 @@ def descriptors(
 def solver(
     *,
     model: FiveAxisKinematics | None = None,
-    base: RigidTransform | None = None,
     limits: dict[AxisName, AxisDescriptor] | None = None,
-    validated: bool = True,
-    allow_unvalidated: bool = False,
 ) -> BaseFrameFiveAxisSolver:
     return BaseFrameFiveAxisSolver(
         five_axis_kinematics=model or FiveAxisKinematics(geometry()),
-        base_T_slide_zero=base or RigidTransform.identity(),
         axis_descriptors=limits or descriptors(),
-        base_transform_validated=validated,
-        allow_unvalidated_base_transform=allow_unvalidated,
     )
 
 
@@ -119,34 +104,17 @@ def state_for_local_point(
 def target_for_state(
     model: FiveAxisKinematics,
     state: RobotAxisState,
-    base: RigidTransform | None = None,
 ) -> RigidTransform:
-    return (base or RigidTransform.identity()) @ model.forward_kinematics(state)
+    return model.forward_kinematics(state)
 
 
 class BaseFrameTransformAndGateTests(unittest.TestCase):
-    def test_base_target_conversion_round_trip(self) -> None:
-        base = RigidTransform.from_xyz_yaw_deg(
-            x_mm=10,
-            y_mm=20,
-            z_mm=30,
-            yaw_deg=-35,
-        )
-        target_slide = RigidTransform.from_xyz_yaw_deg(
-            x_mm=400,
-            y_mm=250,
-            z_mm=-80,
-            yaw_deg=20,
-        )
-        subject = solver(base=base)
-        converted = subject.transform_base_target_to_slide_zero(base @ target_slide)
-        np.testing.assert_allclose(converted.matrix, target_slide.matrix, atol=1e-10)
-
-    def test_unvalidated_transform_is_rejected_by_default(self) -> None:
-        with self.assertRaisesRegex(UnvalidatedBaseTransformError, "provisional"):
-            solver(validated=False)
-        self.assertFalse(
-            solver(validated=False, allow_unvalidated=True).base_transform_validated
+    def test_base_target_is_already_in_mechanical_model_frame(self) -> None:
+        state = RobotAxisState(100, -50, 20, 60, -80)
+        subject = solver()
+        np.testing.assert_allclose(
+            subject.forward_kinematics_base(state).matrix,
+            subject.five_axis_kinematics.forward_kinematics(state).matrix,
         )
 
     def test_import_has_no_hardware_or_local_file_side_effect(self) -> None:
@@ -342,10 +310,7 @@ class OffsetWorkspaceSolverTests(unittest.TestCase):
                     FiveAxisGeometry(
                         150,
                         150,
-                        (0, 1, 0),
-                        (0, 0, 1),
-                        RigidTransform.identity(),
-                        RigidTransform.identity(),
+                        0,
                     )
                 ),
                 descriptors(),
@@ -538,9 +503,9 @@ class FrozenJointLimitTests(unittest.TestCase):
             self.assertEqual(raised.exception.stage, "elbow_limit")
 
 
-class ZSignAndToolOffsetTests(unittest.TestCase):
+class ZSignAndTcpHeightTests(unittest.TestCase):
     def test_lower_base_target_produces_more_negative_z(self) -> None:
-        model = FiveAxisKinematics(geometry(tool_z_mm=-240.0))
+        model = FiveAxisKinematics(geometry(tcp_height_at_z_zero_mm=200.0))
         subject = solver(model=model)
         current = state_for_local_point(
             model,

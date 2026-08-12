@@ -50,6 +50,7 @@ class HandEyeCalibration:
     method: str
     created_at: str | None = None
     target_compensation_base_mm: tuple[float, float, float] = (0, 0, 0)
+    target_compensation_camera_mm: tuple[float, float, float] = (0, 0, 0)
 ```
 
 状态严格区分：
@@ -68,7 +69,8 @@ class HandEyeCalibration:
     "tool_camera_method": "...",
     "tool_camera_set_at": "...",
     "tool_camera_validated": false,
-    "tool_camera_target_compensation_base_mm": [0, 0, 0]
+    "tool_camera_target_compensation_base_mm": [0, 0, 0],
+    "tool_camera_target_compensation_camera_mm": [0, 0, 0]
   }
 }
 ```
@@ -81,6 +83,9 @@ Base–Slide-zero 状态，不能替代 `tool_camera_validated`。
 `tool_T_camera` 外参或目标 yaw。配置必须是三个有限数；例如 `[-10, 10, -10]` 表示最终
 Base 目标 X 减少 10 mm、Y 增加 10 mm、Z 降低 10 mm。完整抓取的 approach/contact/retreat
 偏置在该补偿之后应用。
+
+`tool_camera_target_compensation_camera_mm` 在 Camera 下的检测点上、Camera→Base 变换前应用。
+Camera 与 Base 两种补偿只能有一种为非零，防止同一误差被重复补偿。
 
 ## 5. Provisional 录入
 

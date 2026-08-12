@@ -29,7 +29,6 @@ from geometry.rigid_transform import RigidTransform  # noqa: E402
 from kinematics.base_frame_solver import (  # noqa: E402
     BaseFrameFiveAxisSolver,
     FiveAxisNoSolutionError,
-    UnvalidatedBaseTransformError,
 )
 from kinematics.base_move_transition_planner import (  # noqa: E402
     BaseMovePlan,
@@ -141,7 +140,7 @@ def run_plan_base(
     if not isinstance(model, FiveAxisKinematics):
         raise TypeError("plan-base requires the built-in FiveAxisKinematics model")
     base_transform_validated = document.metadata.get("validated") is True
-    emit("Base calibration loaded:")
+    emit("Historical Base calibration (not used by the mechanical Base/TCP model):")
     emit(
         "  source: "
         + ("<in-memory test document>" if frame_document is not None else str(frame_config))
@@ -149,12 +148,6 @@ def run_plan_base(
     emit(f"  validation status: {base_transform_validated}")
     emit("  base_T_slide_zero:")
     _emit_transform(document.transforms.base_T_slide_zero, emit=emit)
-    if not base_transform_validated:
-        raise UnvalidatedBaseTransformError(
-            "The Base–Slide-zero transform is provisional and has not passed "
-            "an independent pose validation."
-        )
-
     with runtime:
         initialize_read_only_rotary_positions(runtime, _AXIS_ORDER)
         descriptors = runtime.controller.list_axes()
@@ -163,9 +156,7 @@ def run_plan_base(
         descriptor_by_axis = {descriptor.name: descriptor for descriptor in descriptors}
         solver = BaseFrameFiveAxisSolver(
             five_axis_kinematics=model,
-            base_T_slide_zero=document.transforms.base_T_slide_zero,
             axis_descriptors=descriptor_by_axis,
-            base_transform_validated=base_transform_validated,
         )
         planner = BaseMoveTransitionPlanner(
             solver,
@@ -583,9 +574,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             succeeded = run_stop(runtime, axes[0], execute=execute)
         return 0 if succeeded else 1
-    except UnvalidatedBaseTransformError as exc:
-        print(f"plan-base calibration unavailable: {exc}", file=sys.stderr)
-        return 2
     except FiveAxisNoSolutionError as exc:
         print(
             f"plan-base no solution: {exc}; stage={exc.stage}; "

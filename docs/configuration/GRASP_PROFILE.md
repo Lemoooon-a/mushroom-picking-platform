@@ -8,7 +8,9 @@
 | --- | --- | --- |
 | `approach_offset_mm` | object Base Z 到 pre-grasp 的偏移 | 有限、非负、不低于 contact |
 | `contact_offset_mm` | object Base Z 到 contact 的偏移 | 有限，可为负 |
-| `retreat_offset_mm` | object Base Z 到 retreat 的偏移 | 有限、非负、不低于 contact |
+| `retreat_offset_mm` | object Base Z 到 retreat 的偏移 | 与 `retreat_z_mm` 二选一；有限、非负、不低于 contact |
+| `retreat_z_mm` | retreat 的 Base 绝对 Z | 与 `retreat_offset_mm` 二选一；有限且不得低于 contact Base Z |
+| `minimum_transit_z_mm` | pre-grasp/retreat 的最低 Base Z 门限 | 可选、有限；两个高位目标都必须严格高于此值，contact 豁免 |
 | `yaw_mode` | `fixed` / `keep_current` / `from_observation` | 枚举值 |
 | `fixed_yaw_deg` | 固定 Base tool yaw | 只在 `fixed` 时必填 |
 | `minimum_confidence` | 最低检测置信度 | `[0,1]` |

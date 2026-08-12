@@ -19,7 +19,7 @@ def _finite(name: str, value: object) -> float:
 class StartupSafePoseConfig:
     """专用于 Homing 后 startup/return 的固定安全姿态策略。"""
 
-    base_x_mm: float = 200.0
+    base_x_mm: float = 400.0
     base_y_mm: float = 0.0
     tool_yaw_deg: float = 0.0
     slide_mm: float = 0.0

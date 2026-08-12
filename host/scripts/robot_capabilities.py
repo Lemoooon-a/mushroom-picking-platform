@@ -22,6 +22,10 @@ from config.frame_transforms import (  # noqa: E402
     FrameTransformConfigError,
     load_frame_transforms_document,
 )
+from kinematics.five_axis import (  # noqa: E402
+    FiveAxisGeometryError,
+    load_local_five_axis_kinematics,
+)
 
 
 DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "local" / "frame_transforms.json"
@@ -29,20 +33,24 @@ DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "local" / "frame_transforms.json"
 
 def load_capabilities(frame_config: Path) -> RobotCapabilities:
     document = load_frame_transforms_document(frame_config)
+    try:
+        load_local_five_axis_kinematics()
+    except FiveAxisGeometryError:
+        base_frame_motion = False
+    else:
+        base_frame_motion = True
     calibration = hand_eye_from_frame_document(
         document,
         source=str(frame_config),
     )
     hand_eye_available = calibration is not None and calibration.validated
     return RobotCapabilities(
-        base_frame_motion=document.metadata.get("validated") is True,
+        base_frame_motion=base_frame_motion,
         suction_control=True,
         rotary_joint_enable_control=True,
         hand_eye_calibration=hand_eye_status(calibration),
         vision_target_resolution=hand_eye_available,
-        vision_target_motion=(
-            hand_eye_available and document.metadata.get("validated") is True
-        ),
+        vision_target_motion=hand_eye_available and base_frame_motion,
     )
 
 

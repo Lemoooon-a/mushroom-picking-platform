@@ -20,10 +20,6 @@ HOST_ROOT = Path(__file__).resolve().parents[1]
 if str(HOST_ROOT) not in sys.path:
     sys.path.insert(0, str(HOST_ROOT))
 
-from config.frame_transforms import (  # noqa: E402
-    FrameTransformsDocument,
-    load_frame_transforms_document,
-)
 from config.project.robot_motion_envelope import (  # noqa: E402
     DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
     RobotMotionEnvelopeConfig,
@@ -52,7 +48,6 @@ from kinematics.base_frame_solver import (  # noqa: E402
     BaseFrameFiveAxisSolver,
     FiveAxisNoSolutionError,
     FiveAxisSolution,
-    UnvalidatedBaseTransformError,
 )
 from kinematics.base_move_transition_planner import (  # noqa: E402
     BaseMovePlan,
@@ -149,9 +144,8 @@ def solve_startup_safe_pose(
         raise TypeError("definition must be StartupSafePoseConfig")
 
     target = _startup_target_with_fk_derived_base_z(solver, definition)
-    slide_zero_target = solver.transform_base_target_to_slide_zero(target)
     local = solver.five_axis_kinematics.compute_arm_local_target(
-        slide_zero_target,
+        target,
         definition.slide_mm,
     )
     if not math.isclose(
@@ -179,7 +173,7 @@ def solve_startup_safe_pose(
             (f"both planar branches unavailable: {exc}",),
         ) from exc
 
-    output_yaw_deg = _rotation_output_yaw_deg(solver, slide_zero_target)
+    output_yaw_deg = _rotation_output_yaw_deg(solver, target)
     candidates: list[FiveAxisSolution] = []
     rejections: list[str] = []
     for planar in planar_solutions:
@@ -1111,7 +1105,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--frame-config",
         type=Path,
         default=_DEFAULT_FRAME_CONFIG,
-        help="validated Base-to-Slide-zero transform JSON",
+        help="deprecated compatibility option; Base/TCP kinematics do not use it",
     )
     parser.add_argument(
         "--tray-workspace-config",
@@ -1137,10 +1131,8 @@ def create_demo_flow(
         mode,
         allow_unverified_rotation_motion=execute,
     )
-    document = load_frame_transforms_document(frame_config)
     solver = _configured_solver(
         runtime,
-        document,
         load_local_five_axis_kinematics(),
         workspace_config=offset_workspace_config,
     )
@@ -1202,7 +1194,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         MultiAxisSubmissionError,
         TrayWorkspaceConfigError,
         UnifiedMotionError,
-        UnvalidatedBaseTransformError,
     ) as exc:
         print(f"motion demo failed: {exc}", file=sys.stderr)
         return 1
@@ -1213,23 +1204,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _configured_solver(
     runtime: object,
-    document: FrameTransformsDocument,
     model: FiveAxisKinematics,
     *,
     workspace_config: OffsetWorkspaceConfig,
 ) -> BaseFrameFiveAxisSolver:
-    if document.metadata.get("validated") is not True:
-        raise UnvalidatedBaseTransformError(
-            "Base–Slide-zero transform must have metadata.validated=true"
-        )
     descriptors = {
         descriptor.name: descriptor for descriptor in runtime.controller.list_axes()
     }
     return BaseFrameFiveAxisSolver(
         five_axis_kinematics=model,
-        base_T_slide_zero=document.transforms.base_T_slide_zero,
         axis_descriptors=descriptors,
-        base_transform_validated=True,
         config=BaseFrameSolverConfig(workspace=workspace_config),
     )
 
@@ -1238,27 +1222,10 @@ def _startup_target_with_fk_derived_base_z(
     solver: BaseFrameFiveAxisSolver,
     definition: StartupSafePoseConfig,
 ) -> RigidTransform:
-    def z_axis_for_base_z(base_z_mm: float) -> float:
-        candidate = RigidTransform.from_xyz_yaw_deg(
-            x_mm=definition.base_x_mm,
-            y_mm=definition.base_y_mm,
-            z_mm=base_z_mm,
-            yaw_deg=definition.tool_yaw_deg,
-        )
-        slide_zero = solver.transform_base_target_to_slide_zero(candidate)
-        return solver.five_axis_kinematics.compute_arm_local_target(
-            slide_zero,
-            definition.slide_mm,
-        ).z_axis_mm
-
-    at_zero = z_axis_for_base_z(0.0)
-    per_base_mm = z_axis_for_base_z(1.0) - at_zero
-    if abs(per_base_mm) <= 1e-12:
-        raise StartupPoseNoSolutionError(
-            "Base Z cannot select the configured startup Z logical position",
-            (f"Z-axis response per Base-Z mm is {per_base_mm}",),
-        )
-    base_z = (definition.z_axis_mm - at_zero) / per_base_mm
+    base_z = (
+        solver.five_axis_kinematics.geometry.tcp_height_at_z_zero_mm
+        + definition.z_axis_mm
+    )
     return RigidTransform.from_xyz_yaw_deg(
         x_mm=definition.base_x_mm,
         y_mm=definition.base_y_mm,
@@ -1269,17 +1236,9 @@ def _startup_target_with_fk_derived_base_z(
 
 def _rotation_output_yaw_deg(
     solver: BaseFrameFiveAxisSolver,
-    slide_zero_target: RigidTransform,
+    base_target: RigidTransform,
 ) -> float:
-    geometry = solver.five_axis_kinematics.geometry
-    output_target = slide_zero_target @ geometry.rotation_output_T_tool.inverse()
-    relative_rotation = (
-        geometry.slide_zero_T_planar_origin_at_zero.rotation_matrix.T
-        @ output_target.rotation_matrix
-    )
-    matrix = RigidTransform.identity().matrix.copy()
-    matrix[:3, :3] = relative_rotation
-    roll_deg, pitch_deg, yaw_deg = RigidTransform(matrix).rpy_deg
+    roll_deg, pitch_deg, yaw_deg = base_target.rpy_deg
     if max(abs(float(roll_deg)), abs(float(pitch_deg))) > (
         solver.config.model_roll_pitch_tolerance_deg
     ):

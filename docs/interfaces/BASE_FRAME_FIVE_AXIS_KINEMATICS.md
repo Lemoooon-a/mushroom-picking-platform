@@ -8,14 +8,16 @@
 
 ## 2. Frame conventions
 
-变换 `A_T_B` 把 B 中表达的坐标转换到 A。外部笛卡尔目标根固定为 Base（B），
-`FiveAxisKinematics` 的内部根固定为 Slide-zero（S）：
+变换 `A_T_B` 把 B 中表达的坐标转换到 A。笛卡尔目标和
+`FiveAxisKinematics` 的根都固定为机械 Base（B）：
 
 ```text
-Base (B) -> Slide-zero (S) -> five-axis chain -> Tool/TCP (T)
+Base (B) -> Slide Y + Z + planar Shoulder/Elbow -> TCP/Rotation center (T)
+                                                 -> Camera (C)
 ```
 
-Slide-zero 是 Slide 与 Z 机械归零、逻辑位置都为 0 时的几何参考；它不是 startup position。
+Slide=0 时 Base XY 与肩关节平面原点 XY 重合，Base/平面 roll、pitch、yaw 都为 0。
+Rotation 输出轴中心与 TCP 位置同心。
 
 ## 3. FK chain
 
@@ -25,41 +27,41 @@ Slide-zero 是 Slide 与 Z 机械归零、逻辑位置都为 0 时的几何参�
 q = [slide_mm, z_mm, shoulder_deg, elbow_deg, rotation_deg]
 ```
 
-内部和 Base 根正运动学（Forward Kinematics, FK）分别为：
+正运动学（Forward Kinematics, FK）为：
 
 ```text
-slide_zero_T_tool(q)
-base_T_tool(q) = base_T_slide_zero @ slide_zero_T_tool(q)
+x = planar_2r_fk_x(shoulder, elbow)
+y = slide_mm + planar_2r_fk_y(shoulder, elbow)
+z = tcp_height_at_z_zero_mm + z_mm
+yaw = shoulder_deg + elbow_deg + rotation_deg
 ```
 
-Slide/Z 方向、平面安装、两段连杆和 `rotation_output_T_tool` 全部来自正式几何配置，求解器不
-硬编码本机尺寸或标定值。
+Rotation 只改变 yaw，不改变 TCP XYZ。两段连杆长度和
+`tcp_height_at_z_zero_mm` 来自正式几何配置；Base XY/yaw、Slide +Y 与 Z +Z 由机械定义固定。
 
-## 4. Base target conversion
+## 4. Base target input
 
-Base 目标只在求解器输入边界转换一次：
+Base 目标直接进入求解器，不再经过外部单点 Base 标定：
 
 ```text
-slide_zero_T_base = inverse(base_T_slide_zero)
-slide_zero_T_tool_target = slide_zero_T_base @ base_T_tool_target
+base_T_tool_target = requested_base_T_tool_target
 ```
 
-转换后所有逆运动学（Inverse Kinematics, IK）计算和 FK 复核都在 Slide-zero 根下完成。
+历史 `base_T_slide_zero` 可继续留在 frame 文档供审计，但正常 FK、IK 和视觉规划不读取其数值。
 
 ## 5. Five-axis variables
 
-求解器从目标 Tool 位姿移除配置的 `rotation_output_T_tool`，再根据配置的平面安装和轴方向反解
-Z、平面 XY、Shoulder、Elbow 与 Rotation。Z 不是直接等于目标高度；固定 TCP Z 偏移、平面安装
-高度、Z 正方向以及可能的轴方向分量都会进入反解。超出模型支持容差的 roll/pitch 会明确拒绝，
-不会被静默忽略。
+固定 Slide 候选后，求解器直接使用 `local_x=target_x`、`local_y=target_y-slide`，并计算
+`z_mm=target_z-tcp_height_at_z_zero_mm`。平面 2R IK 求 Shoulder/Elbow，Rotation 继续复用既有
+角度关系维持目标 yaw。超出模型支持容差的 roll/pitch 会明确拒绝，不会被静默忽略。
 
 当前状态由调用方传入，只用于冗余选择和连续性评分。纯数学模块不查询硬件、本机文件或
 startup position。
 
 ## 6. Offset Workspace Constraints
 
-偏置矩形是运动学强约束，不只是可视化提示。分类使用移除 Slide 平移及正式 Tool 固定变换后的
-机械臂平面局部坐标，而不是 Base 全局 Y：
+偏置矩形是运动学强约束，不只是可视化提示。分类使用移除 Slide 平移后的机械臂平面局部坐标，
+而不是 Base 全局 Y：
 
 ```text
 Positive: local_x in [50, 450] mm, local_y in [150, 350] mm, center_y=+250 mm
@@ -100,20 +102,19 @@ Base frame 中的培养槽任务许可。最终用户目标另由应用层 `Tray
 
 ## 8. Rotation yaw
 
-FK 与 IK 共用 `rotation_output_yaw_deg()` / `rotation_deg_for_output_yaw()`。当前模型中 Rotation
-输出 yaw 为 Shoulder、Elbow 与 Rotation 逻辑角之和；固定 Tool yaw 通过
-`rotation_output_T_tool` 的刚性变换统一处理。反解后枚举相差 360° 的周期等价角，只保留
+FK 与 IK 共用 `rotation_output_yaw_deg()` / `rotation_deg_for_output_yaw()`。当前模型中 TCP
+yaw 为 Shoulder、Elbow 与 Rotation 逻辑角之和。反解后枚举相差 360° 的周期等价角，只保留
 Rotation 软限位内的值，并优先选择最接近当前 Rotation 的等价值。
 
 ## 9. Workspace-Side Classification
 
-当前侧别由当前实际五轴状态经 FK 得到 `slide_zero_T_tool(current_q)`，再由统一 helper 计算
+当前侧别由当前实际五轴状态经 FK 得到 `base_T_tool(current_q)`，再由统一 helper 计算
 `local_x/local_y`；不得由历史标签、Slide 正负或 Base 全局 Y 推断。目标侧别来自最终选中的
 `FiveAxisSolution.workspace_side`。
 
 ## 10. FK residual verification
 
-每个候选都会重新调用现有五轴 FK，得到 `slide_zero_T_tool_reconstructed`，并与转换后的目标比较：
+每个候选都会重新调用现有五轴 FK，得到 `base_T_tool_reconstructed`，并与 Base 目标比较：
 
 - `position_error_xyz_mm`：XYZ 分量误差；
 - `position_residual_mm`：三维位置误差范数；
@@ -135,16 +136,12 @@ velocity, acceleration   -> None（默认）
 `MultiAxisTarget` 不表达笛卡尔 frame；frame 只属于 IK 输入 `base_T_tool_target`。输出中没有
 `frame_id`、Base offset、startup position、rad、原始编码器计数或生产速度猜测。
 
-## 12. Base calibration gate
+## 12. Historical Base calibration compatibility
 
-本机 `host/config/local/frame_transforms.json` 中 `validated=false` 时，构造求解器默认报错：
-
-```text
-The Base–Slide-zero transform is provisional and has not passed an independent pose validation.
-```
-
-纯数学 API 为既有离线工具保留显式 override，但 `manual_motion.py plan-base` 不提供 override：标定
-缺失或 `validated` 不为 true 时直接拒绝 Base-frame 规划。预览不会写配置或改变验证状态。
+本机 `host/config/local/frame_transforms.json` 仍可保存历史 `base_T_slide_zero` 及其 validation
+metadata，既有标定/审计脚本也保留；这些字段不再是 Base-frame 规划门禁。`base_T_slide_zero`
+缺失时 loader 以 identity 兼容相机配置。正式运动学门禁改为几何配置中的连杆长度和现场测得的
+`tcp_height_at_z_zero_mm` 都存在，且 `geometry_confirmed=true`。
 
 ## 13. Safe Side-Switch Transition
 
@@ -186,12 +183,12 @@ Z 上限，但仍必须通过本节已有的轴软限位、阶段约束与完整
 
 ### Planning-Only CLI
 
-`plan-base` 只打开 `READ_ONLY` runtime，读取状态和标定、规划并逐阶段调用
+`plan-base` 只打开 `READ_ONLY` runtime，读取状态和机械几何、规划并逐阶段调用
 `validate_positions()`。它没有 `--execute`，不调用 submit、wait、home、stop 或 torque enable。
 
 ## 14. Current limitations
 
-- Base–Slide-zero 是否可用于 CLI 完全取决于本机文件的 `validated=true` 门禁；
+- 本机 `tcp_height_at_z_zero_mm` 尚未现场填写并确认时，正式 Base 规划保持 fail-closed；
 - fallback 使用有限 10 mm 离散搜索，可能漏掉步长之间很窄的可行区间；
 - 只支持当前五轴模型允许的 `x/y/z/yaw`；
 - 不检查自碰撞、环境碰撞、线缆、奇异邻域速度、路径连续性或动态可达性；
@@ -202,8 +199,7 @@ Z 上限，但仍必须通过本节已有的轴软限位、阶段约束与完整
 
 ## 15. Future real-motion integration
 
-真实执行应作为独立任务增加，不能把 `plan-base` 直接改成隐式运动入口。建议顺序是：先完成第二
-独立姿态的 Base–Slide-zero 验证并把验证状态通过正式流程更新；再增加专门的低速执行命令，复用
-现有 runtime/controller 授权、状态门禁、Rotation torque 风险确认、最大单次位移限制、提交/等待
-和失败停止语义；最后从远离奇异点与软限位的小位移开始实机验证。轨迹、碰撞和速度安全仍需另行
-设计与验收。
+真实执行前必须先现场测量并复核 `tcp_height_at_z_zero_mm`，再用已知机械姿态验证 Slide、Z 和
+Rotation 的 FK 验收关系。低速执行继续复用现有 runtime/controller 授权、状态门禁、Rotation
+torque 风险确认、最大单次位移限制、提交/等待和失败停止语义，并从远离奇异点与软限位的小位移
+开始。轨迹、碰撞和速度安全仍需另行设计与验收。

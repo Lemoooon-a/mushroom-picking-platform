@@ -17,6 +17,7 @@ class ScanPickProfile:
     place_pose: BaseToolTarget
     place_approach_height_mm: float
     max_picks_per_scan_pose: int
+    scan_settle_time_s: float = 0.0
 
     def __post_init__(self) -> None:
         x_positions = _finite_tuple(
@@ -42,6 +43,10 @@ class ScanPickProfile:
         if height < 0.0:
             raise ValueError("place_approach_height_mm must be non-negative")
         object.__setattr__(self, "place_approach_height_mm", height)
+        settle_time = _finite("scan_settle_time_s", self.scan_settle_time_s)
+        if settle_time < 0.0:
+            raise ValueError("scan_settle_time_s must be non-negative")
+        object.__setattr__(self, "scan_settle_time_s", settle_time)
         if (
             isinstance(self.max_picks_per_scan_pose, bool)
             or not isinstance(self.max_picks_per_scan_pose, int)

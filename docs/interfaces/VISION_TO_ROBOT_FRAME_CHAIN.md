@@ -1,119 +1,82 @@
-# 视觉到机器人坐标链审计与冻结边界
+# 视觉到机器人坐标链
 
-## 1. 结论
+## 1. 当前链路
 
-当前正式能力止于：
+视觉观察使用拍照时保存的五轴状态，不使用解析时的“最新状态”：
 
 ```text
-Base frame 中的 TCP xyz+yaw 目标
-→ 培养槽工作区检查
-→ 五轴 IK
-→ DIRECT 或 LIFT/TRANSIT/LOWER
-→ 统一执行
+camera_color_optical_frame 下目标 XYZ
+→ target_compensation_camera_mm（一次）
+→ tool_T_camera
+→ 当前 TCP 下目标位移
+→ base_T_tool(q_capture)
+→ raw Base target
+→ target_compensation_base_mm（一次）
+→ final Base target
+→ Base TCP workspace
+→ 五轴 IK / transition planner
 ```
 
-Camera frame 到 Base frame 的真实视觉运动不可用。软件现已实现版本化 gateway、拍照快照、观察数据契约、解析器和抓取规划，但生产链仍同时
-缺少经过验证的 `tool_T_camera`、真实视觉 producer、相机内参/深度证据和抓取偏移配置。实现不会用
-单位矩阵、全零外参、猜测值或“当前最新轴位置”补齐这些缺口。
-
-## 2. 记号与实际坐标系
-
-仓库的 `RigidTransform` 明确定义 `A_T_B`：把 B 中的量转换到 A；组合方向为：
+矩阵形式：
 
 ```text
-A_T_C = A_T_B @ B_T_C
-```
-
-当前实际存在的 frame：
-
-- `Base (B)`：公开工作坐标根；
-- `Slide-zero (S)`：Slide/Z 机械零位下的内部运动学根；
-- `planar origin`：五轴模型内部肩关节平面原点；
-- `rotation output`：第二连杆末端的 Rotation 输出 frame；
-- `Tool/TCP (T)`：吸盘工具中心点（Tool Center Point, TCP）；
-- `Camera (C)`：仅有 frame/外参配置边界，没有经过验证的实际外参；
-- `Object/target (O)`：仅作为本轮冻结的数据契约，没有当前视觉生产者。
-
-## 3. 变换审计表
-
-| Transform | 含义 | 实际来源 | 当前是否存在 | 验证状态 | 使用位置 |
-| --- | --- | --- | --- | --- | --- |
-| `base_T_slide_zero` | Slide-zero 在 Base 中的位姿 | `host/config/local/frame_transforms.json`；Base 标定流程 | 是 | 本机 metadata 为 `validated=true`；本轮未重做硬件验证 | `BaseFrameFiveAxisSolver`、`RobotFrameChain` |
-| `slide_zero_T_tool(q)` | 当前五轴状态下 TCP 在 Slide-zero 中的位姿 | `FiveAxisKinematics.forward_kinematics()` | 是 | 本机几何 `geometry_confirmed=true`；有离线 FK 测试 | FK、Base 求解器残差检查 |
-| `base_T_tool(q)` | 当前 TCP 在 Base 中的位姿 | 前两项组合 | 是 | 随前两项；有离线组合测试 | Base-root FK、规划当前状态 |
-| `tool_T_camera` | Camera 坐标转换到 Tool | 配置槽位、人工录入脚本 | 配置结构存在；本机值为 `null` | 缺失；不存在独立 `tool_camera_validated=true` 记录 | 旧 `RobotFrameChain` Camera helper；新 resolver 门禁 |
-| `camera_T_target` | 目标在 Camera 中的位置/可选方向 | Vision Gateway v1 + `VisionTargetObservation` | Fake/Socket 消费契约已实现 | 合成测试；无真实 producer | `VisionTargetResolver` 输入 |
-| `object_T_tool_grasp` | 目标到期望 TCP 抓取位姿的策略 | `GraspProfile` 三段 Base Z/yaw 策略 | schema/example 已实现 | 本机真实值缺失 | `PickPlanner` |
-| `base_T_target` | 目标在 Base 中的位姿 | 预期矩阵链组合 | 有受门禁的纯计算实现 | 只有合成测试；真实能力不可用 | `resolve_object_in_base()` |
-| `base_T_tool_goal` | 最终 TCP 抓取目标 | `base_T_target @ object_T_tool_grasp` | 有受门禁的纯计算实现 | 只有合成测试；真实能力不可用 | `resolve_tool_goal_in_base()` |
-
-注意：`host/config/local/frame_transforms.json` 的 `metadata.validated` 只属于 Base–Slide-zero 标定。它绝不验证
-`tool_T_camera`。手眼状态只读取独立字段 `tool_camera_validated`。
-
-培养槽边界另由 `host/config/local/tray_workspace.json` 提供，frame 固定为 `base`。它既不是标定变换，也不
-从机械可达范围、正负偏置区或跨区安全高度推导。本机已按用户 2026-08-05 的明确输入配置
-X `[20, 480] mm`、Y `[20, 700] mm`、Z `[0, 180] mm`，并显式标记
-`metadata.validated=true`。Z 是最终 TCP 的绝对 Base 高度，`180 mm` 是当前 Z 回零 TCP 高度的
-静态快照；该确认不改变手眼标定仍缺失的状态。
-
-## 4. 冻结的 Eye-in-Hand 链
-
-末端相机采用眼在手上（Eye-in-Hand）结构。机器人静止采集时保存 `q_capture`：
-
-```text
-base_T_object
+base_T_target_raw
   = base_T_tool(q_capture)
   @ tool_T_camera
-  @ camera_T_object
-
-base_T_tool_goal
-  = base_T_object
-  @ object_T_tool_grasp
+  @ camera_T_target
 ```
 
-`VisionTargetResolver` 严格按此顺序组合。它不做轴下发、Homing、吸盘、工作区选择、阶段规划
-或真实执行。
+其中 `tool` 明确表示 TCP。现有 `tool_T_camera` 数值、Camera frame 名称、视觉协议、8 点扫描、
+observe/plan/pick/place 流程都保持不变。
 
-## 5. 当前视觉输出审计
+## 2. 与机械 Base 简化的关系
 
-仓库中没有真实视觉检测模块或 detection 数据文件。协议 v1 接受 Camera frame 的 3D position 和可选 quaternion orientation；这只是消费契约，不能描述为真实 producer 已实现。仓库仍没有找到：
-
-- 相机内参；
-- 深度图或深度相机 SDK 接入；
-- 像素反投影；
-- `camera_T_object` 生产者；
-- 目标 yaw 估计策略；
-- 视觉置信度与时间戳生产逻辑。
-
-`orientation=null` 是合法且明确的“未提供方向”。fixed/keep-current yaw 可以只使用位置；`FROM_OBSERVATION` 必须明确拒绝 null，不得伪造旋转。
-
-## 6. 时间对应与静止门禁
-
-最小安全规则冻结为：
+`base_T_tool(q_capture)` 直接来自机械 Base FK：
 
 ```text
-全部轴已到位且机器人静止
-→ 读取稳定五轴逻辑状态
-→ 生成 request_id 并发送 capture_request
-→ 收到同 request_id 的 detection 后再次读取轴状态
-→ 仅在状态未变时把 detection 与 q_capture 组成 observation
-→ 使用 observation.capture_axis_state 作为 q_capture
+x = planar_2r_fk_x
+y = slide + planar_2r_fk_y
+z = tcp_height_at_z_zero_mm + z_axis_mm
+yaw = shoulder + elbow + rotation
 ```
 
-`capture_motion_state` 只有 `STATIONARY` 可解析；`MOVING` 和 `UNKNOWN` 均拒绝。解析器从不查询
-硬件，也不会用解析时的最新轴状态替换采集快照。本阶段不实现运动中时间同步。
+视觉链不使用历史 `base_T_slide_zero`，也不使用 `rotation_output_T_tool` 位置平移。Rotation 改变
+只影响当前 TCP yaw；不会引入额外 TCP XYZ 偏移。
 
-## 7. 受门禁的边界
+## 3. 标定与补偿门禁
 
-缺少或未验证手眼标定时，解析器抛出 `HandEyeCalibrationUnavailable`，错误明确包含：
+- `tool_T_camera` 缺失时，Camera 目标解析明确拒绝；
+- 非 dry-run 的视觉规划要求 `tool_camera_validated=true`；
+- `target_compensation_base_mm` 在 raw Base target 后只应用一次；
+- `target_compensation_camera_mm` 在 Camera 检测点上只应用一次；
+- Camera 与 Base 补偿不能同时为非零；
+- Base TCP workspace 对最终补偿后的目标执行门限；
+- arm-local offset workspace 随后只负责 IK 构型与 Slide 选择。
+
+`frame_transforms.json` 中历史 `base_T_slide_zero` 及 `metadata.validated` 不再验证或门禁视觉
+Base 坐标。`tool_camera_validated` 仍只表示 TCP→Camera 安装关系的验证状态。
+
+## 4. 时间与静止门禁
 
 ```text
-Hand-eye calibration is missing or not validated.
-Base-frame manual motion remains available.
-Camera-target motion is disabled.
+全部轴到位且静止
+→ 保存五轴 capture state
+→ 发出 capture request
+→ 收到同 request_id 的 detection
+→ 确认状态未变化
+→ 用 capture_axis_state 解析 Camera 目标
 ```
 
-此外还会拒绝 frame 不匹配、运动中/未知采集状态，以及当前 xyz+yaw 运动模型无法表达的非零
-roll/pitch 最终 TCP 目标。合成 validated 手眼数据解析出的 `base_T_tool_goal` 仍必须调用
-`MushroomRobotController.move_to_base_pose()`；若目标位于培养槽外，`TargetOutsideTrayWorkspace`
-会在 IK、planner 和 submit 前拒绝。视觉入口不得直接访问 solver、planner 或统一运动控制器。
+`capture_motion_state` 只有 `STATIONARY` 可解析；`MOVING` 和 `UNKNOWN` 均拒绝。frame_id 必须为
+配置的 Camera frame，Camera Z 必须为正且所有坐标有限。
+
+## 5. API 兼容
+
+`/api/vision/plan` 的 Web API（Application Programming Interface，应用程序编程接口）结构不变。
+响应继续区分 Camera 输入、raw Base position、Base 补偿和 final Base position；规划结果仍走统一
+Base solver。坐标简化不绕过工作区、轴/关节限位、状态门禁或 FK 重建检查。
+
+## 6. 验证边界
+
+离线合成测试验证 Camera→TCP→Base 矩阵组合、补偿只应用一次和 API 规划回归。它不代表现场
+相机、深度、TCP 零位高度或抓取精度已经完成硬件验证。

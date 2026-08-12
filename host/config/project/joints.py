@@ -27,7 +27,8 @@ SHOULDER_JOINT_CONFIG = JointConfig(
     max_position_rad=math.radians(65.0),  # OA=165 度，对应最大逻辑角 +65 度。
     max_velocity_rad_s=math.radians(50.0),  # 最大逻辑关节速度为每秒 50 度。
     position_tolerance_rad=math.radians(0.1),  # 误差不超过 0.1 度时不重复发位置命令。
-    moving_velocity_threshold_rad_s=math.radians(0.05),  # 超过每秒 0.05 度视为仍在运动。
+    # 本轮实机 startup 读取到约 0.1667°/s；操作者确认将静止判定阈值调为 0.2°/s。
+    moving_velocity_threshold_rad_s=math.radians(0.2),  # 超过 0.2°/s 视为运动。
 )
 
 
@@ -41,7 +42,8 @@ ELBOW_JOINT_CONFIG = JointConfig(
     max_position_rad=math.radians(160.0),  # OA=358 度，对应最大逻辑角 +160 度。
     max_velocity_rad_s=math.radians(50.0),  # 最大逻辑关节速度为每秒 50 度。
     position_tolerance_rad=math.radians(0.1),  # 误差不超过 0.1 度时不重复发位置命令。
-    moving_velocity_threshold_rad_s=math.radians(0.05),  # 超过每秒 0.05 度视为仍在运动。
+    # 实机静止时 0x9C 偶发 4～5 motor-deg/s，折算最大约 0.139°/s。
+    moving_velocity_threshold_rad_s=math.radians(0.2),  # 超过 0.2°/s 视为运动。
 )
 
 JOINT_CONFIGS = {

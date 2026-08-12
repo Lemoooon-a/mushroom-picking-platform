@@ -291,6 +291,20 @@ class ConfiguredJointTests(unittest.TestCase):
         self.assertAlmostEqual(
             ELBOW_JOINT_CONFIG.max_position_rad, math.radians(160)
         )
+        self.assertAlmostEqual(
+            ELBOW_JOINT_CONFIG.moving_velocity_threshold_rad_s,
+            math.radians(0.2),
+        )
+
+    def test_elbow_moving_threshold_filters_measured_speed_quantization(self) -> None:
+        for motor_speed_deg_s, expected_moving in ((7, False), (8, True)):
+            with self.subTest(motor_speed_deg_s=motor_speed_deg_s):
+                driver = FakeDriver(
+                    motor_id=ELBOW_JOINT_CONFIG.motor_id,
+                    speed_deg_s=motor_speed_deg_s,
+                )
+                joint = initialized_joint(driver, ELBOW_JOINT_CONFIG)
+                self.assertIs(joint.get_state().moving, expected_moving)
 
     def test_calibrated_velocity_limit_conversion(self) -> None:
         converted = joint_velocity_to_motor_speed_deg_s(

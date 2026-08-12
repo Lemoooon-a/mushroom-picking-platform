@@ -1,5 +1,10 @@
 # Base–Slide-zero 坐标标定
 
+> 历史兼容说明（2026-08-11）：机械 Base/TCP 模型已不再使用本页标定结果。正常 FK、IK、视觉
+> 规划和 Base TCP workspace 不读取 `base_T_slide_zero` 或 `rotation_output_T_tool`。本页脚本与
+> 字段仅保留用于既有记录审计；不要把本流程作为当前运动前置门禁。当前必须现场测量的 Z 参数是
+> `host/config/local/five_axis_geometry.json` 中的 `tcp_height_at_z_zero_mm`。
+
 ## 当前顶部 Z Home 定义
 
 当前标定对应新的顶部 Z Home：Base `+Z` 和 Z 逻辑正方向向上，顶部为逻辑 `0 mm`，向下伸出为

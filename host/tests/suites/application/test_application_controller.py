@@ -70,6 +70,10 @@ class FakeBaseBackend:
         self.calls.append(("release",))
         return "released"
 
+    def suction_idle(self) -> str:
+        self.calls.append(("idle",))
+        return "idled"
+
     def get_status(self) -> str:
         self.calls.append(("status",))
         return "backend-status"
@@ -155,6 +159,31 @@ class ApplicationControllerTests(unittest.TestCase):
             HandEyeCalibrationStatus.MISSING,
         )
         self.assertFalse(controller.capabilities.vision_target_motion)
+
+    def test_stop_also_switches_suction_to_idle(self) -> None:
+        controller = MushroomRobotController(
+            base_backend=self.backend,
+            tray_workspace=self.workspace,
+        )
+
+        self.assertEqual(controller.stop(), "stopped")
+        self.assertEqual(self.backend.calls, [("stop",), ("idle",)])
+
+    def test_stop_still_switches_suction_to_idle_when_motion_stop_fails(self) -> None:
+        controller = MushroomRobotController(
+            base_backend=self.backend,
+            tray_workspace=self.workspace,
+        )
+
+        def failed_stop() -> None:
+            self.backend.calls.append(("stop",))
+            raise RuntimeError("motion stop failed")
+
+        self.backend.stop = failed_stop
+        with self.assertRaisesRegex(RuntimeError, "motion stop failed"):
+            controller.stop()
+
+        self.assertEqual(self.backend.calls, [("stop",), ("idle",)])
 
     def test_missing_or_provisional_gate_never_calls_base_backend(self) -> None:
         controllers = [

@@ -93,8 +93,12 @@ class FrameTransformConfigTests(unittest.TestCase):
     def test_rejects_wrong_schema(self) -> None:
         self._assert_document_error({"schema_version": 2}, "schema_version")
 
-    def test_rejects_missing_base(self) -> None:
-        self._assert_document_error({"schema_version": 1}, "base_T_slide_zero")
+    def test_missing_historical_base_defaults_to_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "frames.json"
+            path.write_text('{"schema_version": 1}', encoding="utf-8")
+            loaded = load_frame_transforms(path)
+        np.testing.assert_allclose(loaded.base_T_slide_zero.matrix, np.eye(4))
 
     def test_rejects_invalid_translation(self) -> None:
         self._assert_document_error(

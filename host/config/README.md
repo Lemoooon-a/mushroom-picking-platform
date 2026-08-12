@@ -15,11 +15,11 @@
 | `motion_runtime.py` | typed model + loader | 是 | 否 | 是 | 到位、timeout、速度/加速度和线性轴范围模型 |
 | `examples/motion.py` | template | 是 | 否 | 否 | `local/motion.py` 的占位模板 |
 | `local/motion.py` | local Python | 否，ignored | 是 | 是 | 当前机器的 motion runtime 参数 |
-| `frame_transforms.py` | typed JSON loader | 是 | 否 | 按 Base/视觉入口加载 | Base/Slide-zero 与 Tool/Camera 外参文档模型 |
+| `frame_transforms.py` | typed JSON loader | 是 | 否 | 按视觉入口加载 | Tool/Camera 外参与历史 Base 标定审计文档模型 |
 | `examples/frame_transforms.json` | template | 是 | 否 | 否 | 未验证的 frame transform 模板 |
-| `local/frame_transforms.json` | local JSON | 否，ignored | 是 | 按入口默认路径加载 | 当前机器 Base 与手眼外参及独立 validation metadata |
+| `local/frame_transforms.json` | local JSON | 否，ignored | 是 | 按视觉入口默认路径加载 | 当前机器手眼外参与历史 Base 标定审计字段 |
 | `examples/five_axis_geometry.json` | template | 是 | 否 | 否 | 五轴几何占位模板 |
-| `local/five_axis_geometry.json` | local JSON | 否，ignored | 是 | 五轴 Base 规划时加载 | 当前机构连杆、轴方向和 Tool 固定几何 |
+| `local/five_axis_geometry.json` | local JSON | 否，ignored | 是 | 五轴 Base 规划时加载 | 当前机构连杆与 Z=0 时 TCP Base 高度 |
 | `tray_workspace.py` | typed JSON loader | 是 | 否 | 按应用入口加载 | Base-frame 普通最终任务 TCP 门限模型 |
 | `examples/tray_workspace.json` | template | 是 | 否 | 否 | 不含可执行边界的模板，不是通用默认值 |
 | `local/tray_workspace.json` | local JSON | 否，ignored | 是 | Demo/application 默认路径 | 用户确认的 Base-frame 绝对最终任务工作区 |

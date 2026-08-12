@@ -96,6 +96,7 @@ class ScanAndPickTests(unittest.TestCase):
         responder,
         *,
         max_picks: int = 5,
+        scan_settle_time_s: float = 0.0,
     ) -> tuple[MushroomRobotService, _ScanBackend, list[BaseToolTarget]]:
         backend = _ScanBackend()
         provider = _ScanPoseProvider(backend)
@@ -156,6 +157,7 @@ class ScanAndPickTests(unittest.TestCase):
                 BaseToolTarget(500.0, 500.0, 20.0, 0.0),
                 40.0,
                 max_picks,
+                scan_settle_time_s,
             ),
             allow_dry_run_state_advance=True,
         )
@@ -174,7 +176,8 @@ class ScanAndPickTests(unittest.TestCase):
             None,
         )
 
-    def test_scans_eight_poses_and_reobserves_after_each_place(self) -> None:
+    @unittest.mock.patch("application.robot_service.time.sleep")
+    def test_scans_eight_poses_and_reobserves_after_each_place(self, sleep) -> None:
         calls = 0
 
         def responder(request):
@@ -184,7 +187,9 @@ class ScanAndPickTests(unittest.TestCase):
                 return self.target(request)
             return NoTarget(request.request_id, "empty")
 
-        service, backend, observed_poses = self.make_service(responder)
+        service, backend, observed_poses = self.make_service(
+            responder, scan_settle_time_s=0.5
+        )
         original_begin = service._begin_write_operation
         service._begin_write_operation = Mock(wraps=original_begin)
 
@@ -222,6 +227,8 @@ class ScanAndPickTests(unittest.TestCase):
         self.assertTrue(all(target.yaw_deg == 0.0 for target in planned_targets))
         self.assertEqual(backend.calls.count("grip"), 2)
         self.assertEqual(backend.calls.count("release"), 2)
+        self.assertEqual(sleep.call_count, len(observed_poses))
+        sleep.assert_called_with(0.5)
 
     def test_max_pick_guard_stops_entire_task_without_fault(self) -> None:
         service, _, observed_poses = self.make_service(self.target, max_picks=2)

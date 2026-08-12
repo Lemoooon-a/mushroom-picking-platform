@@ -71,11 +71,11 @@ def load_frame_transforms_document(path: Path) -> FrameTransformsDocument:
             f"schema_version must be {SCHEMA_VERSION}, got "
             f"{root.get('schema_version')!r}"
         )
-    if "base_T_slide_zero" not in root:
-        raise FrameTransformConfigError("missing required base_T_slide_zero")
-    base_T_slide_zero = _parse_transform(
-        root["base_T_slide_zero"],
-        "base_T_slide_zero",
+    base_value = root.get("base_T_slide_zero")
+    base_T_slide_zero = (
+        RigidTransform.identity()
+        if base_value is None
+        else _parse_transform(base_value, "base_T_slide_zero")
     )
     tool_value = root.get("tool_T_camera")
     tool_T_camera = (

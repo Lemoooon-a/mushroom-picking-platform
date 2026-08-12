@@ -135,6 +135,30 @@ class VisionTargetResolverTests(unittest.TestCase):
             raw_object.rotation_matrix,
         )
 
+    def test_camera_compensation_applies_before_camera_to_base_transform(self) -> None:
+        provider = FakePoseProvider(self.base_T_tool)
+        compensation = (-5.0, -20.0, 10.0)
+        calibration = HandEyeCalibration(
+            tool_T_camera=self.tool_T_camera,
+            validated=True,
+            source="synthetic-test",
+            method="fixture",
+            target_compensation_camera_mm=compensation,
+        )
+        resolver = VisionTargetResolver(
+            pose_provider=provider,
+            hand_eye_calibration=calibration,
+        )
+        compensated_camera_target_matrix = self.camera_T_target.matrix.copy()
+        compensated_camera_target_matrix[:3, 3] += compensation
+        expected = (
+            self.base_T_tool
+            @ self.tool_T_camera
+            @ RigidTransform(compensated_camera_target_matrix)
+        )
+        actual = resolver.resolve_object_in_base(self.observation)
+        np.testing.assert_allclose(actual.matrix, expected.matrix)
+
     def test_missing_and_provisional_calibration_reject_before_fk(self) -> None:
         for calibration in (None, self.calibration(validated=False)):
             with self.subTest(calibration=calibration):

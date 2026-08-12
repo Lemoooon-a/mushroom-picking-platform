@@ -270,7 +270,26 @@ class MushroomRobotController:
         return self._base_backend.return_to_startup()
 
     def stop(self) -> object:
-        return self._base_backend.stop()
+        stop_result: object | None = None
+        stop_error: Exception | None = None
+        try:
+            stop_result = self._base_backend.stop()
+        except Exception as exc:
+            stop_error = exc
+
+        if self._suction_control:
+            try:
+                self.suction_idle()
+            except Exception as suction_error:
+                if stop_error is None:
+                    raise
+                stop_error.add_note(
+                    f"suction idle after stop also failed: {suction_error}"
+                )
+
+        if stop_error is not None:
+            raise stop_error
+        return stop_result
 
     def enable_joints(self) -> object:
         return self._base_backend.enable_joints()

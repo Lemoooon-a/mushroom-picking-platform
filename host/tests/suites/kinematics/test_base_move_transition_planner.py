@@ -28,15 +28,12 @@ from motion.unified_protocol import (
 )
 
 
-def model() -> FiveAxisKinematics:
+def model(tcp_height_at_z_zero_mm: float = 300.0) -> FiveAxisKinematics:
     return FiveAxisKinematics(
         FiveAxisGeometry(
             300.0,
             300.0,
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            RigidTransform.identity(),
-            RigidTransform.identity(),
+            tcp_height_at_z_zero_mm,
         )
     )
 
@@ -75,16 +72,9 @@ def planner(
     clearance_base_z_mm: float = 150.0,
 ) -> BaseMoveTransitionPlanner:
     solver = BaseFrameFiveAxisSolver(
-            five_axis_kinematics=model(),
-            base_T_slide_zero=RigidTransform.from_xyz_yaw_deg(
-                x_mm=0,
-                y_mm=0,
-                z_mm=base_z_mm,
-                yaw_deg=0,
-            ),
-            axis_descriptors=descriptors(z=z),
-            base_transform_validated=True,
-        )
+        five_axis_kinematics=model(base_z_mm),
+        axis_descriptors=descriptors(z=z),
+    )
     return BaseMoveTransitionPlanner(
         solver,
         motion_envelope=RobotMotionEnvelopeConfig(

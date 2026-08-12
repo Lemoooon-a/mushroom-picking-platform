@@ -61,7 +61,7 @@ cd /Users/sd/Projects/mushroom-picking-platform/host
 | GET | `/api/capabilities` | `capabilities` | 返回当前能力门禁 |
 | POST | `/api/startup` | `startup()` | 显式启动 Service |
 | POST | `/api/shutdown` | `shutdown()` | 每个进程最多调用 Service 一次 |
-| POST | `/api/stop` | `stop()` | 可在阻塞运动请求期间并发进入 |
+| POST | `/api/stop` | `stop()` | 可在阻塞运动请求期间并发进入；停止运动并将吸附输出切换到 `idle`（气泵关闭） |
 | GET | `/api/axes` | `list_axes()` | 返回公开轴描述符 |
 | GET | `/api/axes/{axis}` | `get_axis_state()` | 查询单轴状态 |
 | POST | `/api/axes/{axis}/move-absolute` | `move_axis_absolute()` | raw/manual 绝对运动 |
@@ -211,7 +211,8 @@ curl -X POST http://127.0.0.1:8000/api/vision/plan
 ```
 
 `/api/vision/plan` 会重新拍摄一帧，并返回 `request_id`、Camera 点、capture 五轴快照，以及
-Base 下的 `raw_position_mm`、`target_compensation_base_mm` 和最终 `position_mm`。最终点用于
+Camera 下的 `target_compensation_camera_mm`，以及 Base 下的 `raw_position_mm`、
+`target_compensation_base_mm` 和最终 `position_mm`。最终点用于
 现有 Base planner；响应还包含 `tool_T_camera` 的 provisional/validated 状态、完整计划和最终
 五轴解。成功路径只调用规划接口；不会调用 `move_base_target()`、`execute_base_plan()`、
 `/api/pick` 或任何吸盘接口。422 规划错误额外返回现有 `rejection_reason`（例如

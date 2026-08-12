@@ -31,7 +31,6 @@ from .base_frame_solver import (
     FiveAxisNoSolutionError,
     FiveAxisSolution,
     SolverWeights,
-    UnvalidatedBaseTransformError,
 )
 from .base_move_transition_planner import (
     BaseMovePlan,
@@ -73,7 +72,6 @@ __all__ = [
     "SlideZeroKinematics",
     "SolverWeights",
     "StageValidationFailedError",
-    "UnvalidatedBaseTransformError",
     "UnreachableTargetError",
     "load_five_axis_geometry",
     "load_local_five_axis_kinematics",

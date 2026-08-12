@@ -405,12 +405,19 @@ def format_resolved_camera_point(
         raise TypeError("result must be a ResolvedCameraPoint")
     camera_x, camera_y, camera_z = result.camera_point_mm
     base_x, base_y, base_z = result.base_point_mm
+    compensation_x, compensation_y, compensation_z = (
+        result.target_compensation_camera_mm
+    )
     return (
         "Camera point:",
         f"  frame: {result.frame_id}",
         f"  x: {camera_x:.3f} mm",
         f"  y: {camera_y:.3f} mm",
         f"  z: {camera_z:.3f} mm",
+        "Camera target compensation:",
+        f"  x: {compensation_x:.3f} mm",
+        f"  y: {compensation_y:.3f} mm",
+        f"  z: {compensation_z:.3f} mm",
         "",
         "Base point:",
         "  frame: base",

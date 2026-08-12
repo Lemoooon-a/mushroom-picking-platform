@@ -85,10 +85,15 @@ class VisionTargetResolver:
             raise VisionTargetResolutionError(
                 "pose provider returned a non-RigidTransform base_T_tool"
             )
+        compensated_camera_T_target = (
+            self.hand_eye_calibration.compensate_camera_pose(
+                observation.camera_T_target
+            )
+        )
         raw_base_T_object = (
             base_T_tool_capture
             @ self.hand_eye_calibration.tool_T_camera
-            @ observation.camera_T_target
+            @ compensated_camera_T_target
         )
         return self.hand_eye_calibration.compensate_base_pose(raw_base_T_object)
 

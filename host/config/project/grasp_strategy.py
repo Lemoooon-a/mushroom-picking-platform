@@ -32,6 +32,8 @@ def load_validated_grasp_profile(path: Path) -> GraspProfile:
             fixed_yaw_deg=root.get("fixed_yaw_deg"),
             minimum_confidence=root.get("minimum_confidence"),
             maximum_observation_age_s=root.get("maximum_observation_age_s"),
+            retreat_z_mm=root.get("retreat_z_mm"),
+            minimum_transit_z_mm=root.get("minimum_transit_z_mm"),
         )
     except (TypeError, ValueError) as exc:
         raise GraspStrategyConfigError(str(exc)) from exc

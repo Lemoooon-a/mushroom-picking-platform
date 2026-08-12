@@ -39,10 +39,6 @@ class BaseFrameSolverError(ValueError):
     """Base-frame 五轴求解配置或输入无效。"""
 
 
-class UnvalidatedBaseTransformError(BaseFrameSolverError):
-    """未通过独立验证的 Base–Slide-zero 变换不可用于正式规划。"""
-
-
 class FiveAxisNoSolutionError(BaseFrameSolverError):
     """分层候选搜索后没有通过工作区、限位和 FK 验证的五轴解。"""
 
@@ -159,52 +155,25 @@ class BaseFrameFiveAxisSolver:
         self,
         *,
         five_axis_kinematics: FiveAxisKinematics,
-        base_T_slide_zero: RigidTransform,
         axis_descriptors: Mapping[AxisName, AxisDescriptor],
-        base_transform_validated: bool,
-        allow_unvalidated_base_transform: bool = False,
         config: BaseFrameSolverConfig | None = None,
     ) -> None:
         if not isinstance(five_axis_kinematics, FiveAxisKinematics):
             raise TypeError("five_axis_kinematics must be FiveAxisKinematics")
-        if not isinstance(base_T_slide_zero, RigidTransform):
-            raise TypeError("base_T_slide_zero must be RigidTransform")
-        if not isinstance(base_transform_validated, bool):
-            raise TypeError("base_transform_validated must be bool")
-        if not isinstance(allow_unvalidated_base_transform, bool):
-            raise TypeError("allow_unvalidated_base_transform must be bool")
-        if not base_transform_validated and not allow_unvalidated_base_transform:
-            raise UnvalidatedBaseTransformError(
-                "The Base–Slide-zero transform is provisional and has not passed "
-                "an independent pose validation."
-            )
         self.five_axis_kinematics = five_axis_kinematics
-        self.base_T_slide_zero = base_T_slide_zero
         self.axis_descriptors = _validate_descriptors(axis_descriptors)
-        self.base_transform_validated = base_transform_validated
         self.config = config or BaseFrameSolverConfig()
         if not isinstance(self.config, BaseFrameSolverConfig):
             raise TypeError("config must be BaseFrameSolverConfig")
-        self._validate_inverse_geometry()
 
     @property
     def workspace(self) -> OffsetWorkspaceConfig:
         return self.config.workspace
 
-    def transform_base_target_to_slide_zero(
-        self,
-        base_T_tool_target: RigidTransform,
-    ) -> RigidTransform:
-        if not isinstance(base_T_tool_target, RigidTransform):
-            raise TypeError("base_T_tool_target must be RigidTransform")
-        return self.base_T_slide_zero.inverse() @ base_T_tool_target
-
     def forward_kinematics_base(self, state: RobotAxisState) -> RigidTransform:
         if not isinstance(state, RobotAxisState):
             raise TypeError("state must be RobotAxisState")
-        return self.base_T_slide_zero @ self.five_axis_kinematics.forward_kinematics(
-            state
-        )
+        return self.five_axis_kinematics.forward_kinematics(state)
 
     def workspace_side_for_state(
         self,
@@ -212,9 +181,9 @@ class BaseFrameFiveAxisSolver:
     ) -> tuple[OffsetWorkspaceSide, float, float]:
         """用当前真实 FK 和统一局部 helper 判断当前偏置区。"""
 
-        slide_zero_T_tool = self.five_axis_kinematics.forward_kinematics(state)
+        base_T_tool = self.five_axis_kinematics.forward_kinematics(state)
         local = self.five_axis_kinematics.compute_arm_local_target(
-            slide_zero_T_tool,
+            base_T_tool,
             state.slide_mm,
         )
         side = self.workspace.classify(local.local_x_mm, local.local_y_mm)
@@ -255,16 +224,16 @@ class BaseFrameFiveAxisSolver:
 
         if not isinstance(current_state, RobotAxisState):
             raise TypeError("current_state must be RobotAxisState")
-        slide_zero_target = self.transform_base_target_to_slide_zero(
-            base_T_tool_target
-        )
-        output_yaw_deg = self._rotation_output_yaw(slide_zero_target)
+        if not isinstance(base_T_tool_target, RigidTransform):
+            raise TypeError("base_T_tool_target must be RigidTransform")
+        base_target = base_T_tool_target
+        output_yaw_deg = self._target_yaw(base_target)
         counts = _empty_counts()
 
         if fixed_slide_mm is not None:
             fixed = _require_finite("fixed_slide_mm", fixed_slide_mm)
             solutions = self._solutions_for_slide(
-                slide_zero_target,
+                base_target,
                 output_yaw_deg,
                 current_state,
                 fixed,
@@ -274,7 +243,7 @@ class BaseFrameFiveAxisSolver:
             return self._finish_priority(solutions, current_state, counts, "fixed_slide")
 
         current_solutions = self._solutions_for_slide(
-            slide_zero_target,
+            base_target,
             output_yaw_deg,
             current_state,
             current_state.slide_mm,
@@ -287,12 +256,12 @@ class BaseFrameFiveAxisSolver:
         center_solutions: list[FiveAxisSolution] = []
         for side in (OffsetWorkspaceSide.POSITIVE, OffsetWorkspaceSide.NEGATIVE):
             center_slide = self._slide_for_local_y(
-                slide_zero_target,
+                base_target,
                 self.workspace.center_y(side),
             )
             center_solutions.extend(
                 self._solutions_for_slide(
-                    slide_zero_target,
+                    base_target,
                     output_yaw_deg,
                     current_state,
                     center_slide,
@@ -304,7 +273,7 @@ class BaseFrameFiveAxisSolver:
             return self._sort_priority(center_solutions, current_state)
 
         current_local = self.five_axis_kinematics.compute_arm_local_target(
-            slide_zero_target,
+            base_target,
             current_state.slide_mm,
         )
         fallback_solutions: list[FiveAxisSolution] = []
@@ -314,7 +283,7 @@ class BaseFrameFiveAxisSolver:
                 side,
                 current_local.local_y_mm,
             ):
-                slide = self._slide_for_local_y(slide_zero_target, local_y)
+                slide = self._slide_for_local_y(base_target, local_y)
                 if any(
                     math.isclose(
                         slide,
@@ -328,7 +297,7 @@ class BaseFrameFiveAxisSolver:
                 seen_slides.append(slide)
                 fallback_solutions.extend(
                     self._solutions_for_slide(
-                        slide_zero_target,
+                        base_target,
                         output_yaw_deg,
                         current_state,
                         slide,
@@ -358,11 +327,11 @@ class BaseFrameFiveAxisSolver:
             raise TypeError("axis_state must be RobotAxisState")
         if not isinstance(slide_selection_reason, SlideSelectionReason):
             raise TypeError("slide_selection_reason must be SlideSelectionReason")
-        slide_zero_target = self.transform_base_target_to_slide_zero(
-            base_T_tool_target
-        )
+        if not isinstance(base_T_tool_target, RigidTransform):
+            raise TypeError("base_T_tool_target must be RigidTransform")
+        base_target = base_T_tool_target
         local = self.five_axis_kinematics.compute_arm_local_target(
-            slide_zero_target,
+            base_target,
             axis_state.slide_mm,
         )
         side = self.workspace.classify(local.local_x_mm, local.local_y_mm)
@@ -380,7 +349,7 @@ class BaseFrameFiveAxisSolver:
                     stage_counts={f"{axis.value}_limit": 1},
                 )
         return self._solution_from_state(
-            slide_zero_target=slide_zero_target,
+            base_target=base_target,
             state=axis_state,
             local_x_mm=local.local_x_mm,
             local_y_mm=local.local_y_mm,
@@ -425,7 +394,7 @@ class BaseFrameFiveAxisSolver:
 
     def _solutions_for_slide(
         self,
-        slide_zero_target: RigidTransform,
+        base_target: RigidTransform,
         output_yaw_deg: float,
         current_state: RobotAxisState,
         slide_mm: float,
@@ -437,7 +406,7 @@ class BaseFrameFiveAxisSolver:
             counts["slide_limit"] += 1
             return []
         local = self.five_axis_kinematics.compute_arm_local_target(
-            slide_zero_target,
+            base_target,
             slide_mm,
         )
         side = self.workspace.classify(local.local_x_mm, local.local_y_mm)
@@ -484,7 +453,7 @@ class BaseFrameFiveAxisSolver:
                 )
                 try:
                     solution = self._solution_from_state(
-                        slide_zero_target=slide_zero_target,
+                        base_target=base_target,
                         state=state,
                         local_x_mm=local.local_x_mm,
                         local_y_mm=local.local_y_mm,
@@ -504,7 +473,7 @@ class BaseFrameFiveAxisSolver:
     def _solution_from_state(
         self,
         *,
-        slide_zero_target: RigidTransform,
+        base_target: RigidTransform,
         state: RobotAxisState,
         local_x_mm: float,
         local_y_mm: float,
@@ -515,11 +484,11 @@ class BaseFrameFiveAxisSolver:
         reject_residual: bool,
     ) -> FiveAxisSolution:
         reconstructed = self.five_axis_kinematics.forward_kinematics(state)
-        delta = reconstructed.translation_mm - slide_zero_target.translation_mm
+        delta = reconstructed.translation_mm - base_target.translation_mm
         error_xyz = tuple(float(value) for value in delta)
         position_residual = float(np.linalg.norm(delta))
         yaw_residual = abs(
-            angular_difference_deg(reconstructed.yaw_deg, slide_zero_target.yaw_deg)
+            angular_difference_deg(reconstructed.yaw_deg, base_target.yaw_deg)
         )
         if reject_residual and position_residual > self.config.position_residual_tolerance_mm:
             raise FiveAxisNoSolutionError(
@@ -596,11 +565,11 @@ class BaseFrameFiveAxisSolver:
 
     def _slide_for_local_y(
         self,
-        slide_zero_target: RigidTransform,
+        base_target: RigidTransform,
         desired_local_y_mm: float,
     ) -> float:
         local_at_zero = self.five_axis_kinematics.compute_arm_local_target(
-            slide_zero_target,
+            base_target,
             0.0,
         )
         coefficient = self.five_axis_kinematics.slide_local_y_per_mm()
@@ -610,19 +579,9 @@ class BaseFrameFiveAxisSolver:
             )
         return (local_at_zero.local_y_mm - desired_local_y_mm) / coefficient
 
-    def _rotation_output_yaw(self, slide_zero_target: RigidTransform) -> float:
-        geometry = self.five_axis_kinematics.geometry
-        output_target = (
-            slide_zero_target @ geometry.rotation_output_T_tool.inverse()
-        )
-        relative_rotation = (
-            geometry.slide_zero_T_planar_origin_at_zero.rotation_matrix.T
-            @ output_target.rotation_matrix
-        )
-        matrix = np.eye(4, dtype=float)
-        matrix[:3, :3] = relative_rotation
+    def _target_yaw(self, base_target: RigidTransform) -> float:
         roll_deg, pitch_deg, yaw_deg = (
-            float(value) for value in RigidTransform(matrix).rpy_deg
+            float(value) for value in base_target.rpy_deg
         )
         if max(abs(roll_deg), abs(pitch_deg)) > self.config.model_roll_pitch_tolerance_deg:
             raise BaseFrameSolverError(
@@ -650,25 +609,6 @@ class BaseFrameFiveAxisSolver:
         values = [value for value in values if self._within_limit(AxisName.ROTATION, value)]
         values.sort(key=lambda value: (abs(value - current_rotation_deg), value))
         return tuple(values)
-
-    def _validate_inverse_geometry(self) -> None:
-        geometry = self.five_axis_kinematics.geometry
-        mount_rotation = geometry.slide_zero_T_planar_origin_at_zero.rotation_matrix
-        z_in_mount = mount_rotation.T @ np.asarray(geometry.z_direction_xyz)
-        if abs(float(z_in_mount[2])) <= self.config.linear_solve_tolerance:
-            raise BaseFrameSolverError(
-                "z_direction_xyz has no component normal to the configured planar frame"
-            )
-        slide_in_mount = mount_rotation.T @ np.asarray(geometry.slide_direction_xyz)
-        if (
-            abs(float(slide_in_mount[0])) > self.config.linear_solve_tolerance
-            or abs(float(slide_in_mount[2])) > self.config.linear_solve_tolerance
-            or float(slide_in_mount[1]) <= self.config.linear_solve_tolerance
-        ):
-            raise BaseFrameSolverError(
-                "offset-workspace planning requires Slide logical positive to align "
-                "with mechanical-arm local +y"
-            )
 
     def _score(
         self,
@@ -834,5 +774,4 @@ __all__ = [
     "FiveAxisNoSolutionError",
     "FiveAxisSolution",
     "SolverWeights",
-    "UnvalidatedBaseTransformError",
 ]
