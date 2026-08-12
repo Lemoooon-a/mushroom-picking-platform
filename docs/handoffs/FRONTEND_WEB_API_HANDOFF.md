@@ -231,9 +231,14 @@ CORS（Cross-Origin Resource Sharing，跨源资源共享）默认允许：
 | POST | `/api/vision/observe` | 非 read-only、`ready` | `VisionTargetObservation` | 否 |
 | POST | `/api/vision/plan` | 非 read-only、`ready`，视觉与外参门禁通过 | `VisionPlanResponse` | 否 |
 | POST | `/api/pick` | 非 read-only、`ready`，能力与抓取配置通过 | `PickResult` | 否 |
+| POST | `/api/scan-positions/{scan_index}/move` | 非 read-only、`ready`，扫描配置通过 | `MotionResult` | 否 |
+| POST | `/api/scan-positions/{scan_index}/pick-one` | 非 read-only、`ready`，扫描/视觉/抓取配置通过 | `ScanAndPickResult` | 否 |
 | POST | `/api/scan-pick` | 非 read-only、`ready`，扫描/抓取配置通过 | `ScanAndPickResult` | 否 |
 
 合法 `{axis}`：`slide`、`z`、`shoulder`、`elbow`、`rotation`。
+
+合法 `{scan_index}`：整数 `1..8`。前端直接生成八个按钮；`1..4` 对应第一个 X 下的四个
+Y，`5..8` 对应第二个 X 下的四个 Y。真实扫描坐标不进入前端契约，由后端已校验配置解析。
 
 ## 8. 请求契约
 
@@ -449,11 +454,25 @@ function derivePermissions(status, pending) {
     observe: idle && mode !== "read-only" && cap.vision_target_observation === true,
     visionPlan: idle && mode !== "read-only" && cap.vision_target_resolution === true,
     pick: idle && mode !== "read-only" && cap.pick_planning === true,
+    scanPositionMove: idle && mode !== "read-only" && cap.base_frame_motion === true,
+    scanPositionPickOne: idle && mode !== "read-only" && cap.pick_planning === true,
     scanPick: idle && mode !== "read-only" && cap.pick_planning === true,
     stop: !pending.stop,
   };
 }
 ```
+
+手动八区域建议调用顺序：
+
+1. 点击位置按钮时调用 `POST /api/scan-positions/{scan_index}/move`；dry-run 下应显示
+   `executed=false`，不能提示已真实到位。
+2. 点击“识别并抓取”时调用 `POST /api/scan-positions/{scan_index}/pick-one`；该接口会再次确保
+   到达所选扫描位，然后只尝试识别一颗，完成抓取、放置并返回。
+3. `total_picked=0` 且 `final_reason=no_target` 是 HTTP 200 正常结果；
+   `target_rejected:<错误类型>` 也是业务结果。`picked_and_placed_unverified` 不能显示为物理抓取
+   已验证。
+4. 完整自动流程继续调用 `POST /api/scan-pick`；仅抓起并保持吸附的旧功能仍是
+   `POST /api/pick`。
 
 注意：`POST /api/motion/base/execute` 在 `dry-run` 中允许调用，但只返回规划结果并令 `executed=false`；按钮文案应显示为“模拟执行/检查”，避免误导。
 
@@ -513,4 +532,4 @@ function derivePermissions(status, pending) {
 4. `web/src/control-state.js`、`web/src/main.js`：当前页面门禁与轮询；
 5. `docs/interfaces/ROBOT_WEB_API.md`：说明性文档。
 
-本交接包不包含机器专属 `host/config/local/` 配置、硬件凭据或真实设备参数。
+本交接包不复制 `host/config/local/`；这些团队共享运行配置由仓库单独跟踪。交接包和仓库均不应包含硬件凭据或个人密钥。

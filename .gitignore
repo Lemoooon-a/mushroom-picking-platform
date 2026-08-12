@@ -43,11 +43,9 @@ logs/
 # Generated handoff bundles
 /frontend-web-api-handoff-*.zip
 
-# Local configuration
+# Unversioned configuration overrides
 config/robot.yaml
 host/config/robot.yaml
-/host/config/local/*
-!/host/config/local/__init__.py
 .env
 
 # Recorded data

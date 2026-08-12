@@ -22,6 +22,7 @@ export type RobotState =
 
 export type AxisName = "slide" | "z" | "shoulder" | "elbow" | "rotation";
 export type AxisKind = "linear" | "rotary";
+export type ScanPositionIndex = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 export type HandEyeCalibrationStatus = "missing" | "provisional" | "validated";
 export type MotionCommandStatus =
   | "accepted"
@@ -347,12 +348,22 @@ export interface PickResult {
 }
 
 export interface ScanPositionResult {
-  scan_index: number;
+  /** Fixed 1-based scan position index. Valid configured positions are 1 through 8. */
+  scan_index: ScanPositionIndex;
   detected_count: number;
   picked_count: number;
+  /**
+   * Manual pick-one returns picked_and_placed_unverified, no_target, or
+   * target_rejected:<error type>. Full scan-pick also uses its existing reasons.
+   */
   final_reason: string;
 }
 
+/**
+ * Response from POST /api/scan-positions/{scan_index}/pick-one and
+ * POST /api/scan-pick. A picked count does not verify physical pickup because
+ * the current system has no vacuum feedback.
+ */
 export interface ScanAndPickResult {
   result: string;
   visited_scan_positions: ScanPositionResult[];

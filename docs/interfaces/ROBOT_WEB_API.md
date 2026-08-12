@@ -76,6 +76,8 @@ cd /Users/sd/Projects/mushroom-picking-platform/host
 | POST | `/api/vision/observe` | `request_observation()` | 无请求体 |
 | POST | `/api/vision/plan` | `request_observation()` → `resolve_camera_point()` → `plan_base_target()` | 新拍一帧，按 capture 快照转换到 Base 后只规划；不执行运动 |
 | POST | `/api/pick` | `pick()` | 无请求体，使用已加载 GraspProfile |
+| POST | `/api/scan-positions/{scan_index}/move` | `move_to_scan_position()` | 移动到已校验的第 `1..8` 个扫描位；无请求体 |
+| POST | `/api/scan-positions/{scan_index}/pick-one` | `pick_one_at_scan_position()` | 确保位于指定扫描位，识别并抓取一颗，放置后返回；无请求体 |
 | POST | `/api/scan-pick` | `scan_and_pick()` | 无请求体；同步完成固定 8 区域扫描、区域内重复抓取与固定位置放置 |
 
 `web/` 前端通过 `GET /api/status` 每秒轮询进程级状态。Service 仅在 `READY` 或
@@ -88,9 +90,21 @@ Return 仅在 execute/READY 启用。当前没有 WebSocket、后台任务队列
 
 `/api/scan-pick` 的成功响应包含 `result`、`total_picked` 和
 `visited_scan_positions`。每个区域记录 `scan_index`、`detected_count`、`picked_count` 与
-`final_reason`。运行时默认从 ignored 的 `host/config/local/scan_pick.json` 读取参数；tracked
+`final_reason`。运行时默认从 tracked 的 `host/config/local/scan_pick.json` 读取参数；tracked
 模板 `host/config/examples/scan_pick.json` 不含真实坐标且默认 `validated=false`。配置未确认时
 接口 fail-closed。
+
+`scan_index` 固定为 `1..8`，顺序与 `ScanPickProfile.scan_poses` 一致：`1..4` 是第一个 X
+位置下依次排列的四个 Y，`5..8` 是第二个 X 位置下依次排列的四个 Y。真实坐标只保存在后端
+已校验配置中，前端不得复制坐标。非法编号返回 400，扫描配置缺失或未校验返回 409。
+
+`/api/scan-positions/{scan_index}/move` 返回现有 `MotionResult`；dry-run 只规划并返回
+`executed=false`。`/api/scan-positions/{scan_index}/pick-one` 返回现有
+`ScanAndPickResult`，且每次都会先确保到达指定扫描位。成功抓取、放置并返回时
+`final_reason="picked_and_placed_unverified"`；无目标时返回 HTTP 200、`total_picked=0`、
+`final_reason="no_target"`；目标规划被拒绝时返回 HTTP 200，`final_reason` 为
+`target_rejected:<错误类型>`。运动、吸盘或通信故障仍返回错误响应并由 Service 进入 FAULT。
+由于当前没有真空反馈，`picked_count=1` 只表示动作与吸盘命令完成，不表示物理抓取已经验证。
 
 ## 4. 请求示例
 

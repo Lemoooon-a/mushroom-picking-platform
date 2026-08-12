@@ -1,6 +1,6 @@
 # GraspProfile 配置
 
-状态：schema/loader implemented、offline-tested；本机真实 profile unavailable。
+状态：schema/loader implemented、offline-tested；团队共享的已验证 profile 位于 `host/config/local/grasp_profile.json`。
 
 字段：
 
@@ -18,4 +18,4 @@
 
 `from_observation` 在 orientation 缺失时明确拒绝，不回退为 0°；非零 roll/pitch 也不会被静默丢弃。
 
-tracked 模板 `host/config/examples/grasp_profile.json` 保持 `validated=false` 且真实 offset 为 `null`。操作者应复制到 ignored 的 `host/config/local/grasp_profile.json`，只填写经独立确认的值并显式设置 `validated=true`。loader 对缺失、placeholder、NaN/Inf 或未验证配置一律 fail-closed。
+模板 `host/config/examples/grasp_profile.json` 保持 `validated=false` 且真实 offset 为 `null`。项目运行默认使用 tracked 的 `host/config/local/grasp_profile.json`；修改其中参数前必须独立确认并保持 `validated=true`。loader 对缺失、placeholder、NaN/Inf 或未验证配置一律 fail-closed。

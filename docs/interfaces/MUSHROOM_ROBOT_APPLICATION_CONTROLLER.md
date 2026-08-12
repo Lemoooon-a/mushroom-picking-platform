@@ -135,9 +135,9 @@ robot = create_mushroom_robot_controller(
 
 仓库不提供推测边界或可执行默认值。本机已按用户 2026-08-05 的明确输入配置 Base X
 `[20, 480] mm`、Base Y `[20, 700] mm`、Base Z `[0, 180] mm`，并设置
-`metadata.validated=true`。其他机器应复制 `config/examples/tray_workspace.json` 为被 Git 忽略的
-`config/local/tray_workspace.json`，填入经确认的 Base-frame 边界。配置缺失、仍为 `null` 或未
-确认时，工厂和真实 CLI 在创建 Runtime、打开硬件前失败关闭。
+`metadata.validated=true`。其他机器应以 `config/examples/tray_workspace.json` 为字段参考，修改
+Git 跟踪的 `config/local/tray_workspace.json`，填入经确认的 Base-frame 边界并在验收后提交。
+配置缺失、仍为 `null` 或未确认时，工厂和真实 CLI 在创建 Runtime、打开硬件前失败关闭。
 
 Base Z `[0, 180] mm` 是最终 TCP 的绝对任务许可高度。上限 `180 mm` 是当前 Base 标定和 TCP
 几何的静态计算结果，不会在运行时自动更新；若二者变化，必须重新计算并人工确认。

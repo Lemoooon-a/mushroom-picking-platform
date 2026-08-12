@@ -6,7 +6,7 @@
 （Inverse Kinematics, IK）和阶段规划。门限拒绝时不裁剪坐标、不调用 solver、不调用 planner，
 也不提交硬件命令。
 
-用户已于 2026-08-05 明确确认培养槽 Base X/Y/Z 边界，本机配置保存在被 Git 忽略的
+用户已于 2026-08-05 明确确认培养槽 Base X/Y/Z 边界，团队共享运行配置保存在 Git 跟踪的
 `host/config/local/tray_workspace.json`。实现仍不提供推测默认值；机械最大可达范围、测试点、
 arm-local 正负偏置区与 150 mm 跨区安全高度都不是培养槽边界来源。
 
@@ -39,7 +39,7 @@ arm-local 正负偏置区与 150 mm 跨区安全高度都不是培养槽边界�
 
 提交模板：`host/config/examples/tray_workspace.json`。
 
-本机文件：`host/config/local/tray_workspace.json`（被 Git 忽略）。
+团队共享运行文件：`host/config/local/tray_workspace.json`（由 Git 跟踪）。
 
 当前用户确认值：
 

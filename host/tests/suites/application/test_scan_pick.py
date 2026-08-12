@@ -8,7 +8,7 @@ from application.grasp_profile import GraspProfile, GraspYawMode
 from application.motion_target import BaseToolTarget
 from application.pick_planner import PickPlanner
 from application.pick_workflow import VisionPickWorkflow
-from application.robot_service import MushroomRobotService
+from application.robot_service import MushroomRobotService, RobotServiceCapabilityError
 from application.runtime_state import RobotServiceMode, RobotServiceState
 from application.scan_pick import ScanPickProfile
 from application.tray_workspace import TrayWorkspace
@@ -229,6 +229,123 @@ class ScanAndPickTests(unittest.TestCase):
         self.assertEqual(backend.calls.count("release"), 2)
         self.assertEqual(sleep.call_count, len(observed_poses))
         sleep.assert_called_with(0.5)
+
+    def test_scan_position_indices_reuse_configured_pose_order(self) -> None:
+        service, backend, _ = self.make_service(
+            lambda request: NoTarget(request.request_id, "empty")
+        )
+        expected_scans = service.scan_pick_profile.scan_poses
+
+        for scan_index, expected_pose in enumerate(expected_scans, start=1):
+            backend.calls.clear()
+            result = service.move_to_scan_position(scan_index)
+
+            self.assertFalse(result.executed)
+            self.assertEqual(result.plan, expected_pose)
+            self.assertEqual(backend.calls, [("plan", expected_pose)])
+            self.assertIs(service.state, RobotServiceState.READY)
+
+        for invalid_index in (0, 9, True, 1.0):
+            with self.subTest(scan_index=invalid_index):
+                with self.assertRaises((TypeError, ValueError)):
+                    service.move_to_scan_position(invalid_index)
+
+    def test_scan_position_requires_validated_scan_profile(self) -> None:
+        service, _, _ = self.make_service(
+            lambda request: NoTarget(request.request_id, "empty")
+        )
+        service.scan_pick_profile = None
+
+        with self.assertRaises(RobotServiceCapabilityError):
+            service.move_to_scan_position(1)
+        with self.assertRaises(RobotServiceCapabilityError):
+            service.pick_one_at_scan_position(1)
+
+    def test_pick_one_moves_picks_places_and_returns(self) -> None:
+        service, backend, observed_poses = self.make_service(self.target)
+        expected_scan = service.scan_pick_profile.scan_poses[2]
+        original_begin = service._begin_write_operation
+        service._begin_write_operation = Mock(wraps=original_begin)
+
+        result = service.pick_one_at_scan_position(3)
+
+        self.assertEqual(result.result, "completed")
+        self.assertEqual(result.total_picked, 1)
+        self.assertEqual(len(result.visited_scan_positions), 1)
+        position = result.visited_scan_positions[0]
+        self.assertEqual(
+            (
+                position.scan_index,
+                position.detected_count,
+                position.picked_count,
+                position.final_reason,
+            ),
+            (3, 1, 1, "picked_and_placed_unverified"),
+        )
+        self.assertEqual(observed_poses, [expected_scan])
+        self.assertEqual(backend.pose, expected_scan)
+        self.assertEqual(backend.calls.count("grip"), 1)
+        self.assertEqual(backend.calls.count("release"), 1)
+        self.assertEqual(service._begin_write_operation.call_count, 1)
+        self.assertEqual(
+            service._begin_write_operation.call_args.kwargs["kind"],
+            "scan-pick-one",
+        )
+        self.assertIs(service.state, RobotServiceState.READY)
+
+    def test_pick_one_no_target_is_normal_and_stays_at_scan_pose(self) -> None:
+        service, backend, observed_poses = self.make_service(
+            lambda request: NoTarget(request.request_id, "empty")
+        )
+        expected_scan = service.scan_pick_profile.scan_poses[7]
+
+        result = service.pick_one_at_scan_position(8)
+
+        self.assertEqual(result.result, "completed")
+        self.assertEqual(result.total_picked, 0)
+        position = result.visited_scan_positions[0]
+        self.assertEqual(
+            (
+                position.scan_index,
+                position.detected_count,
+                position.picked_count,
+                position.final_reason,
+            ),
+            (8, 0, 0, "no_target"),
+        )
+        self.assertEqual(observed_poses, [expected_scan])
+        self.assertEqual(backend.pose, expected_scan)
+        self.assertNotIn("grip", backend.calls)
+        self.assertNotIn("release", backend.calls)
+        self.assertIs(service.state, RobotServiceState.READY)
+
+    def test_pick_one_target_rejection_is_normal(self) -> None:
+        service, backend, _ = self.make_service(self.target)
+        service._workflow.plan_observation = Mock(
+            side_effect=ValueError("target rejected")
+        )
+
+        result = service.pick_one_at_scan_position(1)
+
+        self.assertEqual(result.total_picked, 0)
+        self.assertEqual(
+            result.visited_scan_positions[0].final_reason,
+            "target_rejected:ValueError",
+        )
+        self.assertNotIn("grip", backend.calls)
+        self.assertNotIn("release", backend.calls)
+        self.assertIs(service.state, RobotServiceState.READY)
+
+    def test_pick_one_motion_or_suction_failure_faults_and_stops(self) -> None:
+        service, backend, _ = self.make_service(self.target)
+        backend.grip_error = RuntimeError("suction failed")
+
+        with self.assertRaisesRegex(Exception, "suction failed"):
+            service.pick_one_at_scan_position(1)
+
+        self.assertIs(service.state, RobotServiceState.FAULT)
+        self.assertIn("stop", backend.calls)
+        self.assertNotIn("release", backend.calls)
 
     def test_max_pick_guard_stops_entire_task_without_fault(self) -> None:
         service, _, observed_poses = self.make_service(self.target, max_picks=2)

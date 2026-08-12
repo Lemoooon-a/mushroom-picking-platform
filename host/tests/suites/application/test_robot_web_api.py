@@ -151,6 +151,25 @@ class FakeRobotService:
         self._record("pick")
         return FakeResult("pick")
 
+    def move_to_scan_position(self, scan_index):
+        self._record("move_to_scan_position", scan_index)
+        return FakeResult("scan-position-move")
+
+    def pick_one_at_scan_position(self, scan_index):
+        self._record("pick_one_at_scan_position", scan_index)
+        return ScanAndPickResult(
+            "completed",
+            (
+                ScanPositionResult(
+                    scan_index,
+                    1,
+                    1,
+                    "picked_and_placed_unverified",
+                ),
+            ),
+            1,
+        )
+
     def scan_and_pick(self):
         self._record("scan_and_pick")
         return ScanAndPickResult(
@@ -282,6 +301,40 @@ class RobotWebApiTests(unittest.TestCase):
             call for call in self.service.calls if call[0] == "suction"
         )
         self.assertEqual(suction_call[1], ("grip",))
+
+    def test_scan_position_routes_are_forwarded_and_validate_integer_path(self) -> None:
+        moved = self.client.post("/api/scan-positions/3/move")
+        self.assertEqual(moved.status_code, 200)
+        self.assertEqual(moved.json()["operation"], "scan-position-move")
+        self.assertEqual(
+            self.service.calls[-1],
+            ("move_to_scan_position", (3,), {}),
+        )
+
+        picked = self.client.post("/api/scan-positions/3/pick-one")
+        self.assertEqual(picked.status_code, 200)
+        self.assertEqual(picked.json()["total_picked"], 1)
+        self.assertEqual(
+            picked.json()["visited_scan_positions"][0]["final_reason"],
+            "picked_and_placed_unverified",
+        )
+        self.assertEqual(
+            self.service.calls[-1],
+            ("pick_one_at_scan_position", (3,), {}),
+        )
+
+        for path in (
+            "/api/scan-positions/0/move",
+            "/api/scan-positions/9/pick-one",
+            "/api/scan-positions/not-an-integer/move",
+        ):
+            with self.subTest(path=path):
+                invalid = self.client.post(path)
+                self.assertEqual(invalid.status_code, 400)
+                self.assertEqual(
+                    invalid.json()["error"]["type"],
+                    "RequestValidationError",
+                )
 
     def test_vision_plan_observes_resolves_capture_snapshot_and_only_plans(self) -> None:
         self.service.calls.clear()
@@ -428,6 +481,14 @@ class RobotWebApiTests(unittest.TestCase):
         self.assertEqual(schema.status_code, 200)
         self.assertIn("/api/status", schema.json()["paths"])
         self.assertIn("/api/vision/plan", schema.json()["paths"])
+        self.assertIn(
+            "/api/scan-positions/{scan_index}/move",
+            schema.json()["paths"],
+        )
+        self.assertIn(
+            "/api/scan-positions/{scan_index}/pick-one",
+            schema.json()["paths"],
+        )
         self.assertIn("/api/scan-pick", schema.json()["paths"])
 
         response = self.client.options(

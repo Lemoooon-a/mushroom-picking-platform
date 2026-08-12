@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "validated": true,
+  "camera_frame": "camera_color_optical_frame",
+  "host": "172.20.10.10",
+  "port": 9000,
+  "timeout_s": 2.0,
+  "maximum_message_bytes": 65536,
+  "minimum_confidence": 0.0,
+  "maximum_observation_age_s": 2.0
+}

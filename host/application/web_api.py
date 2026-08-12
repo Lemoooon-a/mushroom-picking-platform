@@ -12,7 +12,7 @@ import re
 import threading
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Path, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -267,6 +267,24 @@ def create_robot_web_app(
     @app.post("/api/pick", tags=["vision and pick"])
     def pick() -> JSONResponse:
         return _invoke(service.pick)
+
+    @app.post(
+        "/api/scan-positions/{scan_index}/move",
+        tags=["vision and pick"],
+    )
+    def move_to_scan_position(
+        scan_index: Annotated[int, Path(ge=1, le=8)],
+    ) -> JSONResponse:
+        return _invoke(service.move_to_scan_position, scan_index)
+
+    @app.post(
+        "/api/scan-positions/{scan_index}/pick-one",
+        tags=["vision and pick"],
+    )
+    def pick_one_at_scan_position(
+        scan_index: Annotated[int, Path(ge=1, le=8)],
+    ) -> JSONResponse:
+        return _invoke(service.pick_one_at_scan_position, scan_index)
 
     @app.post("/api/scan-pick", tags=["vision and pick"])
     def scan_pick() -> JSONResponse:
