@@ -46,6 +46,8 @@ export function createRobotApi(
     getStatus: () => request("/api/status"),
     startup: () => request("/api/startup", { method: "POST" }),
     stop: () => request("/api/stop", { method: "POST" }),
+    setSuction: (action) =>
+      request("/api/suction", { method: "POST", body: { action } }),
     getAxisState: (axis) => request(`/api/axes/${encodeURIComponent(axis)}`),
     getCurrentTcpPose: () => request("/api/motion/base/current"),
     planBaseTarget: (target) =>

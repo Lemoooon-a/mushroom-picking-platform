@@ -21,7 +21,11 @@ const pending = {
   tcpPlan: false,
   tcpExecute: false,
   jog: false,
+  suction: false,
 };
+
+let activeSuctionAction = null;
+let suctionCommandVersion = 0;
 
 let selectedAxis = AXES[0];
 let latestStatus = null;
@@ -197,6 +201,31 @@ document.querySelector("#app").innerHTML = `
         </p>
       </section>
 
+      <section class="card suction-card" aria-labelledby="suction-heading">
+        <div class="card-heading suction-heading">
+          <div>
+            <p class="section-index">03 / END EFFECTOR</p>
+            <h2 id="suction-heading">Vacuum Pump</h2>
+            <p class="card-subtitle">Direct pump control · STOP always switches the pump off</p>
+          </div>
+          <span class="operation-chip is-idle" id="suction-chip">UNKNOWN</span>
+        </div>
+        <div class="suction-controls">
+          <p>
+            <strong>Air pump command</strong>
+            <span>Start suction for gripping, or return the suction output to idle.</span>
+          </p>
+          <div class="suction-actions">
+            <button class="button button-primary" id="pump-on-button" type="button">
+              Pump ON
+            </button>
+            <button class="button button-secondary" id="pump-off-button" type="button">
+              Pump OFF
+            </button>
+          </div>
+        </div>
+      </section>
+
       <section class="feedback-bar is-neutral" id="feedback-bar" aria-live="polite">
         <div class="feedback-icon" id="feedback-icon" aria-hidden="true">·</div>
         <div class="feedback-copy">
@@ -243,6 +272,9 @@ const elements = {
   jogMoveButton: document.querySelector("#jog-move-button"),
   customUnit: document.querySelector("#custom-unit"),
   jogChip: document.querySelector("#jog-chip"),
+  suctionChip: document.querySelector("#suction-chip"),
+  pumpOnButton: document.querySelector("#pump-on-button"),
+  pumpOffButton: document.querySelector("#pump-off-button"),
   feedbackBar: document.querySelector("#feedback-bar"),
   feedbackIcon: document.querySelector("#feedback-icon"),
   feedbackLabel: document.querySelector("#feedback-label"),
@@ -258,6 +290,8 @@ elements.tcpForm.addEventListener("submit", planTarget);
 elements.executeButton.addEventListener("click", executeTarget);
 elements.axisTabs.addEventListener("click", selectAxis);
 elements.jogForm.addEventListener("submit", submitCustomJog);
+elements.pumpOnButton.addEventListener("click", () => setSuction("grip"));
+elements.pumpOffButton.addEventListener("click", () => setSuction("idle"));
 document.querySelectorAll("[data-delta]").forEach((button) => {
   button.addEventListener("click", () => jogAxis(Number(button.dataset.delta)));
 });
@@ -431,16 +465,57 @@ async function returnToStartup() {
 
 async function stopRobot() {
   if (pending.stop) return;
+  const commandVersion = ++suctionCommandVersion;
   setPending("stop", true);
   setFeedback("moving", "STOP sending", "Requesting a coordinated stop from the Robot Service.");
   try {
     await robotApi.stop();
-    setFeedback("success", "STOP accepted", "The Robot Service completed the stop request.");
+    if (commandVersion === suctionCommandVersion) {
+      setOperationChip(elements.suctionChip, "success", "OFF");
+      setFeedback("success", "STOP accepted", "Motion stopped and the vacuum pump was switched off.");
+    }
   } catch (error) {
-    showRequestError("STOP failed", error);
+    if (commandVersion === suctionCommandVersion) {
+      setOperationChip(elements.suctionChip, "error", "UNKNOWN");
+      showRequestError("STOP failed", error);
+    }
   } finally {
     setPending("stop", false);
     await pollStatus({ forceAxisRefresh: true, forceTcpRefresh: true });
+  }
+}
+
+async function setSuction(action) {
+  if (pending.suction) return;
+  const turningOn = action === "grip";
+  const commandVersion = ++suctionCommandVersion;
+  activeSuctionAction = action;
+  setPending("suction", true);
+  setOperationChip(elements.suctionChip, "busy", turningOn ? "STARTING" : "STOPPING");
+  setFeedback(
+    "sending",
+    turningOn ? "Starting vacuum pump" : "Stopping vacuum pump",
+    turningOn ? "Sending the suction grip command." : "Returning suction control to idle.",
+  );
+  try {
+    await robotApi.setSuction(action);
+    if (commandVersion === suctionCommandVersion) {
+      setOperationChip(elements.suctionChip, "success", turningOn ? "ON" : "OFF");
+      setFeedback(
+        "success",
+        turningOn ? "Vacuum pump started" : "Vacuum pump stopped",
+        turningOn ? "The grip command was accepted." : "The idle command was accepted.",
+      );
+    }
+  } catch (error) {
+    if (commandVersion === suctionCommandVersion) {
+      setOperationChip(elements.suctionChip, "error", "ERROR");
+      showRequestError(turningOn ? "Pump start failed" : "Pump stop failed", error);
+    }
+  } finally {
+    activeSuctionAction = null;
+    setPending("suction", false);
+    await pollStatus();
   }
 }
 
@@ -706,6 +781,10 @@ function renderControls() {
   elements.planButton.disabled = !availability.tcpPlan;
   elements.executeButton.disabled = !availability.tcpExecute;
   elements.jogMoveButton.disabled = !availability.jog;
+  const suctionAvailable =
+    availability.suction && latestStatus?.capabilities?.suction_command !== false;
+  elements.pumpOnButton.disabled = !suctionAvailable;
+  elements.pumpOffButton.disabled = !suctionAvailable;
   document.querySelectorAll(".jog-button, .axis-tab").forEach((button) => {
     button.disabled = !availability.jog;
   });
@@ -717,6 +796,14 @@ function renderControls() {
   elements.planButton.classList.toggle("is-loading", pending.tcpPlan);
   elements.executeButton.classList.toggle("is-loading", pending.tcpExecute);
   elements.jogMoveButton.classList.toggle("is-loading", pending.jog);
+  elements.pumpOnButton.classList.toggle(
+    "is-loading",
+    pending.suction && activeSuctionAction === "grip",
+  );
+  elements.pumpOffButton.classList.toggle(
+    "is-loading",
+    pending.suction && activeSuctionAction === "idle",
+  );
   elements.stopButton.classList.toggle("is-loading", pending.stop);
 }
 

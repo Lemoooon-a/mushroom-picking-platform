@@ -69,6 +69,25 @@ test("current TCP and Return use the dedicated Base-motion endpoints", async () 
   );
 });
 
+test("vacuum pump controls use grip and idle suction commands", async () => {
+  const requests = [];
+  const api = createRobotApi("http://robot.test", async (url, options) => {
+    requests.push({ url, options });
+    return response({ ok: true });
+  });
+
+  await api.setSuction("grip");
+  await api.setSuction("idle");
+
+  assert.deepEqual(
+    requests.map(({ url, options }) => [url, options.method, JSON.parse(options.body)]),
+    [
+      ["http://robot.test/api/suction", "POST", { action: "grip" }],
+      ["http://robot.test/api/suction", "POST", { action: "idle" }],
+    ],
+  );
+});
+
 test("backend error.message is exposed without a raw response dump", async () => {
   const api = createRobotApi("http://robot.test", async () =>
     response(
@@ -151,6 +170,12 @@ test("Startup and Return follow Robot Service lifecycle state", () => {
     false,
   );
   assert.equal(getControlAvailability(idle, "fault", "execute").jog, false);
+  assert.equal(getControlAvailability(idle, "ready", "execute").suction, true);
+  assert.equal(getControlAvailability(idle, "ready", "dry-run").suction, false);
+  assert.equal(
+    getControlAvailability({ ...idle, suction: true }, "ready", "execute").tcpExecute,
+    false,
+  );
 });
 
 test("axis refresh is limited to idle READY or DISABLED states", () => {
