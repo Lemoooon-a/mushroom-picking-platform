@@ -38,6 +38,10 @@ node_modules/
 # Runtime logs
 logs/
 *.log
+/host/runtime/
+
+# Generated handoff bundles
+/frontend-web-api-handoff-*.zip
 
 # Local configuration
 config/robot.yaml
