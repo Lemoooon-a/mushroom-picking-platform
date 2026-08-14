@@ -17,9 +17,6 @@ from kinematics.five_axis import (
 from kinematics.frame_chain import RobotAxisState
 
 
-HOST_ROOT = Path(__file__).resolve().parents[3]
-
-
 def geometry(*, tcp_height_at_z_zero_mm: float = 200.0) -> FiveAxisGeometry:
     return FiveAxisGeometry(
         link1_length_mm=100.0,
@@ -105,11 +102,14 @@ class FiveAxisGeometryConfigTests(unittest.TestCase):
             self.assertEqual(loaded.link1_length_mm, 100)
             self.assertEqual(loaded.tcp_height_at_z_zero_mm, 200)
 
-    def test_example_cannot_be_used_without_confirmation(self) -> None:
-        with self.assertRaisesRegex(FiveAxisGeometryError, "geometry_confirmed"):
-            load_five_axis_geometry(
-                HOST_ROOT / "config" / "examples" / "five_axis_geometry.json"
-            )
+    def test_unconfirmed_geometry_is_rejected(self) -> None:
+        document = self._document()
+        document["geometry_confirmed"] = False
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "geometry.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaisesRegex(FiveAxisGeometryError, "geometry_confirmed"):
+                load_five_axis_geometry(path)
 
     def test_rejects_missing_tcp_height(self) -> None:
         document = self._document()

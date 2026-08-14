@@ -32,13 +32,8 @@ from application.robot_service import (  # noqa: E402
 from application.runtime_state import RobotServiceMode  # noqa: E402
 from application.tray_workspace import TrayWorkspace  # noqa: E402
 from calibration.hand_eye import hand_eye_from_frame_document  # noqa: E402
-from config.frame_transforms import load_frame_transforms_document  # noqa: E402
-from config.project.grasp_strategy import load_validated_grasp_profile  # noqa: E402
-from config.project.scan_pick import load_validated_scan_pick_profile  # noqa: E402
-from config.project.vision_runtime import (  # noqa: E402
-    DEFAULT_VISION_RUNTIME_CONFIG, VisionRuntimeConfig, load_vision_runtime_config,
-)
-from config.tray_workspace import load_tray_workspace_config  # noqa: E402
+from config.project.vision_runtime import VisionRuntimeConfig  # noqa: E402
+from config.robot_runtime import load_robot_runtime_config  # noqa: E402
 from scripts.run_motion_demo import create_demo_flow  # noqa: E402
 from motion.unified_protocol import (  # noqa: E402
     AxisDescriptor, AxisKind, AxisName, AxisState, MotionCommandResult,
@@ -49,27 +44,13 @@ from vision.protocol import NoTarget, TargetDetection  # noqa: E402
 from vision.target_resolver import VisionTargetResolver  # noqa: E402
 
 
-DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "local" / "frame_transforms.json"
-DEFAULT_TRAY_CONFIG = HOST_ROOT / "config" / "local" / "tray_workspace.json"
-DEFAULT_VISION_CONFIG = HOST_ROOT / "config" / "local" / "vision_runtime.json"
-DEFAULT_GRASP_CONFIG = HOST_ROOT / "config" / "local" / "grasp_profile.json"
-DEFAULT_SCAN_PICK_CONFIG = HOST_ROOT / "config" / "local" / "scan_pick.json"
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Top-level mushroom robot service")
     parser.add_argument("--mode", choices=[item.value for item in RobotServiceMode], default=RobotServiceMode.READ_ONLY.value)
     parser.add_argument("--confirm-motion", action="store_true", help="required with --mode execute")
-    parser.add_argument("--confirm-rotation-no-stop", action="store_true", help="accept existing Rotation stop limitation in execute mode")
-    parser.add_argument("--frame-config", type=Path, default=DEFAULT_FRAME_CONFIG)
-    parser.add_argument("--tray-workspace-config", type=Path, default=DEFAULT_TRAY_CONFIG)
-    parser.add_argument("--vision-runtime-config", type=Path, default=DEFAULT_VISION_CONFIG)
-    parser.add_argument("--grasp-profile-config", type=Path, default=DEFAULT_GRASP_CONFIG)
-    parser.add_argument("--scan-pick-config", type=Path, default=DEFAULT_SCAN_PICK_CONFIG)
     parser.add_argument("--vision-gateway", choices=("fake", "socket"), default="fake")
     parser.add_argument("--fake-position", nargs=3, type=float, metavar=("X", "Y", "Z"))
     parser.add_argument("--fake-confidence", type=float, default=0.95)
-    parser.add_argument("--record-jsonl", type=Path)
     return parser
 
 
@@ -77,8 +58,6 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
     execute = args.mode == RobotServiceMode.EXECUTE.value
     if execute != bool(args.confirm_motion):
         parser.error("execute mode requires --confirm-motion")
-    if execute != bool(args.confirm_rotation_no_stop):
-        parser.error("execute mode requires --confirm-rotation-no-stop")
     if args.mode == RobotServiceMode.READ_ONLY.value and args.fake_position is not None:
         parser.error("--fake-position is only valid in dry-run or execute mode")
     if args.vision_gateway == "socket" and args.fake_position is not None:
@@ -86,33 +65,30 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
 
 
 def create_service(args: argparse.Namespace, *, emit: Callable[[str], None] = print) -> MushroomRobotService:
+    runtime_config = load_robot_runtime_config()
     mode = RobotServiceMode(args.mode)
     execute = mode is RobotServiceMode.EXECUTE
-    vision_config = (
-        load_vision_runtime_config(args.vision_runtime_config)
-        if args.vision_runtime_config.exists()
-        else DEFAULT_VISION_RUNTIME_CONFIG
-    )
+    vision_config = runtime_config.vision_runtime
     if execute:
-        runtime, flow = create_demo_flow(execute=True, frame_config=args.frame_config, emit=emit)
+        runtime, flow = create_demo_flow(execute=True, emit=emit)
         backend = DemoFlowApplicationBackend(runtime=runtime, flow=flow)
-        document = load_frame_transforms_document(args.frame_config)
         resolver = VisionTargetResolver(
             pose_provider=flow.solver,
-            hand_eye_calibration=hand_eye_from_frame_document(document, source=str(args.frame_config)),
+            hand_eye_calibration=hand_eye_from_frame_document(
+                runtime_config.frame_transforms,
+                source=f"{runtime_config.source_path}#frame_transforms",
+            ),
             camera_frame_id=vision_config.camera_frame,
         )
         controller = MushroomRobotController(
             base_backend=backend,
-            tray_workspace=TrayWorkspace(load_tray_workspace_config(args.tray_workspace_config)),
+            tray_workspace=TrayWorkspace(runtime_config.tray_workspace),
             target_resolver=resolver,
         )
     else:
         runtime = None
         controller, backend = create_offline_planning_controller(
-            frame_config=args.frame_config,
-            tray_workspace_config=args.tray_workspace_config,
-            camera_frame=vision_config.camera_frame,
+            runtime_config=runtime_config,
         )
     gateway, description = _gateway(args, vision_config)
     planner = PickPlanner(controller)
@@ -125,30 +101,21 @@ def create_service(args: argparse.Namespace, *, emit: Callable[[str], None] = pr
         camera_frame=vision_config.camera_frame,
         timeout_s=vision_config.timeout_s,
     )
-    profile = None
-    if args.grasp_profile_config.exists():
-        try:
-            profile = load_validated_grasp_profile(args.grasp_profile_config)
-        except ValueError as exc:
-            emit(f"Grasp profile unavailable: {exc}")
-    scan_pick_profile = None
-    if args.scan_pick_config.exists():
-        try:
-            scan_pick_profile = load_validated_scan_pick_profile(
-                args.scan_pick_config
-            )
-        except ValueError as exc:
-            emit(f"Scan-pick profile unavailable: {exc}")
-    recorder = None
-    if args.record_jsonl is not None:
-        recorder = JsonLinesExecutionRecorder(args.record_jsonl, repository_root=REPOSITORY_ROOT)
+    recorder = (
+        JsonLinesExecutionRecorder(
+            runtime_config.recording.jsonl_path,
+            repository_root=REPOSITORY_ROOT,
+        )
+        if runtime_config.recording.enabled
+        else None
+    )
     return MushroomRobotService(
         axis_motion=runtime.controller if runtime is not None else backend,
         controller=controller,
         workflow=workflow,
         mode=mode,
-        grasp_profile=profile,
-        scan_pick_profile=scan_pick_profile,
+        grasp_profile=runtime_config.grasp_profile,
+        scan_pick_profile=runtime_config.scan_pick,
         recorder=recorder,
         activate_controller_on_startup=mode is not RobotServiceMode.READ_ONLY,
         vision_gateway_description=description,

@@ -32,17 +32,20 @@ from calibration.state_capture import (  # noqa: E402
 )
 from config.frame_transforms import (  # noqa: E402
     FixedFrameTransforms,
-    FrameTransformConfigError,
-    load_frame_transforms_document,
-    save_frame_transforms,
 )
 from config.hardware import (  # noqa: E402
     HardwareConfigLoadError,
-    load_local_hardware_config,
+    load_robot_hardware_config,
 )
 from config.motion_runtime import (  # noqa: E402
     MotionRuntimeConfigLoadError,
-    load_local_motion_config,
+    load_robot_motion_config,
+)
+from config.robot_runtime import (  # noqa: E402
+    DEFAULT_ROBOT_RUNTIME_PATH,
+    RobotRuntimeConfigError,
+    load_robot_runtime_config,
+    update_robot_runtime_frame_transforms,
 )
 from geometry.rigid_transform import RigidTransform  # noqa: E402
 from kinematics.frame_chain import (  # noqa: E402
@@ -53,8 +56,7 @@ from kinematics.five_axis import FiveAxisKinematics  # noqa: E402
 from motion.authorization import RuntimeMode  # noqa: E402
 
 
-DEFAULT_LOCAL_PATH = HOST_ROOT / "config" / "local" / "frame_transforms.json"
-DEFAULT_FK_PROVIDER = "kinematics.five_axis:load_local_five_axis_kinematics"
+DEFAULT_FK_PROVIDER = "kinematics.five_axis:load_robot_five_axis_kinematics"
 
 
 def capture_and_calibrate(
@@ -119,10 +121,9 @@ def save_calibration_result(
         raise ValueError("calibration result is invalid; --force is required to save")
     existing_tool = None
     metadata: dict[str, object] = {}
-    if path.exists():
-        document = load_frame_transforms_document(path)
-        existing_tool = document.transforms.tool_T_camera
-        metadata.update(document.metadata)
+    document = load_robot_runtime_config(path).frame_transforms
+    existing_tool = document.transforms.tool_T_camera
+    metadata.update(document.metadata)
     timestamp = datetime.now(timezone.utc).isoformat()
     metadata.update(
         {
@@ -150,14 +151,13 @@ def save_calibration_result(
             "operator_notes": notes,
         }
     )
-    save_frame_transforms(
+    update_robot_runtime_frame_transforms(
         path,
         FixedFrameTransforms(
             base_T_slide_zero=result.base_T_slide_zero,
             tool_T_camera=existing_tool,
         ),
         metadata=metadata,
-        overwrite=force,
     )
 
 
@@ -187,9 +187,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sample-interval-s", type=float, default=0.05)
     parser.add_argument("--max-linear-drift-mm", type=float, default=0.1)
     parser.add_argument("--max-rotary-drift-deg", type=float, default=0.1)
-    parser.add_argument("--write-local", action="store_true")
+    parser.add_argument("--write-config", action="store_true")
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--output", type=Path, default=DEFAULT_LOCAL_PATH)
+    parser.add_argument("--config", type=Path, default=DEFAULT_ROBOT_RUNTIME_PATH)
     parser.add_argument("--notes")
     return parser
 
@@ -206,8 +206,8 @@ def main(
             runtime_factory()
             if runtime_factory is not None
             else create_upper_motion_runtime(
-                load_local_hardware_config(),
-                load_local_motion_config(),
+                load_robot_hardware_config(),
+                load_robot_motion_config(),
                 mode=RuntimeMode.READ_ONLY,
             )
         )
@@ -232,9 +232,9 @@ def main(
             max_rotary_drift_deg=args.max_rotary_drift_deg,
         )
         _print_preview(axis_state, reference, result)
-        if args.write_local:
+        if args.write_config:
             save_calibration_result(
-                args.output,
+                args.config,
                 axis_state=axis_state,
                 base_T_tool_reference=reference,
                 result=result,
@@ -244,14 +244,14 @@ def main(
                 fk_provider=args.fk_provider,
                 fk_geometry=_five_axis_geometry_dict(kinematics),
             )
-            print(f"Saved local frame transforms: {args.output}")
+            print(f"Updated frame_transforms in: {args.config}")
         else:
-            print("Preview only; no file was written. Use --write-local to save.")
+            print("Preview only; no file was written. Use --write-config to save.")
         return 0 if result.valid else 1
     except (
         AxisCaptureError,
         FKProviderLoadError,
-        FrameTransformConfigError,
+        RobotRuntimeConfigError,
         HardwareConfigLoadError,
         MotionRuntimeConfigLoadError,
         FileExistsError,

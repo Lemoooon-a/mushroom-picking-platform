@@ -3,33 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import importlib.util
-from pathlib import Path
-import sys
+import importlib
 
 
 class HardwareConfigLoadError(RuntimeError):
-    """本地硬件配置缺失或内容无效。"""
+    """当前机械臂硬件配置缺失或内容无效。"""
 
 
-def _load_local_module(module_name: str) -> object:
-    """按新模块名加载 byte-for-byte 迁移的旧相对导入配置。"""
-
-    path = Path(__file__).with_name("local") / "hardware.py"
-    if not path.is_file():
-        raise ModuleNotFoundError(name=module_name)
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot create module spec for {path}")
-    module = importlib.util.module_from_spec(spec)
-    module.__package__ = __package__
-    sys.modules[module_name] = module
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        sys.modules.pop(module_name, None)
-        raise
-    return module
+def _load_robot_module(module_name: str) -> object:
+    return importlib.import_module(module_name)
 
 
 def _validate_usb_id(value: int, name: str) -> None:
@@ -109,25 +91,23 @@ class HardwareConfig:
             raise TypeError("can_adapter must be GsUsbDeviceConfig")
 
 
-def load_local_hardware_config() -> HardwareConfig:
-    """加载 ``config/local/hardware.py`` 中被 Git 忽略的机器配置。"""
+def load_robot_hardware_config() -> HardwareConfig:
+    """加载当前机械臂正式的 ``config/robot_hardware.py``。"""
 
-    module_name = f"{__package__}.local.hardware"
+    module_name = f"{__package__}.robot_hardware"
     try:
-        module = _load_local_module(module_name)
+        module = _load_robot_module(module_name)
     except ModuleNotFoundError as exc:
         if exc.name != module_name:
             raise HardwareConfigLoadError(
                 f"导入 {module_name} 时缺少依赖模块 {exc.name!r}"
             ) from exc
         raise HardwareConfigLoadError(
-            "未找到本地硬件配置。请复制 "
-            "host/config/examples/hardware.py 为 "
-            "host/config/local/hardware.py 后填写本机纯数据配置。"
+            "未找到当前机械臂硬件配置 host/config/robot_hardware.py。"
         ) from exc
     except Exception as exc:
         raise HardwareConfigLoadError(
-            f"导入本地硬件配置 {module_name} 失败: {exc}"
+            f"导入当前机械臂硬件配置 {module_name} 失败: {exc}"
         ) from exc
 
     config = getattr(module, "HARDWARE", None)
@@ -144,5 +124,5 @@ __all__ = [
     "HardwareConfigLoadError",
     "UsbSerialDeviceConfig",
     "UsbVidPid",
-    "load_local_hardware_config",
+    "load_robot_hardware_config",
 ]

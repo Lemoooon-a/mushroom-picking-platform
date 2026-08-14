@@ -31,9 +31,9 @@ from application.tray_workspace import (  # noqa: E402
     TargetOutsideTrayWorkspace,
     TrayWorkspace,
 )
-from config.tray_workspace import (  # noqa: E402
-    TrayWorkspaceConfigError,
-    load_tray_workspace_config,
+from config.robot_runtime import (  # noqa: E402
+    RobotRuntimeConfigError,
+    load_robot_runtime_config,
 )
 from config.project.workspace_planning import (  # noqa: E402
     DEFAULT_OFFSET_WORKSPACE_CONFIG,
@@ -56,7 +56,7 @@ from kinematics.base_move_transition_planner import (  # noqa: E402
 )
 from kinematics.five_axis import (  # noqa: E402
     FiveAxisKinematics,
-    load_local_five_axis_kinematics,
+    load_robot_five_axis_kinematics,
     rotation_deg_for_output_yaw,
 )
 from kinematics.frame_chain import RobotAxisState  # noqa: E402
@@ -92,12 +92,6 @@ STARTUP_FK_YAW_TOLERANCE_DEG = 2.0
 _AXIS_ORDER = tuple(AxisName)
 _ROTARY_AXES = (AxisName.SHOULDER, AxisName.ELBOW, AxisName.ROTATION)
 _STOPPABLE_OR_REPORTED_AXES = _AXIS_ORDER
-_DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "local" / "frame_transforms.json"
-_DEFAULT_TRAY_WORKSPACE_CONFIG = (
-    HOST_ROOT / "config" / "local" / "tray_workspace.json"
-)
-
-
 class DemoFlowError(RuntimeError):
     """启动或阶段执行未通过必要的安全检查。"""
 
@@ -1101,25 +1095,12 @@ def build_parser() -> argparse.ArgumentParser:
             "Rotation backend's lack of a verified independent stop"
         ),
     )
-    parser.add_argument(
-        "--frame-config",
-        type=Path,
-        default=_DEFAULT_FRAME_CONFIG,
-        help="deprecated compatibility option; Base/TCP kinematics do not use it",
-    )
-    parser.add_argument(
-        "--tray-workspace-config",
-        type=Path,
-        default=_DEFAULT_TRAY_WORKSPACE_CONFIG,
-        help="user-validated Base-frame cultivation-tray workspace JSON",
-    )
     return parser
 
 
 def create_demo_flow(
     *,
     execute: bool,
-    frame_config: Path = _DEFAULT_FRAME_CONFIG,
     offset_workspace_config: OffsetWorkspaceConfig = DEFAULT_OFFSET_WORKSPACE_CONFIG,
     motion_envelope: RobotMotionEnvelopeConfig = (
         DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG
@@ -1133,7 +1114,7 @@ def create_demo_flow(
     )
     solver = _configured_solver(
         runtime,
-        load_local_five_axis_kinematics(),
+        load_robot_five_axis_kinematics(),
         workspace_config=offset_workspace_config,
     )
     return runtime, DemoMotionFlow(
@@ -1152,12 +1133,10 @@ def create_demo_flow(
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        tray_workspace = TrayWorkspace(
-            load_tray_workspace_config(args.tray_workspace_config)
-        )
+        runtime_config = load_robot_runtime_config()
+        tray_workspace = TrayWorkspace(runtime_config.tray_workspace)
         runtime, flow = create_demo_flow(
             execute=args.execute,
-            frame_config=args.frame_config,
         )
         backend = DemoFlowApplicationBackend(runtime=runtime, flow=flow)
         robot = MushroomRobotController(
@@ -1192,7 +1171,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         BaseMovePlanningError,
         FiveAxisNoSolutionError,
         MultiAxisSubmissionError,
-        TrayWorkspaceConfigError,
+        RobotRuntimeConfigError,
         UnifiedMotionError,
     ) as exc:
         print(f"motion demo failed: {exc}", file=sys.stderr)

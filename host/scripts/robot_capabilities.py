@@ -18,30 +18,28 @@ from calibration.hand_eye import (  # noqa: E402
     hand_eye_from_frame_document,
     hand_eye_status,
 )
-from config.frame_transforms import (  # noqa: E402
-    FrameTransformConfigError,
-    load_frame_transforms_document,
+from config.robot_runtime import (  # noqa: E402
+    DEFAULT_ROBOT_RUNTIME_PATH,
+    RobotRuntimeConfigError,
+    load_robot_runtime_config,
 )
 from kinematics.five_axis import (  # noqa: E402
     FiveAxisGeometryError,
-    load_local_five_axis_kinematics,
+    load_robot_five_axis_kinematics,
 )
 
 
-DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "local" / "frame_transforms.json"
-
-
-def load_capabilities(frame_config: Path) -> RobotCapabilities:
-    document = load_frame_transforms_document(frame_config)
+def load_capabilities(config_path: Path) -> RobotCapabilities:
+    runtime_config = load_robot_runtime_config(config_path)
     try:
-        load_local_five_axis_kinematics()
+        load_robot_five_axis_kinematics()
     except FiveAxisGeometryError:
         base_frame_motion = False
     else:
         base_frame_motion = True
     calibration = hand_eye_from_frame_document(
-        document,
-        source=str(frame_config),
+        runtime_config.frame_transforms,
+        source=f"{config_path}#frame_transforms",
     )
     hand_eye_available = calibration is not None and calibration.validated
     return RobotCapabilities(
@@ -72,13 +70,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Report Base-frame and vision-target application capabilities"
     )
-    parser.add_argument("--frame-config", type=Path, default=DEFAULT_FRAME_CONFIG)
+    parser.add_argument("--config", type=Path, default=DEFAULT_ROBOT_RUNTIME_PATH)
     args = parser.parse_args(argv)
     try:
-        for line in format_capabilities(load_capabilities(args.frame_config)):
+        for line in format_capabilities(load_capabilities(args.config)):
             print(line)
         return 0
-    except (FrameTransformConfigError, OSError, TypeError, ValueError) as exc:
+    except (RobotRuntimeConfigError, OSError, TypeError, ValueError) as exc:
         print(f"capability configuration error: {exc}", file=sys.stderr)
         return 2
 

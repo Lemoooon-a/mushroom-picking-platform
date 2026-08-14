@@ -12,20 +12,13 @@ stop；软件 stop 也不是硬件急停。
 供电和通信可安全切断，并且同一时刻只有一个进程拥有三类硬件。不得跳过前一阶段的验收
 直接进入后一阶段。
 
-## 2. 项目机器配置
+## 2. 当前机械臂正式配置
 
-`config/local/` 中的当前项目机器配置由 Git 跟踪，团队成员拉取后可直接使用。开始真实测试前
-仍必须逐项复核端口、设备身份、方向、限位和运动参数；其他机器不得直接沿用：
+本仓库只服务当前机械臂，正式配置直接位于 `host/config/`：`robot_hardware.py`、
+`robot_motion.py`、`robot_geometry.json` 和 `robot_runtime.json`。仓库不提供 local、example 或
+其他机器 profile。开始真实测试前仍必须逐项复核设备身份、方向、限位、几何、工作区和运动参数。
 
-```bash
-cd host
-mkdir -p config/local
-git diff -- config/local/hardware.py config/local/motion.py
-```
-
-确需适配另一台机器时，以 `config/examples/` 为字段参考，修改 `config/local/` 并完成验收后
-提交。设备身份只使用已确认的 VID/PID；串口路径由启动时枚举得到。`config/examples/motion.py`
-中的值是 `EXAMPLE / BENCH-TEST PLACEHOLDER`，不是生产标定。Rotation 工程速度和加速度映射
+设备身份只使用已确认的 VID/PID；串口路径由启动时枚举得到。Rotation 工程速度和加速度映射
 未验证时必须保持 `None`。密钥和个人凭据不得写入配置文件。
 
 ## 3. 分阶段顺序

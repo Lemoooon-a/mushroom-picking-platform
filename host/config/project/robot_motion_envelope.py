@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 import math
 
 
+WORKING_HEIGHT_BASE_Z_MM = 150.0
+
+
 def _finite(name: str, value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{name} must be a finite real number")
@@ -40,7 +43,7 @@ class StartupSafePoseConfig:
 class SideSwitchClearanceConfig:
     """跨正负偏置区时采用的绝对 Base TCP Z 最低高度。"""
 
-    clearance_base_z_mm: float = 150.0
+    clearance_base_z_mm: float = WORKING_HEIGHT_BASE_Z_MM
 
     def __post_init__(self) -> None:
         clearance = _finite("clearance_base_z_mm", self.clearance_base_z_mm)
@@ -77,4 +80,5 @@ __all__ = [
     "RobotMotionEnvelopeConfig",
     "SideSwitchClearanceConfig",
     "StartupSafePoseConfig",
+    "WORKING_HEIGHT_BASE_Z_MM",
 ]

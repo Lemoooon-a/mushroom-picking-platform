@@ -391,9 +391,10 @@ class RobotServiceStateMachineTests(unittest.TestCase):
         plan = Mock(spec=PickPlan)
         plan.observation = observation
 
-        def execute(plan_value, *, execute):
+        def execute(plan_value, *, execute, continue_check=None):
             entered.set()
             release.wait(2.0)
+            self.assertTrue(continue_check())
             return PickResult(PickOutcome.PLANNED, observation, plan_value, "planned")
 
         workflow.execute_pick_plan.side_effect = execute

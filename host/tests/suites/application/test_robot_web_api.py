@@ -615,7 +615,7 @@ class RobotWebApiScriptTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(observed["mode"], "read-only")
         self.assertIs(observed["service"], service)
-        self.assertEqual(observed["host"], "127.0.0.1")
+        self.assertEqual(observed["host"], "172.20.10.3")
         self.assertEqual(observed["port"], 8000)
         self.assertEqual(service.startup_calls, 0)
         self.assertEqual(service.shutdown_calls, 1)

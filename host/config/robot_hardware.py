@@ -1,4 +1,4 @@
-"""本机硬件配置模板；复制到 ``config/local/hardware.py`` 后按需调整。"""
+"""当前机械臂正式硬件配置。"""
 
 from .hardware import (
     GsUsbDeviceConfig,

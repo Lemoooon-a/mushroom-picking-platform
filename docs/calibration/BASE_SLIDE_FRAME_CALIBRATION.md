@@ -3,7 +3,7 @@
 > 历史兼容说明（2026-08-11）：机械 Base/TCP 模型已不再使用本页标定结果。正常 FK、IK、视觉
 > 规划和 Base TCP workspace 不读取 `base_T_slide_zero` 或 `rotation_output_T_tool`。本页脚本与
 > 字段仅保留用于既有记录审计；不要把本流程作为当前运动前置门禁。当前必须现场测量的 Z 参数是
-> `host/config/local/five_axis_geometry.json` 中的 `tcp_height_at_z_zero_mm`。
+> `host/config/robot_geometry.json` 中的 `tcp_height_at_z_zero_mm`。
 
 ## 当前顶部 Z Home 定义
 
@@ -41,14 +41,8 @@ class SlideZeroKinematics(Protocol):
         ...  # returns slide_zero_T_tool
 ```
 
-该 provider 不查询硬件或读取 startup position。首次使用先复制本机配置：
-
-```bash
-cd /Users/sd/Projects/mushroom-picking-platform/host
-mkdir -p config/local
-cp config/examples/five_axis_geometry.json \
-  config/local/five_axis_geometry.json
-```
+该 provider 不查询硬件或读取 startup position。当前机械臂正式几何直接保存在 Git 跟踪的
+`host/config/robot_geometry.json`，不再通过模板生成。
 
 必须测量并填写：
 
@@ -166,17 +160,17 @@ roll/pitch、有效状态和 warnings。默认不修改文件。
 首次写入必须显式添加：
 
 ```bash
---write-local
+--write-config
 ```
 
 目标文件为：
 
 ```text
-host/config/local/frame_transforms.json
+host/config/robot_runtime.json 的 frame_transforms 区块
 ```
 
-该文件由 Git 跟踪。保存采用同目录临时文件和原子替换；已有文件默认拒绝覆盖，复核预览并
-完成外部备份后才可添加 `--force`。无效标定同样只有 `--force` 才允许保存，并会在 metadata
+该文件由 Git 跟踪。保存采用同目录临时文件和原子替换；复核预览并完成外部备份后才可添加
+`--force`。无效标定同样只有 `--force` 才允许保存，并会在 metadata
 保留 `valid=false` 和 warnings。更新 Base 变换时保留已有 `tool_T_camera`。
 
 metadata 包含 UTC 时间、Git commit、FK provider、使用的完整五轴几何快照、五轴位置、
@@ -235,11 +229,12 @@ CAD（Computer-Aided Design，计算机辅助设计）、人工测量或后续�
 .venv/bin/python scripts/set_tool_camera_transform.py \
   --x-mm ... --y-mm ... --z-mm ... \
   --roll-deg ... --pitch-deg ... --yaw-deg ... \
-  --config config/local/frame_transforms.json
+  --config config/robot_runtime.json
 ```
 
 默认仅预览并检查 `tool_T_camera @ camera_T_tool` 的 round trip。确认后使用
-`--write-local --force`；脚本保留 `base_T_slide_zero` 和既有 metadata。
+`--write-config --force`；脚本保留 `base_T_slide_zero` 和既有 metadata，并且不会改写统一文件的
+其他业务区块。
 
 ## 9. 常见失败
 

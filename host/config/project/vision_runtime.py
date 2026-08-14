@@ -50,6 +50,12 @@ def load_vision_runtime_config(path: Path) -> VisionRuntimeConfig:
         root = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise VisionRuntimeConfigError(f"cannot load vision runtime config {path}: {exc}") from exc
+    return parse_vision_runtime_config(root)
+
+
+def parse_vision_runtime_config(root: object) -> VisionRuntimeConfig:
+    """校验统一 Runtime 配置中的 ``vision_runtime`` 区块。"""
+
     if not isinstance(root, dict) or root.get("schema_version") != 1:
         raise VisionRuntimeConfigError("vision runtime schema_version must be 1")
     try:
@@ -74,4 +80,10 @@ def _positive(name: str, value: object) -> float:
 DEFAULT_VISION_RUNTIME_CONFIG = VisionRuntimeConfig()
 
 
-__all__ = ["DEFAULT_VISION_RUNTIME_CONFIG", "VisionRuntimeConfig", "VisionRuntimeConfigError", "load_vision_runtime_config"]
+__all__ = [
+    "DEFAULT_VISION_RUNTIME_CONFIG",
+    "VisionRuntimeConfig",
+    "VisionRuntimeConfigError",
+    "load_vision_runtime_config",
+    "parse_vision_runtime_config",
+]

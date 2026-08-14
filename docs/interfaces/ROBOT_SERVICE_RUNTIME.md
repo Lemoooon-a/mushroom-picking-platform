@@ -36,7 +36,7 @@ suction("grip" | "release" | "idle")
 
 `stop()` 和 `shutdown()` 会使当前 token 失效，因此迟到的运动线程不能覆盖较新的 `FAULT` 或 `SHUTDOWN`。没有活动操作时，`stop()` 保持 `CREATED/READY/DISABLED/FAULT/SHUTDOWN` 原状态；它不再充当 lifecycle 或 holding 恢复入口。`DISABLED` 可直接调用 `enable_joints()`，只有重新确认 Shoulder、Elbow、Rotation holding 以及五轴连接、静止、无 fault、位置有效后才进入 `READY`。
 
-Rotation 的软件停止会读取当前反馈位置并立即写回 goal，在保留转矩的前提下尝试制动；显式统一 stop 最多等待 2 秒确认 `moving=False`。该方式尚未完成低速真机验收，不是厂商独立 stop、失能或硬件急停，因此 execute 模式仍保留 `--confirm-rotation-no-stop` 风险确认。
+Rotation 的软件停止会读取当前反馈位置并立即写回 goal，在保留转矩的前提下尝试制动；显式统一 stop 最多等待 2 秒确认 `moving=False`。该方式尚未完成低速真机验收，不是厂商独立 stop、失能或硬件急停；顶层 Service 不再要求单独的 Rotation 启动确认。
 
 ## 两种运动入口
 
@@ -55,16 +55,21 @@ Base-frame 正运动学提供者计算 `x/y/z/yaw`。Web 前端不保存或复�
 运动学公式。`return_to_startup()` 继续复用原有 startup-safe pose 与执行通路。
 
 `scan_and_pick()` 在一个顶层 active-operation 内按配置生成 2×4 共 8 个 Base TCP 扫描位。
-每个扫描位到位后重复 `observe → pick → fixed place → return same scan pose`，只有收到
+每个扫描位到位后重复 `observe → pick → lift to Base Z=150 mm → fixed place → release → return same scan pose`，只有收到
 `no_target` 才进入下一区域。目标规划拒绝只结束当前区域；运动或吸盘失败停止并进入
 `FAULT`；达到 `max_picks_per_scan_pose` 会在已经返回扫描位后停止整个任务并报告，但不进入
 `FAULT`。dry-run 仅允许离线后端推进虚拟位姿，不提交硬件命令。
+
+固定放置点为 Base `(250, 1000, 150, 0)`。它是 scan-pick 唯一允许绕过 Tray workspace 的
+目标；放置点和返回扫描位会在移动前作为两段序列完整规划，返回扫描位仍执行正常 Tray 门禁。
+放置点到位后立即释放并直接返回，不包含放置前接近或放置后回撤阶段。区外例外不会绕过
+OffsetWorkspace、逆运动学、轴/关节限位或 RobotMotionEnvelope。
 
 ## 模式
 
 - `read-only`：加载并检查配置、status/capabilities/workspace；不构造硬件 runtime，不打开硬件。
 - `dry-run`：使用纯配置 `OfflinePlanningBackend`、FakeVisionGateway、真实 FK/IK/工作区/transition planner；后端没有硬件 submit API。
-- `execute`：使用现有 `DemoMotionFlow`、`UnifiedMotionController` 和 `MotionAuthorization`，CLI 还要求 `--confirm-motion --confirm-rotation-no-stop`。本轮未执行。
+- `execute`：使用现有 `DemoMotionFlow`、`UnifiedMotionController` 和 `MotionAuthorization`，CLI 要求 `--confirm-motion`。本轮未执行。
 
 入口：
 
@@ -73,9 +78,13 @@ cd host
 .venv/bin/python scripts/robot_service.py --mode read-only
 .venv/bin/python scripts/robot_service.py --mode dry-run --fake-position X Y Z
 .venv/bin/python scripts/robot_service.py --mode execute \
-  --confirm-motion --confirm-rotation-no-stop
+  --confirm-motion
 ```
 
 支持原有命令，并新增 `axes`、`axis state`、`axis states`、`axis move-abs` 和 `axis move-rel`。单轴移动只允许 execute + READY；状态查询允许 execute 的 READY/EXECUTING/DISABLED/FAULT，也允许已有明确模拟状态的 dry-run。
 
-`--record-jsonl PATH` 才会写记录；默认不写仓库。记录包含版本、状态、输入、计划、阶段结果和错误，不记录 `tool_T_camera` 标定矩阵。
+Service 固定加载 `host/config/robot_runtime.json`，且六个业务区块必须同时有效。JSONL 记录由
+其中的 `recording.enabled` 和相对 Host 根目录的 `recording.jsonl_path` 控制；路径必须
+位于 `host/runtime/` 运行缓存目录内，当前写入 `host/runtime/scan-pick-real.jsonl`。
+该目录已被 Git 忽略，并在首次记录时自动创建。记录包含版本、状态、输入、计划、阶段结果和错误，不记录
+`tool_T_camera` 标定矩阵。

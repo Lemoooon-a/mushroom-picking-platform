@@ -17,3 +17,6 @@
 ## 安全边界
 
 拍照前必须在机器人已停止且全部轴到位时创建 `CaptureSnapshot`。响应到达后再次读取状态，只有五轴位置未变化且仍为 `STATIONARY` 才能构造 `VisionTargetObservation`。视觉目标不得直接进入执行器层。
+
+抓取规划按 `maximum_observation_age_s` 校验 Host 当前时间与视觉响应 `timestamp` 的绝对差，
+允许视觉端时钟在 `[-阈值, +阈值]` 内前后偏移；超过任一方向的阈值仍拒绝目标。

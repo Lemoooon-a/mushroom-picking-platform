@@ -64,6 +64,12 @@ def load_frame_transforms_document(path: Path) -> FrameTransformsDocument:
             f"cannot read frame transform file {path}: {exc}"
         ) from exc
 
+    return parse_frame_transforms_document(root)
+
+
+def parse_frame_transforms_document(root: object) -> FrameTransformsDocument:
+    """校验统一 Runtime 配置中的 ``frame_transforms`` 区块。"""
+
     if not isinstance(root, dict):
         raise FrameTransformConfigError("frame transform document must be an object")
     if root.get("schema_version") != SCHEMA_VERSION:
@@ -95,6 +101,27 @@ def load_frame_transforms_document(path: Path) -> FrameTransformsDocument:
     )
 
 
+def frame_transforms_document_to_dict(
+    transforms: FixedFrameTransforms,
+    *,
+    metadata: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """返回可安全写入统一 Runtime JSON 的 frame-transform 区块。"""
+
+    if not isinstance(transforms, FixedFrameTransforms):
+        raise TypeError("transforms must be FixedFrameTransforms")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "base_T_slide_zero": _transform_to_json(transforms.base_T_slide_zero),
+        "tool_T_camera": (
+            None
+            if transforms.tool_T_camera is None
+            else _transform_to_json(transforms.tool_T_camera)
+        ),
+        "metadata": _validated_metadata(metadata or {}),
+    }
+
+
 def save_frame_transforms(
     path: Path,
     transforms: FixedFrameTransforms,
@@ -113,17 +140,10 @@ def save_frame_transforms(
         raise FileExistsError(
             f"frame transform file already exists: {path}; explicit overwrite required"
         )
-    validated_metadata = _validated_metadata(metadata or {})
-    document = {
-        "schema_version": SCHEMA_VERSION,
-        "base_T_slide_zero": _transform_to_json(transforms.base_T_slide_zero),
-        "tool_T_camera": (
-            None
-            if transforms.tool_T_camera is None
-            else _transform_to_json(transforms.tool_T_camera)
-        ),
-        "metadata": validated_metadata,
-    }
+    document = frame_transforms_document_to_dict(
+        transforms,
+        metadata=metadata,
+    )
     try:
         payload = json.dumps(
             document,
@@ -233,7 +253,9 @@ __all__ = [
     "FrameTransformConfigError",
     "FrameTransformsDocument",
     "SCHEMA_VERSION",
+    "frame_transforms_document_to_dict",
     "load_frame_transforms",
     "load_frame_transforms_document",
+    "parse_frame_transforms_document",
     "save_frame_transforms",
 ]

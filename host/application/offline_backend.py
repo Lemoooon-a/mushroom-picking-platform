@@ -4,24 +4,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from pathlib import Path
 
 from application.controller import MushroomRobotController
 from application.tray_workspace import TrayWorkspace
 from calibration.hand_eye import hand_eye_from_frame_document
-from config.frame_transforms import load_frame_transforms_document
-from config.motion_runtime import load_local_motion_config
+from config.motion_runtime import load_robot_motion_config
 from config.project.feetech import END_EFFECTOR_ROTATION_CONFIG
 from config.project.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from config.project.robot_motion_envelope import (
     DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG, RobotMotionEnvelopeConfig,
 )
 from config.project.workspace_planning import DEFAULT_OFFSET_WORKSPACE_CONFIG, OffsetWorkspaceConfig
-from config.tray_workspace import load_tray_workspace_config
+from config.robot_runtime import RobotRuntimeConfig
 from geometry.rigid_transform import RigidTransform
 from kinematics.base_frame_solver import BaseFrameFiveAxisSolver, BaseFrameSolverConfig
 from kinematics.base_move_transition_planner import BaseMovePlan, BaseMoveTransitionPlanner
-from kinematics.five_axis import FiveAxisKinematics, load_local_five_axis_kinematics
+from kinematics.five_axis import FiveAxisKinematics, load_robot_five_axis_kinematics
 from kinematics.frame_chain import RobotAxisState
 from motion.unified_protocol import AxisCapabilities, AxisDescriptor, AxisKind, AxisName, AxisState
 from vision.observation import CaptureMotionState
@@ -181,15 +179,12 @@ class OfflinePlanningBackend:
 
 def create_offline_planning_controller(
     *,
-    frame_config: Path,
-    tray_workspace_config: Path,
-    camera_frame: str,
+    runtime_config: RobotRuntimeConfig,
     offset_workspace_config: OffsetWorkspaceConfig = DEFAULT_OFFSET_WORKSPACE_CONFIG,
     motion_envelope: RobotMotionEnvelopeConfig = DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
 ) -> tuple[MushroomRobotController, OfflinePlanningBackend]:
-    document = load_frame_transforms_document(frame_config)
     solver = BaseFrameFiveAxisSolver(
-        five_axis_kinematics=load_local_five_axis_kinematics(),
+        five_axis_kinematics=load_robot_five_axis_kinematics(),
         axis_descriptors=_offline_descriptors(),
         config=BaseFrameSolverConfig(workspace=offset_workspace_config),
     )
@@ -200,19 +195,22 @@ def create_offline_planning_controller(
     )
     resolver = VisionTargetResolver(
         pose_provider=solver,
-        hand_eye_calibration=hand_eye_from_frame_document(document, source=str(frame_config)),
-        camera_frame_id=camera_frame,
+        hand_eye_calibration=hand_eye_from_frame_document(
+            runtime_config.frame_transforms,
+            source=f"{runtime_config.source_path}#frame_transforms",
+        ),
+        camera_frame_id=runtime_config.vision_runtime.camera_frame,
     )
     controller = MushroomRobotController(
         base_backend=backend,
-        tray_workspace=TrayWorkspace(load_tray_workspace_config(tray_workspace_config)),
+        tray_workspace=TrayWorkspace(runtime_config.tray_workspace),
         target_resolver=resolver,
     )
     return controller, backend
 
 
 def _offline_descriptors() -> dict[AxisName, AxisDescriptor]:
-    motion = load_local_motion_config()
+    motion = load_robot_motion_config()
     limits = {
         AxisName.SLIDE: motion.linear_position_limits()[AxisName.SLIDE],
         AxisName.Z: motion.linear_position_limits()[AxisName.Z],

@@ -125,16 +125,27 @@ class VisionPickWorkflow:
     def plan_observation(self, observation: VisionTargetObservation, grasp_profile: GraspProfile) -> PickPlan:
         return self.planner.plan(observation, grasp_profile)
 
-    def execute_pick_plan(self, plan: PickPlan, *, execute: bool) -> PickResult:
+    def execute_pick_plan(
+        self,
+        plan: PickPlan,
+        *,
+        execute: bool,
+        continue_check: Callable[[], bool] | None = None,
+    ) -> PickResult:
         if not isinstance(plan, PickPlan):
             raise TypeError("plan must be a PickPlan")
         if not execute:
             return PickResult(PickOutcome.PLANNED, plan.observation, plan, "Pick plan validated; no motion command was submitted.")
         try:
-            self.controller.execute_base_plan(plan.pre_grasp_motion)
+            _require_execution_continues(continue_check, "overhead motion")
+            self.controller.execute_base_plan(plan.overhead_motion)
+            _require_execution_continues(continue_check, "contact motion")
             self.controller.execute_base_plan(plan.contact_motion)
+            _require_execution_continues(continue_check, "suction")
             self.controller.suction_grip()
-            self.controller.execute_base_plan(plan.retreat_motion)
+            time.sleep(plan.suction_settle_time_s)
+            _require_execution_continues(continue_check, "lift motion")
+            self.controller.execute_base_plan(plan.lift_motion)
         except Exception as exc:
             try:
                 self.controller.stop()
@@ -152,6 +163,14 @@ class VisionPickWorkflow:
         observation = self.request_observation()
         plan = self.plan_observation(observation, grasp_profile)
         return self.execute_pick_plan(plan, execute=execute)
+
+
+def _require_execution_continues(
+    continue_check: Callable[[], bool] | None,
+    next_stage: str,
+) -> None:
+    if continue_check is not None and not continue_check():
+        raise VisionWorkflowError(f"pick execution cancelled before {next_stage}")
 
 
 __all__ = [

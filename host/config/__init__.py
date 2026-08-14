@@ -24,8 +24,17 @@ _ROBOT_MOTION_ENVELOPE_NAMES = {
     "RobotMotionEnvelopeConfig",
     "SideSwitchClearanceConfig",
     "StartupSafePoseConfig",
+    "WORKING_HEIGHT_BASE_Z_MM",
 }
 _TRAY_WORKSPACE_NAMES = {"TrayWorkspaceConfig"}
+_ROBOT_RUNTIME_NAMES = {
+    "DEFAULT_ROBOT_RUNTIME_PATH",
+    "RecordingConfig",
+    "RobotRuntimeConfig",
+    "RobotRuntimeConfigError",
+    "load_robot_runtime_config",
+    "update_robot_runtime_frame_transforms",
+}
 
 
 def __getattr__(name: str) -> object:
@@ -49,6 +58,10 @@ def __getattr__(name: str) -> object:
         from . import tray_workspace
 
         return getattr(tray_workspace, name)
+    if name in _ROBOT_RUNTIME_NAMES:
+        from . import robot_runtime
+
+        return getattr(robot_runtime, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -57,5 +70,6 @@ __all__ = sorted(
     | _JOINT_NAMES
     | _OFFSET_WORKSPACE_NAMES
     | _ROBOT_MOTION_ENVELOPE_NAMES
+    | _ROBOT_RUNTIME_NAMES
     | _TRAY_WORKSPACE_NAMES
 )

@@ -27,7 +27,7 @@ from scripts.robot_service import (  # noqa: E402
 def build_parser() -> argparse.ArgumentParser:
     parser = build_service_parser()
     parser.description = "Mushroom Robot Service Web API"
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--host", default="172.20.10.3")
     parser.add_argument("--port", type=_port, default=8000)
     parser.add_argument(
         "--cors-origin",

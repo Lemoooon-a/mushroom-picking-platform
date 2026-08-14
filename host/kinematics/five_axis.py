@@ -19,11 +19,10 @@ from kinematics.planar_2r import Planar2RKinematics
 
 
 SCHEMA_VERSION = 1
-DEFAULT_LOCAL_GEOMETRY_PATH = (
+DEFAULT_ROBOT_GEOMETRY_PATH = (
     Path(__file__).resolve().parents[1]
     / "config"
-    / "local"
-    / "five_axis_geometry.json"
+    / "robot_geometry.json"
 )
 
 
@@ -163,9 +162,8 @@ def load_five_axis_geometry(path: Path) -> FiveAxisGeometry:
         raise FiveAxisGeometryError(f"invalid JSON in {path}: {exc}") from exc
     except OSError as exc:
         raise FiveAxisGeometryError(
-            f"cannot read five-axis geometry {path}: {exc}; copy "
-            "host/config/examples/five_axis_geometry.json to "
-            "host/config/local/five_axis_geometry.json and fill measured values"
+            f"cannot read current robot geometry {path}: {exc}; expected "
+            "host/config/robot_geometry.json"
         ) from exc
     if not isinstance(root, dict):
         raise FiveAxisGeometryError("five-axis geometry document must be an object")
@@ -190,10 +188,10 @@ def load_five_axis_geometry(path: Path) -> FiveAxisGeometry:
     )
 
 
-def load_local_five_axis_kinematics() -> FiveAxisKinematics:
-    """默认 FK provider：加载被 Git 忽略的当前机器几何。"""
+def load_robot_five_axis_kinematics() -> FiveAxisKinematics:
+    """默认 FK provider：加载当前机械臂正式几何。"""
 
-    return FiveAxisKinematics(load_five_axis_geometry(DEFAULT_LOCAL_GEOMETRY_PATH))
+    return FiveAxisKinematics(load_five_axis_geometry(DEFAULT_ROBOT_GEOMETRY_PATH))
 
 
 def _numeric_vector(
@@ -237,13 +235,13 @@ def _require_finite(name: str, value: object) -> float:
 
 
 __all__ = [
-    "DEFAULT_LOCAL_GEOMETRY_PATH",
+    "DEFAULT_ROBOT_GEOMETRY_PATH",
     "FiveAxisGeometry",
     "FiveAxisGeometryError",
     "FiveAxisKinematics",
     "PlanarLocalTarget",
     "load_five_axis_geometry",
-    "load_local_five_axis_kinematics",
+    "load_robot_five_axis_kinematics",
     "rotation_deg_for_output_yaw",
     "rotation_output_yaw_deg",
 ]

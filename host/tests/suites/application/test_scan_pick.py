@@ -6,14 +6,16 @@ from unittest.mock import Mock
 from application.controller import MushroomRobotController
 from application.grasp_profile import GraspProfile, GraspYawMode
 from application.motion_target import BaseToolTarget
+from application.offline_backend import create_offline_planning_controller
 from application.pick_planner import PickPlanner
 from application.pick_workflow import VisionPickWorkflow
 from application.robot_service import MushroomRobotService, RobotServiceCapabilityError
 from application.runtime_state import RobotServiceMode, RobotServiceState
 from application.scan_pick import ScanPickProfile
-from application.tray_workspace import TrayWorkspace
+from application.tray_workspace import TargetOutsideTrayWorkspace, TrayWorkspace
 from calibration.hand_eye import HandEyeCalibration
 from config.tray_workspace import TrayWorkspaceConfig
+from config.robot_runtime import load_robot_runtime_config
 from geometry.rigid_transform import RigidTransform
 from kinematics.frame_chain import RobotAxisState
 from vision.gateway import FakeVisionGateway
@@ -107,14 +109,14 @@ class ScanAndPickTests(unittest.TestCase):
                 True,
                 "test",
                 "test",
-                target_compensation_base_mm=(10.0, 0.0, 0.0),
+                target_compensation_base_mm=(10.0, 0.0, -100.0),
             ),
             camera_frame_id="camera_color_optical_frame",
         )
         controller = MushroomRobotController(
             base_backend=backend,
             tray_workspace=TrayWorkspace(
-                TrayWorkspaceConfig(-1000, 1000, -1000, 1000, -1000, 1000)
+                TrayWorkspaceConfig(-1000, 1000, -1000, 780, -1000, 1000)
             ),
             target_resolver=resolver,
         )
@@ -141,21 +143,18 @@ class ScanAndPickTests(unittest.TestCase):
             workflow=workflow,
             mode=RobotServiceMode.DRY_RUN,
             grasp_profile=GraspProfile(
-                20.0,
                 0.0,
-                30.0,
                 GraspYawMode.FIXED,
                 0.0,
                 0.8,
                 2.0,
+                0.0,
             ),
             scan_pick_profile=ScanPickProfile(
                 (0.0, 100.0),
                 (0.0, 10.0, 20.0, 30.0),
-                50.0,
                 0.0,
-                BaseToolTarget(500.0, 500.0, 20.0, 0.0),
-                40.0,
+                BaseToolTarget(250.0, 1000.0, 150.0, 0.0),
                 max_picks,
                 scan_settle_time_s,
             ),
@@ -227,8 +226,14 @@ class ScanAndPickTests(unittest.TestCase):
         self.assertTrue(all(target.yaw_deg == 0.0 for target in planned_targets))
         self.assertEqual(backend.calls.count("grip"), 2)
         self.assertEqual(backend.calls.count("release"), 2)
-        self.assertEqual(sleep.call_count, len(observed_poses))
-        sleep.assert_called_with(0.5)
+        self.assertEqual(
+            [call.args[0] for call in sleep.call_args_list].count(0.5),
+            len(observed_poses),
+        )
+        self.assertEqual(
+            [call.args[0] for call in sleep.call_args_list].count(0.0),
+            2,
+        )
 
     def test_scan_position_indices_reuse_configured_pose_order(self) -> None:
         service, backend, _ = self.make_service(
@@ -266,6 +271,10 @@ class ScanAndPickTests(unittest.TestCase):
         expected_scan = service.scan_pick_profile.scan_poses[2]
         original_begin = service._begin_write_operation
         service._begin_write_operation = Mock(wraps=original_begin)
+        original_plan_sequence = service._controller.plan_base_target_sequence
+        service._controller.plan_base_target_sequence = Mock(
+            wraps=original_plan_sequence
+        )
 
         result = service.pick_one_at_scan_position(3)
 
@@ -286,12 +295,57 @@ class ScanAndPickTests(unittest.TestCase):
         self.assertEqual(backend.pose, expected_scan)
         self.assertEqual(backend.calls.count("grip"), 1)
         self.assertEqual(backend.calls.count("release"), 1)
+        place_pose = service.scan_pick_profile.place_pose
+        service._controller.plan_base_target_sequence.assert_any_call(
+            (place_pose, expected_scan),
+            enforce_tray_workspace=(False, True),
+        )
+        place_sequence = next(
+            entry
+            for entry in backend.calls
+            if isinstance(entry, tuple)
+            and entry[0] == "plan_sequence"
+            and entry[1] == (place_pose, expected_scan)
+        )
+        place_plan_index = backend.calls.index(place_sequence)
+        place_execute_index = backend.calls.index(
+            ("execute", place_pose),
+            place_plan_index,
+        )
+        release_index = backend.calls.index("release", place_execute_index)
+        return_execute_index = backend.calls.index(
+            ("execute", expected_scan),
+            release_index,
+        )
+        self.assertLess(place_plan_index, place_execute_index)
+        self.assertLess(place_execute_index, release_index)
+        self.assertLess(release_index, return_execute_index)
+        self.assertEqual(
+            [
+                entry
+                for entry in backend.calls[place_execute_index:return_execute_index + 1]
+                if isinstance(entry, tuple) and entry[0] == "execute"
+            ],
+            [("execute", place_pose), ("execute", expected_scan)],
+        )
         self.assertEqual(service._begin_write_operation.call_count, 1)
         self.assertEqual(
             service._begin_write_operation.call_args.kwargs["kind"],
             "scan-pick-one",
         )
         self.assertIs(service.state, RobotServiceState.READY)
+
+    def test_fixed_place_is_the_only_tray_workspace_exception(self) -> None:
+        service, backend, _ = self.make_service(self.target)
+        place_pose = service.scan_pick_profile.place_pose
+
+        with self.assertRaises(TargetOutsideTrayWorkspace):
+            service._controller.plan_base_target(place_pose)
+
+        result = service.pick_one_at_scan_position(1)
+
+        self.assertEqual(result.total_picked, 1)
+        self.assertIn(("execute", place_pose), backend.calls)
 
     def test_pick_one_no_target_is_normal_and_stays_at_scan_pose(self) -> None:
         service, backend, observed_poses = self.make_service(
@@ -372,6 +426,56 @@ class ScanAndPickTests(unittest.TestCase):
         self.assertIs(service.state, RobotServiceState.FAULT)
         self.assertIn("stop", backend.calls)
         self.assertNotIn("release", backend.calls)
+
+
+class ScanPickOfflineReachabilityTests(unittest.TestCase):
+    def test_formal_place_pose_round_trips_from_all_scan_positions(self) -> None:
+        runtime_config = load_robot_runtime_config()
+        controller, backend = create_offline_planning_controller(
+            runtime_config=runtime_config
+        )
+        backend.startup()
+        place_pose = runtime_config.scan_pick.place_pose
+
+        with self.assertRaises(TargetOutsideTrayWorkspace):
+            controller.plan_base_target(place_pose)
+
+        for scan_index, scan_pose in enumerate(
+            runtime_config.scan_pick.scan_poses,
+            start=1,
+        ):
+            with self.subTest(scan_index=scan_index):
+                controller.execute_base_plan(controller.plan_base_target(scan_pose))
+                place_plan, return_plan = controller.plan_base_target_sequence(
+                    (place_pose, scan_pose),
+                    enforce_tray_workspace=(False, True),
+                )
+                place_solution = place_plan.stages[-1].solution
+                self.assertLessEqual(place_solution.slide_mm, 799.988)
+                self.assertGreaterEqual(place_solution.local_x_mm, 50.0)
+                self.assertLessEqual(place_solution.local_x_mm, 600.0)
+                self.assertTrue(
+                    150.0 <= abs(place_solution.local_y_mm) <= 350.0
+                )
+                controller.execute_base_plan(place_plan)
+                controller.execute_base_plan(return_plan)
+
+                assert backend.axis_state is not None
+                returned = backend.solver.forward_kinematics_base(
+                    backend.axis_state
+                )
+                self.assertAlmostEqual(
+                    float(returned.translation_mm[0]),
+                    scan_pose.x_mm,
+                )
+                self.assertAlmostEqual(
+                    float(returned.translation_mm[1]),
+                    scan_pose.y_mm,
+                )
+                self.assertAlmostEqual(
+                    float(returned.translation_mm[2]),
+                    scan_pose.z_mm,
+                )
 
 
 if __name__ == "__main__":

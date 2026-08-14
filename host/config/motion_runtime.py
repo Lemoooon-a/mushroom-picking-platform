@@ -3,37 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import importlib.util
+import importlib
 import math
-from pathlib import Path
-import sys
 from typing import Mapping
 
 from motion.unified_protocol import ArrivalConfig, AxisName
 
 
 class MotionRuntimeConfigLoadError(RuntimeError):
-    """本地运动 Runtime 配置缺失或内容无效。"""
+    """当前机械臂运动 Runtime 配置缺失或内容无效。"""
 
 
-def _load_local_module(module_name: str) -> object:
-    """按新模块名加载 byte-for-byte 迁移的旧相对导入配置。"""
-
-    path = Path(__file__).with_name("local") / "motion.py"
-    if not path.is_file():
-        raise ModuleNotFoundError(name=module_name)
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot create module spec for {path}")
-    module = importlib.util.module_from_spec(spec)
-    module.__package__ = __package__
-    sys.modules[module_name] = module
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        sys.modules.pop(module_name, None)
-        raise
-    return module
+def _load_robot_module(module_name: str) -> object:
+    return importlib.import_module(module_name)
 
 
 def _validate_positive(value: object, name: str) -> None:
@@ -197,25 +179,23 @@ class MotionRuntimeConfig:
         }
 
 
-def load_local_motion_config() -> MotionRuntimeConfig:
-    """加载 ``config/local/motion.py`` 中被 Git 忽略的机器配置。"""
+def load_robot_motion_config() -> MotionRuntimeConfig:
+    """加载当前机械臂正式的 ``config/robot_motion.py``。"""
 
-    module_name = f"{__package__}.local.motion"
+    module_name = f"{__package__}.robot_motion"
     try:
-        module = _load_local_module(module_name)
+        module = _load_robot_module(module_name)
     except ModuleNotFoundError as exc:
         if exc.name != module_name:
             raise MotionRuntimeConfigLoadError(
                 f"导入 {module_name} 时缺少依赖模块 {exc.name!r}"
             ) from exc
         raise MotionRuntimeConfigLoadError(
-            "未找到本地运动配置。请复制 "
-            "host/config/examples/motion.py 为 "
-            "host/config/local/motion.py，并仅填写经过当前台架确认的参数。"
+            "未找到当前机械臂运动配置 host/config/robot_motion.py。"
         ) from exc
     except Exception as exc:
         raise MotionRuntimeConfigLoadError(
-            f"导入本地运动配置 {module_name} 失败: {exc}"
+            f"导入当前机械臂运动配置 {module_name} 失败: {exc}"
         ) from exc
 
     config = getattr(module, "MOTION", None)
@@ -233,5 +213,5 @@ __all__ = [
     "LinearAxisPositionLimits",
     "MotionRuntimeConfig",
     "MotionRuntimeConfigLoadError",
-    "load_local_motion_config",
+    "load_robot_motion_config",
 ]

@@ -13,6 +13,7 @@ from config.project.robot_motion_envelope import (
     RobotMotionEnvelopeConfig,
     SideSwitchClearanceConfig,
     StartupSafePoseConfig,
+    WORKING_HEIGHT_BASE_Z_MM,
 )
 
 
@@ -29,7 +30,11 @@ class RobotMotionEnvelopeConfigTests(unittest.TestCase):
                 z_axis_mm=0.0,
             ),
         )
-        self.assertEqual(envelope.side_switch.clearance_base_z_mm, 150.0)
+        self.assertEqual(WORKING_HEIGHT_BASE_Z_MM, 150.0)
+        self.assertEqual(
+            envelope.side_switch.clearance_base_z_mm,
+            WORKING_HEIGHT_BASE_Z_MM,
+        )
 
     def test_invalid_nested_types_and_clearance_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
@@ -42,6 +47,7 @@ class RobotMotionEnvelopeConfigTests(unittest.TestCase):
         self.assertIs(config.RobotMotionEnvelopeConfig, RobotMotionEnvelopeConfig)
         self.assertIs(config.StartupSafePoseConfig, StartupSafePoseConfig)
         self.assertIs(config.SideSwitchClearanceConfig, SideSwitchClearanceConfig)
+        self.assertEqual(config.WORKING_HEIGHT_BASE_Z_MM, WORKING_HEIGHT_BASE_Z_MM)
 
     def test_pure_config_imports_do_not_read_local_files(self) -> None:
         script = """

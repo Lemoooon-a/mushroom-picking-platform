@@ -212,7 +212,7 @@ machine position；成功归零后 `homed` 和 `valid` 才成立，`DI`、`SA` �
   - torque disable 明确提示自由转动或失去保持力风险；
   - 不提供虚构的 Rotation stop。
 
-端口来自 hardware local config 和集中设备发现，没有硬编码设备路径。串口在上下文退出或
+端口来自 `robot_hardware.py` 和集中设备发现，没有硬编码设备路径。串口在上下文退出或
 异常时关闭。2026-08-03 已通过 `/dev/cu.usbmodem5B790798091`、115200 baud 对 ID 1 完成
 实机 ping，并从 `0x38` 连续读取三次 `position_raw=2047`；完整 feedback 字段、写回包、
 torque 行为仍未完整验证。用户随后完成受控小角度方向和零点确认，最终项目配置为

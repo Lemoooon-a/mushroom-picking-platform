@@ -16,6 +16,7 @@ from config.project.robot_motion_envelope import (
     RobotMotionEnvelopeConfig,
     StartupSafePoseConfig,
 )
+from config.robot_runtime import RobotRuntimeConfigError
 from config.tray_workspace import TrayWorkspaceConfig
 from config.project.workspace_planning import OffsetWorkspaceSide
 from geometry.rigid_transform import RigidTransform
@@ -758,17 +759,16 @@ class StartupExecutionTests(unittest.TestCase):
         )
         self.assertFalse(any(line.startswith("MOVE failed:") for line in output))
 
-    def test_missing_workspace_config_fails_before_runtime_creation(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            missing = Path(directory) / "missing.json"
-            with (
-                patch("scripts.run_motion_demo.create_demo_flow") as create_flow,
-                patch("sys.stderr", new_callable=io.StringIO),
-            ):
-                self.assertEqual(
-                    main(["--tray-workspace-config", str(missing)]),
-                    1,
-                )
+    def test_invalid_runtime_config_fails_before_runtime_creation(self) -> None:
+        with (
+            patch(
+                "scripts.run_motion_demo.load_robot_runtime_config",
+                side_effect=RobotRuntimeConfigError("invalid config"),
+            ),
+            patch("scripts.run_motion_demo.create_demo_flow") as create_flow,
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            self.assertEqual(main([]), 1)
         create_flow.assert_not_called()
 
     def test_read_only_cli_never_sends_suction_or_torque_writes(self) -> None:

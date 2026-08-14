@@ -34,10 +34,11 @@ class FrameTransformConfigTests(unittest.TestCase):
             yaw_deg=10,
         )
 
-    def test_example_json_loads(self) -> None:
-        transforms = load_frame_transforms(
-            HOST_ROOT / "config" / "examples" / "frame_transforms.json"
-        )
+    def test_minimal_json_loads(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "frames.json"
+            path.write_text('{"schema_version": 1}\n', encoding="utf-8")
+            transforms = load_frame_transforms(path)
         np.testing.assert_allclose(transforms.base_T_slide_zero.matrix, np.eye(4))
         self.assertIsNone(transforms.tool_T_camera)
 

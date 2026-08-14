@@ -2,7 +2,8 @@
 
 ## 1. 当前状态
 
-当前 capability 为 `unavailable`。本机 `host/config/local/frame_transforms.json` 中：
+当前 capability 为 `unavailable`。本机 `host/config/robot_runtime.json` 的
+`frame_transforms` 区块中：
 
 ```text
 tool_T_camera = null

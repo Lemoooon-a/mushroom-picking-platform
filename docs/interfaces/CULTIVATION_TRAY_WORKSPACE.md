@@ -7,7 +7,7 @@
 也不提交硬件命令。
 
 用户已于 2026-08-05 明确确认培养槽 Base X/Y/Z 边界，团队共享运行配置保存在 Git 跟踪的
-`host/config/local/tray_workspace.json`。实现仍不提供推测默认值；机械最大可达范围、测试点、
+`host/config/robot_runtime.json` 的 `tray_workspace` 区块。实现仍不提供推测默认值；机械最大可达范围、测试点、
 arm-local 正负偏置区与 150 mm 跨区安全高度都不是培养槽边界来源。
 
 ## 2. Workspace Layers
@@ -37,9 +37,7 @@ arm-local 正负偏置区与 150 mm 跨区安全高度都不是培养槽边界�
 
 ## 3. Configuration Sources
 
-提交模板：`host/config/examples/tray_workspace.json`。
-
-团队共享运行文件：`host/config/local/tray_workspace.json`（由 Git 跟踪）。
+正式运行文件为 Git 跟踪的 `host/config/robot_runtime.json`；仓库不提供模板或 local 副本。
 
 当前用户确认值：
 
@@ -57,7 +55,7 @@ Rotation→TCP 偏移自动推导；现场填写 `tcp_height_at_z_zero_mm` 后�
 Z 边界。当前只完成配置加载与离线边界验证，没有据此执行真实硬件运动。
 
 边界为闭区间，并使用默认 `1e-6 mm` 数值容差。配置不会把允许容差内的请求坐标改写到边界。
-JSON 的 `metadata.validated` 必须明确为 `true`；模板中的 `null` 和 `false` 不能用于运动入口。
+JSON 的 `metadata.validated` 必须明确为 `true`；`null` 和 `false` 不能用于运动入口。
 
 ## 4. 调用链
 
@@ -93,12 +91,11 @@ JSON 的 `metadata.validated` 必须明确为 `true`；模板中的 `null` 和 `
 
 ## 6. CLI
 
-正常真实运动 CLI 要求显式加载用户确认的配置：
+正常真实运动 CLI 固定加载用户确认的统一配置：
 
 ```bash
 cd host
-.venv/bin/python scripts/run_motion_demo.py \
-  --tray-workspace-config config/local/tray_workspace.json
+.venv/bin/python scripts/run_motion_demo.py
 ```
 
 省略 `--execute` 仍是只读预览。`workspace` 命令显示 Tray、arm-local offset、Robot motion

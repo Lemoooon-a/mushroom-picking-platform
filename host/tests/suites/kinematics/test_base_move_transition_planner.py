@@ -7,6 +7,7 @@ from unittest.mock import patch
 from config.project.robot_motion_envelope import (
     RobotMotionEnvelopeConfig,
     SideSwitchClearanceConfig,
+    WORKING_HEIGHT_BASE_Z_MM,
 )
 from config.project.workspace_planning import OffsetWorkspaceSide, SlideSelectionReason
 from geometry.rigid_transform import RigidTransform, angular_difference_deg
@@ -275,6 +276,25 @@ class BaseMoveTransitionPlannerTests(unittest.TestCase):
                 BaseMoveStageKind.TRANSIT,
                 BaseMoveStageKind.LOWER,
             ),
+        )
+
+    def test_side_switch_at_shared_working_height_has_no_z_stage(self) -> None:
+        current = state_for_point(self.model, 400, 250, -150)
+        target = state_for_point(self.model, 400, -250, -150)
+        plan = self.subject.plan(
+            current_state=current,
+            base_T_tool_target=self._target(target),
+        )
+
+        self.assertAlmostEqual(
+            plan.current_base_T_tool.translation_mm[2],
+            WORKING_HEIGHT_BASE_Z_MM,
+        )
+        self.assertAlmostEqual(plan.clearance_base_z_mm, WORKING_HEIGHT_BASE_Z_MM)
+        self.assertAlmostEqual(plan.clearance_lift_mm, 0.0)
+        self.assertEqual(
+            tuple(stage.kind for stage in plan.stages),
+            (BaseMoveStageKind.TRANSIT,),
         )
 
     def test_outside_calibration_pose_at_top_can_transit_without_lift(self) -> None:

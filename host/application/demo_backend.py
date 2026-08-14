@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from application.controller import MushroomRobotController
 from application.tray_workspace import TrayWorkspace
 from calibration.hand_eye import hand_eye_from_frame_document
-from config.frame_transforms import load_frame_transforms_document
 from config.project.robot_motion_envelope import (
     DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
     RobotMotionEnvelopeConfig,
 )
-from config.tray_workspace import load_tray_workspace_config
+from config.robot_runtime import RobotRuntimeConfig
 from config.project.workspace_planning import (
     DEFAULT_OFFSET_WORKSPACE_CONFIG,
     OffsetWorkspaceConfig,
@@ -158,8 +156,7 @@ class DemoFlowApplicationBackend:
 def create_mushroom_robot_controller(
     *,
     execute: bool,
-    frame_config: Path,
-    tray_workspace_config: Path,
+    runtime_config: RobotRuntimeConfig,
     offset_workspace_config: OffsetWorkspaceConfig = DEFAULT_OFFSET_WORKSPACE_CONFIG,
     motion_envelope: RobotMotionEnvelopeConfig = (
         DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG
@@ -170,18 +167,16 @@ def create_mushroom_robot_controller(
 
     from scripts.run_motion_demo import create_demo_flow
 
-    workspace = TrayWorkspace(load_tray_workspace_config(tray_workspace_config))
+    workspace = TrayWorkspace(runtime_config.tray_workspace)
     runtime, flow = create_demo_flow(
         execute=execute,
-        frame_config=frame_config,
         offset_workspace_config=offset_workspace_config,
         motion_envelope=motion_envelope,
         emit=emit,
     )
-    document = load_frame_transforms_document(frame_config)
     calibration = hand_eye_from_frame_document(
-        document,
-        source=str(frame_config),
+        runtime_config.frame_transforms,
+        source=f"{runtime_config.source_path}#frame_transforms",
     )
     resolver = VisionTargetResolver(
         pose_provider=flow.solver,

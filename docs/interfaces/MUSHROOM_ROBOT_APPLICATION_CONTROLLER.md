@@ -121,22 +121,23 @@ Base 与手眼标定，输出会按独立 validation 字段更新。
 应用工厂位于 `host/application/demo_backend.py`：
 
 ```python
+from config.robot_runtime import load_robot_runtime_config
+
 robot = create_mushroom_robot_controller(
     execute=False,
-    frame_config=Path("config/local/frame_transforms.json"),
-    tray_workspace_config=Path("config/local/tray_workspace.json"),
+    runtime_config=load_robot_runtime_config(),
 )
 ```
 
 工厂使用 tracked `DEFAULT_OFFSET_WORKSPACE_CONFIG` 与
-`DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG`，并只从显式路径加载 Tray local 配置。相同 envelope 实例
+`DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG`，并接收已经完整校验的统一 Runtime 配置。相同 envelope 实例
 同时提供 startup pose 和 planner side-switch clearance，CLI、controller、solver 与 planner
 不会各自创建第二份数值。
 
-仓库不提供推测边界或可执行默认值。本机已按用户 2026-08-05 的明确输入配置 Base X
+仓库不提供推测边界。本机已按用户明确输入配置 Base X
 `[20, 480] mm`、Base Y `[20, 700] mm`、Base Z `[0, 180] mm`，并设置
-`metadata.validated=true`。其他机器应以 `config/examples/tray_workspace.json` 为字段参考，修改
-Git 跟踪的 `config/local/tray_workspace.json`，填入经确认的 Base-frame 边界并在验收后提交。
+`metadata.validated=true`。当前机械臂的边界直接维护在 Git 跟踪的 `config/robot_runtime.json`
+中，变更后必须重新验收。
 配置缺失、仍为 `null` 或未确认时，工厂和真实 CLI 在创建 Runtime、打开硬件前失败关闭。
 
 Base Z `[0, 180] mm` 是最终 TCP 的绝对任务许可高度。上限 `180 mm` 是当前 Base 标定和 TCP

@@ -325,12 +325,13 @@ export interface VisionPlanResponse {
 
 export interface PickPlan {
   observation: VisionTargetObservation;
-  pre_grasp_target: BaseTargetRequest;
+  overhead_target: BaseTargetRequest;
   contact_target: BaseTargetRequest;
-  retreat_target: BaseTargetRequest;
-  pre_grasp_motion: BasePlanResponse;
+  lift_target: BaseTargetRequest;
+  overhead_motion: BasePlanResponse;
   contact_motion: BasePlanResponse;
-  retreat_motion: BasePlanResponse;
+  lift_motion: BasePlanResponse;
+  suction_settle_time_s: number;
 }
 
 export type PickOutcome =

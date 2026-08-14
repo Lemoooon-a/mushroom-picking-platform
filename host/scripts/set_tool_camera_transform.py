@@ -18,21 +18,21 @@ if str(HOST_ROOT) not in sys.path:
 
 from config.frame_transforms import (  # noqa: E402
     FixedFrameTransforms,
-    FrameTransformConfigError,
-    load_frame_transforms_document,
-    save_frame_transforms,
+)
+from config.robot_runtime import (  # noqa: E402
+    DEFAULT_ROBOT_RUNTIME_PATH,
+    RobotRuntimeConfigError,
+    load_robot_runtime_config,
+    update_robot_runtime_frame_transforms,
 )
 from geometry.rigid_transform import RigidTransform  # noqa: E402
-
-
-DEFAULT_LOCAL_PATH = HOST_ROOT / "config" / "local" / "frame_transforms.json"
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Set tool_T_camera (Camera coordinates to Tool coordinates). "
-            "Preview only unless --write-local is supplied."
+            "Preview only unless --write-config is supplied."
         )
     )
     parser.add_argument("--x-mm", type=float, required=True)
@@ -41,8 +41,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--roll-deg", type=float, required=True)
     parser.add_argument("--pitch-deg", type=float, required=True)
     parser.add_argument("--yaw-deg", type=float, required=True)
-    parser.add_argument("--config", type=Path, default=DEFAULT_LOCAL_PATH)
-    parser.add_argument("--write-local", action="store_true")
+    parser.add_argument("--config", type=Path, default=DEFAULT_ROBOT_RUNTIME_PATH)
+    parser.add_argument("--write-config", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--notes")
     return parser
@@ -51,7 +51,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
-        document = load_frame_transforms_document(args.config)
+        document = load_robot_runtime_config(args.config).frame_transforms
         tool_T_camera = RigidTransform.from_xyz_rpy_deg(
             x_mm=args.x_mm,
             y_mm=args.y_mm,
@@ -66,10 +66,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"translation_mm: {tool_T_camera.translation_mm.tolist()}")
         print(f"rotation_rpy_deg: {tool_T_camera.rpy_deg.tolist()}")
         print(f"inverse round-trip max matrix error: {round_trip_error:.3g}")
-        if args.write_local:
+        if args.write_config:
             if not args.force:
                 raise FileExistsError(
-                    "updating an existing local config requires --force"
+                    "updating the robot runtime config requires --force"
                 )
             metadata = dict(document.metadata)
             metadata.update(
@@ -81,22 +81,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "tool_camera_notes": args.notes,
                 }
             )
-            save_frame_transforms(
+            update_robot_runtime_frame_transforms(
                 args.config,
                 FixedFrameTransforms(
                     base_T_slide_zero=document.transforms.base_T_slide_zero,
                     tool_T_camera=tool_T_camera,
                 ),
                 metadata=metadata,
-                overwrite=True,
             )
             print(f"Saved tool_T_camera: {args.config}")
         else:
-            print("Preview only; no file was written. Use --write-local --force to save.")
+            print("Preview only; no file was written. Use --write-config --force to save.")
         return 0
     except (
         FileExistsError,
-        FrameTransformConfigError,
+        RobotRuntimeConfigError,
         TypeError,
         ValueError,
     ) as exc:

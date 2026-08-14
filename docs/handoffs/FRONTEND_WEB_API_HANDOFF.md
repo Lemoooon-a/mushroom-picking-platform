@@ -126,7 +126,6 @@ cd /Users/sd/Projects/mushroom-picking-platform/host
 .venv/bin/python scripts/robot_web_api.py \
   --mode execute \
   --confirm-motion \
-  --confirm-rotation-no-stop \
   --host 127.0.0.1 \
   --port 8000
 ```
@@ -532,4 +531,5 @@ function derivePermissions(status, pending) {
 4. `web/src/control-state.js`、`web/src/main.js`：当前页面门禁与轮询；
 5. `docs/interfaces/ROBOT_WEB_API.md`：说明性文档。
 
-本交接包不复制 `host/config/local/`；这些团队共享运行配置由仓库单独跟踪。交接包和仓库均不应包含硬件凭据或个人密钥。
+本交接包不复制 `host/config/robot_*.py` 或 `host/config/robot_*.json`；这些当前机械臂正式配置
+由仓库单独跟踪。交接包和仓库均不应包含硬件凭据或个人密钥。

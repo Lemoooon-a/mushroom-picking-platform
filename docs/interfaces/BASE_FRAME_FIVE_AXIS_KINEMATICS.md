@@ -138,7 +138,8 @@ velocity, acceleration   -> None（默认）
 
 ## 12. Historical Base calibration compatibility
 
-本机 `host/config/local/frame_transforms.json` 仍可保存历史 `base_T_slide_zero` 及其 validation
+本机 `host/config/robot_runtime.json` 的 `frame_transforms` 区块仍可保存历史
+`base_T_slide_zero` 及其 validation
 metadata，既有标定/审计脚本也保留；这些字段不再是 Base-frame 规划门禁。`base_T_slide_zero`
 缺失时 loader 以 identity 兼容相机配置。正式运动学门禁改为几何配置中的连杆长度和现场测得的
 `tcp_height_at_z_zero_mm` 都存在，且 `geometry_confirmed=true`。

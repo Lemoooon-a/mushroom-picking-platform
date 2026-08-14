@@ -6,16 +6,15 @@ from dataclasses import dataclass
 import math
 
 from application.motion_target import BaseToolTarget
+from config.project.robot_motion_envelope import WORKING_HEIGHT_BASE_Z_MM
 
 
 @dataclass(frozen=True)
 class ScanPickProfile:
     scan_x_positions_mm: tuple[float, float]
     scan_y_positions_mm: tuple[float, float, float, float]
-    scan_z_mm: float
     scan_yaw_deg: float
     place_pose: BaseToolTarget
-    place_approach_height_mm: float
     max_picks_per_scan_pose: int
     scan_settle_time_s: float = 0.0
 
@@ -28,7 +27,6 @@ class ScanPickProfile:
         )
         object.__setattr__(self, "scan_x_positions_mm", x_positions)
         object.__setattr__(self, "scan_y_positions_mm", y_positions)
-        object.__setattr__(self, "scan_z_mm", _finite("scan_z_mm", self.scan_z_mm))
         yaw = _finite("scan_yaw_deg", self.scan_yaw_deg)
         if yaw != 0.0:
             raise ValueError("scan_yaw_deg must be 0 for the first scan-pick version")
@@ -37,12 +35,6 @@ class ScanPickProfile:
             raise TypeError("place_pose must be a BaseToolTarget")
         if self.place_pose.yaw_deg != 0.0:
             raise ValueError("place_pose yaw_deg must be 0 for the first scan-pick version")
-        height = _finite(
-            "place_approach_height_mm", self.place_approach_height_mm
-        )
-        if height < 0.0:
-            raise ValueError("place_approach_height_mm must be non-negative")
-        object.__setattr__(self, "place_approach_height_mm", height)
         settle_time = _finite("scan_settle_time_s", self.scan_settle_time_s)
         if settle_time < 0.0:
             raise ValueError("scan_settle_time_s must be non-negative")
@@ -57,19 +49,14 @@ class ScanPickProfile:
     @property
     def scan_poses(self) -> tuple[BaseToolTarget, ...]:
         return tuple(
-            BaseToolTarget(x_mm, y_mm, self.scan_z_mm, self.scan_yaw_deg)
+            BaseToolTarget(x_mm, y_mm, WORKING_HEIGHT_BASE_Z_MM, self.scan_yaw_deg)
             for x_mm in self.scan_x_positions_mm
             for y_mm in self.scan_y_positions_mm
         )
 
     @property
-    def place_pre_pose(self) -> BaseToolTarget:
-        return BaseToolTarget(
-            self.place_pose.x_mm,
-            self.place_pose.y_mm,
-            self.place_pose.z_mm + self.place_approach_height_mm,
-            self.place_pose.yaw_deg,
-        )
+    def scan_z_mm(self) -> float:
+        return WORKING_HEIGHT_BASE_Z_MM
 
 
 @dataclass(frozen=True)

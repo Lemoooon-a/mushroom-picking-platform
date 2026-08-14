@@ -14,7 +14,7 @@ if str(HOST_ROOT) not in sys.path:
 
 from config.hardware import (  # noqa: E402
     HardwareConfigLoadError,
-    load_local_hardware_config,
+    load_robot_hardware_config,
 )
 from drivers.device_discovery import (  # noqa: E402
     DeviceDiscoveryError,
@@ -74,7 +74,7 @@ def _list_all() -> int:
 
 
 def _resolve() -> int:
-    config = load_local_hardware_config()
+    config = load_robot_hardware_config()
     failed = False
 
     serial_roles = (

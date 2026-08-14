@@ -71,6 +71,12 @@ def load_tray_workspace_config(path: Path) -> TrayWorkspaceConfig:
         raise TrayWorkspaceConfigError(
             f"cannot read tray workspace file {path}: {exc}"
         ) from exc
+    return parse_tray_workspace_config(root)
+
+
+def parse_tray_workspace_config(root: object) -> TrayWorkspaceConfig:
+    """校验统一 Runtime 配置中的 ``tray_workspace`` 区块。"""
+
     if not isinstance(root, dict):
         raise TrayWorkspaceConfigError("tray workspace document must be an object")
     if root.get("schema_version") != SCHEMA_VERSION:
@@ -113,4 +119,5 @@ __all__ = [
     "TrayWorkspaceConfig",
     "TrayWorkspaceConfigError",
     "load_tray_workspace_config",
+    "parse_tray_workspace_config",
 ]

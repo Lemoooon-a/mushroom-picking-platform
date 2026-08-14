@@ -18,12 +18,13 @@ HOST_ROOT = Path(__file__).resolve().parents[1]
 if str(HOST_ROOT) not in sys.path:
     sys.path.insert(0, str(HOST_ROOT))
 
-from config.frame_transforms import (  # noqa: E402
-    FrameTransformsDocument,
-    load_frame_transforms_document,
-)
+from config.frame_transforms import FrameTransformsDocument  # noqa: E402
 from config.project.robot_motion_envelope import (  # noqa: E402
     DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
+)
+from config.robot_runtime import (  # noqa: E402
+    DEFAULT_ROBOT_RUNTIME_PATH,
+    load_robot_runtime_config,
 )
 from geometry.rigid_transform import RigidTransform  # noqa: E402
 from kinematics.base_frame_solver import (  # noqa: E402
@@ -37,7 +38,7 @@ from kinematics.base_move_transition_planner import (  # noqa: E402
 )
 from kinematics.five_axis import (  # noqa: E402
     FiveAxisKinematics,
-    load_local_five_axis_kinematics,
+    load_robot_five_axis_kinematics,
 )
 from kinematics.frame_chain import RobotAxisState  # noqa: E402
 from motion.authorization import RuntimeMode  # noqa: E402
@@ -66,9 +67,6 @@ _AXIS_ORDER = tuple(AxisName)
 _LINEAR_AXES = (AxisName.SLIDE, AxisName.Z)
 _STOPPABLE_AXES = (AxisName.SLIDE, AxisName.Z, AxisName.SHOULDER, AxisName.ELBOW)
 _HOME_TIMEOUTS_S = {AxisName.SLIDE: 15.0, AxisName.Z: 120.0}
-_DEFAULT_FRAME_CONFIG = HOST_ROOT / "config" / "local" / "frame_transforms.json"
-
-
 def finite_float(value: str) -> float:
     parsed = float(value)
     if not math.isfinite(parsed):
@@ -113,7 +111,7 @@ def run_plan_base(
     runtime: object,
     base_T_tool_target: RigidTransform,
     *,
-    frame_config: Path = _DEFAULT_FRAME_CONFIG,
+    config_path: Path = DEFAULT_ROBOT_RUNTIME_PATH,
     frame_document: FrameTransformsDocument | None = None,
     five_axis_kinematics: FiveAxisKinematics | None = None,
     emit: Callable[[str], None] = print,
@@ -128,12 +126,12 @@ def run_plan_base(
     document = (
         frame_document
         if frame_document is not None
-        else load_frame_transforms_document(frame_config)
+        else load_robot_runtime_config(config_path).frame_transforms
     )
     model = (
         five_axis_kinematics
         if five_axis_kinematics is not None
-        else load_local_five_axis_kinematics()
+        else load_robot_five_axis_kinematics()
     )
     if not isinstance(document, FrameTransformsDocument):
         raise TypeError("frame_document must be FrameTransformsDocument")
@@ -143,7 +141,11 @@ def run_plan_base(
     emit("Historical Base calibration (not used by the mechanical Base/TCP model):")
     emit(
         "  source: "
-        + ("<in-memory test document>" if frame_document is not None else str(frame_config))
+        + (
+            "<in-memory test document>"
+            if frame_document is not None
+            else f"{config_path}#frame_transforms"
+        )
     )
     emit(f"  validation status: {base_transform_validated}")
     emit("  base_T_slide_zero:")
@@ -427,6 +429,7 @@ def build_parser() -> argparse.ArgumentParser:
     plan_base.add_argument("--tcp-y-mm", type=finite_float, required=True)
     plan_base.add_argument("--tcp-z-mm", type=finite_float, required=True)
     plan_base.add_argument("--tcp-yaw-deg", type=finite_float, required=True)
+    plan_base.add_argument("--config", type=Path, default=DEFAULT_ROBOT_RUNTIME_PATH)
 
     move = commands.add_parser("move", help="preview or move one absolute axis target")
     move.add_argument("--axis", choices=tuple(axis.value for axis in AxisName), required=True)
@@ -543,6 +546,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             succeeded = run_plan_base(
                 runtime,
                 base_target,
+                config_path=args.config,
             )
         elif args.command == "state":
             succeeded = run_state(runtime, axes[0])

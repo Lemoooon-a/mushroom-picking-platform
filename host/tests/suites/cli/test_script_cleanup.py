@@ -121,8 +121,8 @@ class ScriptCleanupTests(unittest.TestCase):
                 self.assertNotIn(removed, text, f"{document}: {removed}")
 
     @patch("bootstrap.create_upper_motion_runtime")
-    @patch("config.hardware.load_local_hardware_config")
-    @patch("config.motion_runtime.load_local_motion_config")
+    @patch("config.hardware.load_robot_hardware_config")
+    @patch("config.motion_runtime.load_robot_motion_config")
     def test_importing_four_entries_has_no_hardware_side_effect(
         self,
         load_motion,

@@ -39,13 +39,12 @@ cd /Users/sd/Projects/mushroom-picking-platform/host
 .venv/bin/python scripts/robot_web_api.py --mode dry-run
 ```
 
-`execute` 继续复用 CLI 的两项显式授权参数：
+`execute` 继续复用 CLI 的显式运动授权参数：
 
 ```bash
 .venv/bin/python scripts/robot_web_api.py \
   --mode execute \
   --confirm-motion \
-  --confirm-rotation-no-stop \
   --host 127.0.0.1
 ```
 
@@ -90,9 +89,11 @@ Return 仅在 execute/READY 启用。当前没有 WebSocket、后台任务队列
 
 `/api/scan-pick` 的成功响应包含 `result`、`total_picked` 和
 `visited_scan_positions`。每个区域记录 `scan_index`、`detected_count`、`picked_count` 与
-`final_reason`。运行时默认从 tracked 的 `host/config/local/scan_pick.json` 读取参数；tracked
-模板 `host/config/examples/scan_pick.json` 不含真实坐标且默认 `validated=false`。配置未确认时
-接口 fail-closed。
+`final_reason`。运行时固定从 Git 跟踪的 `host/config/robot_runtime.json` 的 `scan_pick` 区块
+读取参数；区块缺失或未确认时，整个 Service 在构造硬件 Runtime 前 fail-closed。
+
+八个扫描位统一使用 Base Z=150 mm；该高度也用于视觉抓取的 overhead/lift 和正负偏置
+工作区换向，不再由 scan-pick JSON 单独配置。
 
 `scan_index` 固定为 `1..8`，顺序与 `ScanPickProfile.scan_poses` 一致：`1..4` 是第一个 X
 位置下依次排列的四个 Y，`5..8` 是第二个 X 位置下依次排列的四个 Y。真实坐标只保存在后端
@@ -105,6 +106,8 @@ Return 仅在 execute/READY 启用。当前没有 WebSocket、后台任务队列
 `final_reason="no_target"`；目标规划被拒绝时返回 HTTP 200，`final_reason` 为
 `target_rejected:<错误类型>`。运动、吸盘或通信故障仍返回错误响应并由 Service 进入 FAULT。
 由于当前没有真空反馈，`picked_count=1` 只表示动作与吸盘命令完成，不表示物理抓取已经验证。
+固定放置点为 Base `(250, 1000, 150, 0)`；它是唯一的 Tray 区外放置例外。抓取回撤后直接
+到达该点并释放，然后直接返回当前扫描位，不包含放置前后回撤。
 
 ## 4. 请求示例
 
@@ -206,8 +209,8 @@ provisional 的 `tool_T_camera` 用于打印、人工检查和 dry-run Base 规�
 
 ## 7. 本机真实视觉只规划联调
 
-`host/config/local/vision_runtime.json` 可配置本机 Vision Gateway Protocol v1 服务。当前本机
-配置使用 `127.0.0.1:9000` 和 `camera_color_optical_frame`。启动时必须显式选择 socket
+`host/config/robot_runtime.json` 的 `vision_runtime` 区块配置 Vision Gateway Protocol v1 服务。
+当前配置使用 `172.20.10.2:9000` 和 `camera_color_optical_frame`。启动时必须显式选择 socket
 gateway；Web API 启动后还要初始化 dry-run 离线规划后端：
 
 ```bash

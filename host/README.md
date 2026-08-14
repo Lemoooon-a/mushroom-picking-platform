@@ -223,14 +223,9 @@ python scripts/stm32_protocol_smoke.py /dev/ttyACM0
 
 ## 按 VID/PID 发现本机硬件
 
-本机硬件配置采用 `config/hardware.py` 中的 frozen dataclass（冻结数据类）。首次使用时
-复制模板，实际文件已被 Git 忽略：
-
-```bash
-cd host
-mkdir -p config/local
-cp config/examples/hardware.py config/local/hardware.py
-```
+当前机械臂硬件参数直接保存在 Git 跟踪的 `config/robot_hardware.py`，并通过
+`config/hardware.py` 中的 frozen dataclass（冻结数据类）校验；仓库不提供 local 或 example
+配置层。
 
 当前三类设备身份互不相同：
 
@@ -264,12 +259,12 @@ VID/PID 会抛出 `AmbiguousDeviceError`，程序不会选择第一个候选。�
 串口驱动只接收解析出的字符串，仍由调用方显式打开：
 
 ```python
-from config.hardware import load_local_hardware_config
+from config.hardware import load_robot_hardware_config
 from drivers.device_discovery import resolve_usb_serial_port
 from drivers.feetech_protocol import FeetechBus, FeetechSerialConfig
 from drivers.stm32_motion import STM32SerialConfig, STM32SerialTransport
 
-hardware = load_local_hardware_config()
+hardware = load_robot_hardware_config()
 
 stm32 = resolve_usb_serial_port("stm32_motion", hardware.stm32_motion)
 stm32_transport = STM32SerialTransport(
@@ -366,13 +361,13 @@ Base -> Slide + Z + Shoulder/Elbow -> TCP / Rotation center -> Camera
 `A_T_C = A_T_B @ B_T_C`。机械 FK 直接输出 `base_T_tool`：
 
 ```python
-from kinematics.five_axis import load_local_five_axis_kinematics
+from kinematics.five_axis import load_robot_five_axis_kinematics
 
-kinematics = load_local_five_axis_kinematics()
+kinematics = load_robot_five_axis_kinematics()
 base_T_tool = kinematics.forward_kinematics(axis_state)
 ```
 
-`config/local/five_axis_geometry.json` 只保存真实连杆尺寸和现场测得的
+`config/robot_geometry.json` 保存真实连杆尺寸和现场测得的
 `tcp_height_at_z_zero_mm`，并要求 `geometry_confirmed=true`。Base XY/yaw、Slide +Y、Z +Z 和
 Rotation/TCP 同心关系由机械定义固定。历史 Base–Slide-zero 工具保留为审计工具，不参与正常
 FK、IK 或视觉规划；这些工具均默认预览/只读，不自动 home、move、stop、enable 或 torque enable：
@@ -410,24 +405,22 @@ Rotation 时同样执行该门禁。Rotation timeout 会尝试把当前反馈位
 不会被描述为已停止，也不会以 torque disable 冒充 stop。
 
 到位容差、稳定窗口、轮询周期、timeout、默认速度、默认加速度以及 Slide/Z 的 Host 位置、
-速度和加速度上限统一来自被 Git 忽略的 `config/local/motion.py`。当前本机线性范围同步 STM32
+速度和加速度上限统一来自 Git 跟踪的 `config/robot_motion.py`。当前本机线性范围同步 STM32
 firmware 软限位：Slide `0..799.988 mm`、Z `-190..0 mm`；固件仍独立执行同一底层保护。
 当前运行默认值为 Slide `60 mm/s`、`180 mm/s²`，Z `8 mm/s`、`25 mm/s²`，Shoulder 和
 Elbow 均为 `30 deg/s`；它们不等于允许上限。完成整机有效行程验收后，应同时更新 firmware
-与本地配置，避免 Host 和下位机范围不一致。
-先复制 `config/examples/motion.py` 到 `config/local/motion.py`，再替换其中明确标为
-`EXAMPLE / BENCH-TEST PLACEHOLDER`、`NOT PRODUCTION-CALIBRATED` 的数值。Rotation 的工程
-速度/加速度映射尚未验证，因此示例保持 `None`。同一时刻只允许一个进程拥有这些真实硬件；
+与正式配置，避免 Host 和下位机范围不一致。Rotation 的工程速度/加速度映射尚未验证，因此
+正式配置保持 `None`。同一时刻只允许一个进程拥有这些真实硬件；
 Web 后端、运动学执行器和台架工具都应复用同一个 runtime，不再各自扫描和组装后端。
 
 ```python
 from bootstrap import create_upper_motion_runtime
-from config.hardware import load_local_hardware_config
-from config.motion_runtime import load_local_motion_config
+from config.hardware import load_robot_hardware_config
+from config.motion_runtime import load_robot_motion_config
 from motion import AxisName, RuntimeMode
 
-hardware_config = load_local_hardware_config()
-motion_config = load_local_motion_config()
+hardware_config = load_robot_hardware_config()
+motion_config = load_robot_motion_config()
 
 runtime = create_upper_motion_runtime(
     hardware_config,
@@ -571,7 +564,7 @@ RS-485 半双工、USB 转换板自动收发切换、115200 baud、12-bit/4096 c
 C001 寄存器表；`END_EFFECTOR_ROTATION_CONFIG` 固化当前项目安装参数：ID 1、
 `zero_raw=2130`、`direction_sign=+1`（逻辑正方向为 `+X`）、`-150°..+150°` 当前限位和
 `max_speed_raw=500`。默认位置命令速度同为 500 raw。限位和速度是当前调试配置，仍需
-随最终机构负载完成机械验收。设备 port 不固化，由 hardware local config 和 VID/PID 设备发现
+随最终机构负载完成机械验收。设备 port 不固化，由 `robot_hardware.py` 和 VID/PID 设备发现
 解析；写指令 status packet 行为也仍需实机复验。
 
 Feetech backend 维护入口复用正式配置和 runtime 的设备发现，不再接受本机 port 参数：
@@ -612,8 +605,11 @@ cd host
 
 ```bash
 .venv/bin/python scripts/robot_service.py --mode execute \
-  --confirm-motion --confirm-rotation-no-stop
+  --confirm-motion
 ```
+
+上述入口固定加载 `config/robot_runtime.json`，不接受各业务区块的路径参数；六个区块必须全部
+存在并通过校验。运行记录由其中的 `recording` 区块控制。
 
 不要在自动测试中运行 execute。当前本机 hand-eye missing，且没有 validated grasp profile；`observe` 可显示 Fake/Socket Camera observation，`plan-observation` 和 `pick` 会明确 fail-closed。详见 `docs/interfaces/ROBOT_SERVICE_RUNTIME.md`、`VISION_GATEWAY_PROTOCOL.md` 和 `PICK_WORKFLOW.md`。
 

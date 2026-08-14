@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import unittest
+from unittest.mock import patch
 
 from application.controller import MushroomRobotController
 from application.grasp_profile import GraspProfile, GraspYawMode
@@ -67,7 +68,7 @@ class _PoseProvider:
 class _SequenceBackend(_Backend):
     def plan_base_sequence(self, targets):
         self.calls.append(("sequence", targets))
-        return "pre-motion", "contact-motion", "retreat-motion"
+        return "overhead-motion", "contact-motion", "lift-motion"
 
 
 class PickWorkflowTests(unittest.TestCase):
@@ -79,7 +80,7 @@ class PickWorkflowTests(unittest.TestCase):
         self.workspace = TrayWorkspace(TrayWorkspaceConfig(-100, 100, -100, 100, 0, 100))
         self.calibration = HandEyeCalibration(RigidTransform.identity(), True, "test", "fixture")
         self.controller = self.make_controller(self.calibration)
-        self.profile = GraspProfile(80, 0, 90, GraspYawMode.FIXED, 20, 0.8, 2)
+        self.profile = GraspProfile(0, GraspYawMode.FIXED, 20, 0.8, 2, 2)
 
     def make_controller(self, calibration):
         return MushroomRobotController(
@@ -113,35 +114,26 @@ class PickWorkflowTests(unittest.TestCase):
 
     def test_planner_builds_all_targets_and_only_contact_uses_tray_gate(self) -> None:
         plan = self.planner().plan(self.observation(), self.profile)
-        self.assertEqual((plan.pre_grasp_target.z_mm, plan.contact_target.z_mm, plan.retreat_target.z_mm), (130, 50, 140))
+        self.assertEqual(
+            (plan.overhead_target.z_mm, plan.contact_target.z_mm, plan.lift_target.z_mm),
+            (150, 50, 150),
+        )
         self.assertEqual(plan.contact_target.yaw_deg, 20)
         self.assertEqual(len([item for item in self.backend.calls if isinstance(item, tuple) and item[0] == "plan"]), 3)
 
-    def test_planner_uses_absolute_retreat_base_z(self) -> None:
-        profile = GraspProfile(
-            80, 0, None, GraspYawMode.FIXED, 20, 0.8, 2,
-            retreat_z_mm=160, minimum_transit_z_mm=120,
-        )
+    def test_planner_preserves_contact_offset(self) -> None:
+        profile = GraspProfile(5, GraspYawMode.FIXED, 20, 0.8, 2)
         plan = self.planner().plan(self.observation(), profile)
-        self.assertEqual(plan.contact_target.z_mm, 50)
-        self.assertEqual(plan.retreat_target.z_mm, 160)
+        self.assertEqual(plan.contact_target.z_mm, 55.0)
+        self.assertEqual(plan.overhead_target.z_mm, 150.0)
+        self.assertEqual(plan.lift_target.z_mm, 150.0)
 
-    def test_planner_rejects_high_stages_at_or_below_transit_floor(self) -> None:
-        for approach_offset, retreat_z, stage_name in (
-            (70, 160, "pre-grasp"),
-            (80, 120, "retreat"),
-        ):
-            with self.subTest(stage_name=stage_name), self.assertRaisesRegex(
-                ValueError, stage_name
-            ):
-                self.planner().plan(
-                    self.observation(),
-                    GraspProfile(
-                        approach_offset, 0, None, GraspYawMode.FIXED,
-                        20, 0.8, 2, retreat_z_mm=retreat_z,
-                        minimum_transit_z_mm=120,
-                    ),
-                )
+    def test_planner_rejects_contact_at_or_above_working_height(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be below working height"):
+            self.planner().plan(
+                self.observation(),
+                GraspProfile(100, GraspYawMode.FIXED, 20, 0.8, 2),
+            )
 
     def test_hand_eye_compensation_precedes_grasp_stage_offsets(self) -> None:
         calibration = HandEyeCalibration(
@@ -175,11 +167,11 @@ class PickWorkflowTests(unittest.TestCase):
             self.assertAlmostEqual(actual, expected)
         self.assertEqual(
             (
-                plan.pre_grasp_target.z_mm,
+                plan.overhead_target.z_mm,
                 plan.contact_target.z_mm,
-                plan.retreat_target.z_mm,
+                plan.lift_target.z_mm,
             ),
-            (120.0, 40.0, 130.0),
+            (150.0, 40.0, 150.0),
         )
 
     def test_any_planning_failure_returns_no_partial_plan(self) -> None:
@@ -201,8 +193,8 @@ class PickWorkflowTests(unittest.TestCase):
         )
         plan = self.planner(controller).plan(self.observation(), self.profile)
         self.assertEqual(
-            (plan.pre_grasp_motion, plan.contact_motion, plan.retreat_motion),
-            ("pre-motion", "contact-motion", "retreat-motion"),
+            (plan.overhead_motion, plan.contact_motion, plan.lift_motion),
+            ("overhead-motion", "contact-motion", "lift-motion"),
         )
         self.assertEqual(backend.calls[0], "ready")
         self.assertEqual(backend.calls[1][0], "sequence")
@@ -216,10 +208,22 @@ class PickWorkflowTests(unittest.TestCase):
             with self.subTest(calibration=calibration), self.assertRaises(HandEyeCalibrationUnavailable):
                 self.planner(self.make_controller(calibration)).plan(self.observation(), self.profile)
 
+    def test_observation_age_allows_bounded_positive_and_negative_clock_skew(self) -> None:
+        for timestamp in (98.0, 102.0):
+            with self.subTest(timestamp=timestamp):
+                self.planner().plan(self.observation(timestamp=timestamp), self.profile)
+
+        for timestamp in (97.9, 102.1):
+            with self.subTest(timestamp=timestamp), self.assertRaisesRegex(
+                ObservationStaleError,
+                r"outside \[-2, 2\]s",
+            ):
+                self.planner().plan(self.observation(timestamp=timestamp), self.profile)
+
     def test_yaw_modes_and_missing_orientation(self) -> None:
-        keep = GraspProfile(10, 0, 20, GraspYawMode.KEEP_CURRENT, None, 0.8, 2)
+        keep = GraspProfile(0, GraspYawMode.KEEP_CURRENT, None, 0.8, 2)
         self.assertEqual(self.planner().plan(self.observation(), keep).contact_target.yaw_deg, 15)
-        observed = GraspProfile(10, 0, 20, GraspYawMode.FROM_OBSERVATION, None, 0.8, 2)
+        observed = GraspProfile(0, GraspYawMode.FROM_OBSERVATION, None, 0.8, 2)
         with self.assertRaises(ObservationOrientationUnavailable):
             self.planner().plan(self.observation(), observed)
         half = math.radians(30) / 2
@@ -259,12 +263,35 @@ class PickWorkflowTests(unittest.TestCase):
                 )
             ).request_observation()
 
-    def test_execute_order_and_physical_pick_remains_unverified(self) -> None:
+    @patch("application.pick_workflow.time.sleep")
+    def test_execute_order_wait_and_physical_pick_remains_unverified(self, sleep) -> None:
         plan = self.planner().plan(self.observation(), self.profile)
         self.backend.calls.clear()
         result = self.workflow(NoTarget("unused", "unused")).execute_pick_plan(plan, execute=True)
         self.assertIs(result.outcome, PickOutcome.PHYSICAL_PICK_UNVERIFIED)
         self.assertEqual(self.backend.calls, [("execute", "motion-1"), ("execute", "motion-2"), "grip", ("execute", "motion-3")])
+        sleep.assert_called_once_with(2.0)
+
+    @patch("application.pick_workflow.time.sleep")
+    def test_cancellation_during_suction_wait_prevents_lift(self, sleep) -> None:
+        plan = self.planner().plan(self.observation(), self.profile)
+        self.backend.calls.clear()
+        continuing = True
+
+        def cancel_during_wait(_seconds):
+            nonlocal continuing
+            continuing = False
+
+        sleep.side_effect = cancel_during_wait
+        result = self.workflow(NoTarget("unused", "unused")).execute_pick_plan(
+            plan,
+            execute=True,
+            continue_check=lambda: continuing,
+        )
+
+        self.assertIs(result.outcome, PickOutcome.FAILED)
+        self.assertNotIn(("execute", "motion-3"), self.backend.calls)
+        self.assertEqual(self.backend.calls[-1], "stop")
 
     def test_motion_and_suction_failures_request_stop(self) -> None:
         plan = self.planner().plan(self.observation(), self.profile)

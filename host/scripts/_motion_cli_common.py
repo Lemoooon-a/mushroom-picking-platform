@@ -9,8 +9,8 @@ from collections.abc import Callable, Iterable
 import math
 
 from bootstrap import UpperMotionRuntime, create_upper_motion_runtime
-from config.hardware import load_local_hardware_config
-from config.motion_runtime import load_local_motion_config
+from config.hardware import load_robot_hardware_config
+from config.motion_runtime import load_robot_motion_config
 from motion.authorization import RuntimeMode
 from motion.unified_protocol import (
     AxisDescriptor,
@@ -33,8 +33,8 @@ def create_configured_runtime(
     """显式调用时才加载本机配置、枚举设备并组装唯一 runtime。"""
 
     return create_upper_motion_runtime(
-        load_local_hardware_config(),
-        load_local_motion_config(),
+        load_robot_hardware_config(),
+        load_robot_motion_config(),
         mode=mode,
         allow_unverified_rotation_motion=allow_unverified_rotation_motion,
     )

@@ -8,6 +8,7 @@ import time
 from application.controller import MushroomRobotController, UnsupportedToolGoalOrientationError
 from application.grasp_profile import GraspProfile, GraspYawMode
 from application.motion_target import BaseToolTarget
+from config.project.robot_motion_envelope import WORKING_HEIGHT_BASE_Z_MM
 from vision.observation import VisionTargetObservation
 
 
@@ -30,12 +31,13 @@ class ObservationOrientationUnavailable(PickPlanningError):
 @dataclass(frozen=True)
 class PickPlan:
     observation: VisionTargetObservation
-    pre_grasp_target: BaseToolTarget
+    overhead_target: BaseToolTarget
     contact_target: BaseToolTarget
-    retreat_target: BaseToolTarget
-    pre_grasp_motion: object
+    lift_target: BaseToolTarget
+    overhead_motion: object
     contact_motion: object
-    retreat_motion: object
+    lift_motion: object
+    suction_settle_time_s: float
 
 
 class PickPlanner:
@@ -55,34 +57,30 @@ class PickPlanner:
         object_pose = self.controller.resolve_object_in_base(observation)
         yaw = self._select_yaw(observation, grasp_profile, object_pose)
         x_mm, y_mm, object_z_mm = (float(value) for value in object_pose.translation_mm)
-        pre = BaseToolTarget(x_mm, y_mm, object_z_mm + grasp_profile.approach_offset_mm, yaw)
+        overhead = BaseToolTarget(x_mm, y_mm, WORKING_HEIGHT_BASE_Z_MM, yaw)
         contact = BaseToolTarget(x_mm, y_mm, object_z_mm + grasp_profile.contact_offset_mm, yaw)
-        retreat_z_mm = (
-            float(grasp_profile.retreat_z_mm)
-            if grasp_profile.retreat_z_mm is not None
-            else object_z_mm + float(grasp_profile.retreat_offset_mm)
-        )
-        if retreat_z_mm < contact.z_mm:
+        if contact.z_mm >= WORKING_HEIGHT_BASE_Z_MM:
             raise PickPlanningError(
-                f"retreat Base Z {retreat_z_mm:g} mm is below contact Base Z "
-                f"{contact.z_mm:g} mm"
+                f"contact Base Z {contact.z_mm:g} mm must be below working height "
+                f"{WORKING_HEIGHT_BASE_Z_MM:g} mm"
             )
-        retreat = BaseToolTarget(x_mm, y_mm, retreat_z_mm, yaw)
-        if grasp_profile.minimum_transit_z_mm is not None:
-            minimum_transit_z = float(grasp_profile.minimum_transit_z_mm)
-            for stage_name, target in (("pre-grasp", pre), ("retreat", retreat)):
-                if target.z_mm <= minimum_transit_z:
-                    raise PickPlanningError(
-                        f"{stage_name} Base Z {target.z_mm:g} mm must be above "
-                        f"minimum transit Z {minimum_transit_z:g} mm"
-                    )
+        lift = BaseToolTarget(x_mm, y_mm, WORKING_HEIGHT_BASE_Z_MM, yaw)
 
         # 三个阶段必须全部规划成功后才构造 PickPlan。只有 contact 是 Tray 最终任务目标。
-        pre_motion, contact_motion, retreat_motion = self.controller.plan_base_target_sequence(
-            (pre, contact, retreat),
+        overhead_motion, contact_motion, lift_motion = self.controller.plan_base_target_sequence(
+            (overhead, contact, lift),
             enforce_tray_workspace=(False, True, False),
         )
-        return PickPlan(observation, pre, contact, retreat, pre_motion, contact_motion, retreat_motion)
+        return PickPlan(
+            observation,
+            overhead,
+            contact,
+            lift,
+            overhead_motion,
+            contact_motion,
+            lift_motion,
+            grasp_profile.suction_settle_time_s,
+        )
 
     def _validate_quality(self, observation: VisionTargetObservation, profile: GraspProfile) -> None:
         if observation.confidence is None or observation.confidence < profile.minimum_confidence:
@@ -92,9 +90,11 @@ class PickPlanner:
         if observation.timestamp is None:
             raise ObservationStaleError("observation timestamp is required for pick planning")
         age = float(self.clock()) - observation.timestamp
-        if age < 0.0 or age > profile.maximum_observation_age_s:
+        if abs(age) > profile.maximum_observation_age_s:
             raise ObservationStaleError(
-                f"observation age {age:g}s is outside [0, {profile.maximum_observation_age_s:g}]s"
+                f"observation age {age:g}s is outside "
+                f"[-{profile.maximum_observation_age_s:g}, "
+                f"{profile.maximum_observation_age_s:g}]s"
             )
 
     def _select_yaw(self, observation: VisionTargetObservation, profile: GraspProfile, object_pose: object) -> float:

@@ -1,53 +1,28 @@
 # Host 配置职责
 
-`host/config/` 同时保存纯类型/loader、单台项目机器的正式策略参数、模板和团队共享的机器配置。
-文件是否位于本目录，不代表它会在 `import config` 时自动加载。包级导出保持惰性；导入纯配置模块
-不会打开串口、CAN（Controller Area Network，控制器局域网）、读取 local 文件或创建 runtime。
+本仓库只服务当前机械臂，不提供 local、example 或多机器 profile。所有正式配置直接位于
+`host/config/` 并由 Git 跟踪；导入纯配置模块不会打开串口、CAN（Controller Area Network，
+控制器局域网）或创建 runtime。
 
-## 文件角色
+## 正式配置
 
-| 文件 | 类型 | Tracked | 机器专属 | 运行时默认加载 | 角色 |
-| --- | --- | ---: | ---: | ---: | --- |
-| `__init__.py` | 惰性导出 | 是 | 否 | 否 | 暴露稳定配置类型/项目常量，不触发 local loader |
-| `hardware.py` | typed model + loader | 是 | 否 | 是 | 硬件设备发现与端口/CAN 配置模型 |
-| `examples/hardware.py` | template | 是 | 否 | 否 | `local/hardware.py` 的占位模板 |
-| `local/hardware.py` | runtime Python | 是 | 是 | 是 | 项目机器端口、VID/PID、CAN 等硬件选择 |
-| `motion_runtime.py` | typed model + loader | 是 | 否 | 是 | 到位、timeout、速度/加速度和线性轴范围模型 |
-| `examples/motion.py` | template | 是 | 否 | 否 | `local/motion.py` 的占位模板 |
-| `local/motion.py` | runtime Python | 是 | 是 | 是 | 项目机器的 motion runtime 参数 |
-| `frame_transforms.py` | typed JSON loader | 是 | 否 | 按视觉入口加载 | Tool/Camera 外参与历史 Base 标定审计文档模型 |
-| `examples/frame_transforms.json` | template | 是 | 否 | 否 | 未验证的 frame transform 模板 |
-| `local/frame_transforms.json` | runtime JSON | 是 | 是 | 按视觉入口默认路径加载 | 项目机器手眼外参与历史 Base 标定审计字段 |
-| `examples/five_axis_geometry.json` | template | 是 | 否 | 否 | 五轴几何占位模板 |
-| `local/five_axis_geometry.json` | runtime JSON | 是 | 是 | 五轴 Base 规划时加载 | 当前机构连杆与 Z=0 时 TCP Base 高度 |
-| `tray_workspace.py` | typed JSON loader | 是 | 否 | 按应用入口加载 | Base-frame 普通最终任务 TCP 门限模型 |
-| `examples/tray_workspace.json` | template | 是 | 否 | 否 | 不含可执行边界的模板，不是通用默认值 |
-| `local/tray_workspace.json` | runtime JSON | 是 | 是 | Demo/application 默认路径 | 用户确认的 Base-frame 绝对最终任务工作区 |
-| `project/joints.py` | 项目正式参数 | 是 | 当前单台项目机器人 | 是 | Shoulder/Elbow ID、零点、方向、36:1 与软限位 |
-| `project/feetech.py` | 项目正式参数 | 是 | 当前单台项目机器人 | 是 | Rotation 型号、协议、零点、方向与软限位 |
-| `project/workspace_planning.py` | 项目规划策略 | 是 | 当前机器人策略 | 是 | arm-local 正负偏置区、Slide 候选、fallback 与数值容差 |
-| `project/robot_motion_envelope.py` | 软件安全阶段策略 | 是 | 当前机器人策略 | 是 | startup/return pose 与跨区绝对 Base Z clearance |
-| `project/vision_runtime.py` | typed model + loader | 是 | 否 | 按 Robot Service 加载 | socket、frame、timeout、消息上限与质量门限；默认未验证 |
-| `examples/vision_runtime.json` | template | 是 | 否 | 否 | 真实 socket 配置占位模板 |
-| `local/vision_runtime.json` | runtime JSON | 是 | 是 | 可选 | 团队共享的视觉 producer 地址与验证状态 |
-| `project/grasp_strategy.py` | validated loader | 是 | 否 | 按 Robot Service 加载 | 只接受完整且 `validated=true` 的 GraspProfile |
-| `examples/grasp_profile.json` | template | 是 | 否 | 否 | 所有真实 offset 保持 `null` |
-| `local/grasp_profile.json` | runtime JSON | 是 | 是 | 可选 | 经确认的真实抓取策略 |
-| `project/scan_pick.py` | validated loader | 是 | 否 | 按 Robot Service 加载 | 校验固定 2×4 扫描点、固定放置位和单区域抓取上限 |
-| `examples/scan_pick.json` | template | 是 | 否 | 否 | 扫描、放置坐标保持 `null`，yaw 固定为 0 |
-| `local/scan_pick.json` | runtime JSON | 是 | 是 | 可选 | 经确认的真实扫描与放置策略 |
+| 文件 | 角色 |
+| --- | --- |
+| `robot_runtime.json` | 唯一业务 Runtime 配置，包含 frame transforms、Tray workspace、视觉连接、抓取、扫描放置和 JSONL 记录 |
+| `robot_hardware.py` | 当前机械臂 USB/CAN 设备身份与通信参数 |
+| `robot_motion.py` | 到位、timeout、速度、加速度和直线轴范围 |
+| `robot_geometry.json` | 连杆长度与 Z=0 时 TCP Base 高度 |
+| `hardware.py` / `motion_runtime.py` / `robot_runtime.py` | 强类型模型和 loader |
+| `frame_transforms.py` / `tray_workspace.py` | 可复用的区块模型与校验器 |
+| `project/` | 关节、Rotation、工作区规划和运动阶段等代码策略 |
 
-## 配置来源规则
+Robot Service 与 Web API 固定读取 `robot_runtime.json`，不接受配置路径覆盖。该文件的六个区块
+全部必需且必须同时通过校验；任何错误都会在构造硬件 runtime 前终止启动。标定和诊断工具可用
+`--config` 指向临时的完整 Runtime 文件，写入时只原子更新 `frame_transforms` 区块。
 
-- `local/` 保存当前项目机器可直接使用的共享运行配置，全部纳入 Git；其他机器修改前必须重新核对端口、地址、标定、工作区和运动参数。
-- 密钥、令牌、密码和个人凭据不得写入 `local/`；需要凭据时使用未跟踪的环境变量或专用密钥管理方式。
-- `examples/` 只用于说明 schema 和必填字段，绝不自动视为 validated runtime configuration。
-- `project/joints.py` / `project/feetech.py` 是当前单台项目机器的正式参数，不是设备系列默认值。
-- `project/workspace_planning.py` 只描述 arm-local 逆运动学（Inverse Kinematics, IK）规划约束。
-- `project/robot_motion_envelope.py` 只描述 startup 与中间安全阶段策略，不是碰撞模型或安全认证。
-- `local/tray_workspace.json` 只描述 Base frame 中普通最终任务 TCP 的绝对允许范围，不是机械极限。
-- `host/calibration/` 只保存标定算法、状态模型和 capture/solve 逻辑；当前项目机器的共享标定结果保存在 tracked `host/config/local/`。
-- `vision_runtime`、`grasp_profile` 和 `scan_pick` 的 tracked example 都默认 fail-closed；不得把 example 复制后的 placeholder 当作 validated 数据。
+密钥、令牌和密码不得写入这些文件；未来如需凭据，应使用环境变量或专用密钥管理方式。
+`robot_runtime.json` 中的 Tray workspace 只描述 Base frame 最终任务 TCP 门限，不是机械极限；
+`project/robot_motion_envelope.py` 也不是碰撞模型或安全认证。
 
 ## 三类工作区与安全策略
 

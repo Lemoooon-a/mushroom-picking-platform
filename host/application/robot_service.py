@@ -845,7 +845,11 @@ class MushroomRobotService:
             ),
         )
         try:
-            result = workflow.execute_pick_plan(plan, execute=execute)
+            result = workflow.execute_pick_plan(
+                plan,
+                execute=execute,
+                continue_check=lambda: self._operation_is_current(token),
+            )
         except Exception as exc:
             operation_current = self._operation_is_current(token)
             if execute and operation_current:
@@ -905,7 +909,11 @@ class MushroomRobotService:
         if not self._set_operation_state(token, next_state):
             raise RobotServiceStateError("pick was cancelled before execution")
         try:
-            result = workflow.execute_pick_plan(plan, execute=execute)
+            result = workflow.execute_pick_plan(
+                plan,
+                execute=execute,
+                continue_check=lambda: self._operation_is_current(token),
+            )
         except Exception as exc:
             operation_current = self._operation_is_current(token)
             if execute and operation_current:
@@ -1548,7 +1556,11 @@ class MushroomRobotService:
                 "pick execution",
                 operation_kind=operation_kind,
             )
-            pick_result = workflow.execute_pick_plan(pick_plan, execute=True)
+            pick_result = workflow.execute_pick_plan(
+                pick_plan,
+                execute=True,
+                continue_check=lambda: self._operation_is_current(token),
+            )
             if pick_result.outcome is PickOutcome.FAILED:
                 raise RobotServiceError(pick_result.message)
 
@@ -1558,10 +1570,10 @@ class MushroomRobotService:
                 "place planning",
                 operation_kind=operation_kind,
             )
-            place_pre = scan_profile.place_pre_pose
-            place_motions = self._controller.plan_base_target_sequence(
-                (place_pre, scan_profile.place_pose, place_pre),
-                enforce_tray_workspace=(False, True, False),
+            place_and_return_motions = self._controller.plan_base_target_sequence(
+                (scan_profile.place_pose, scan_pose),
+                # 固定放置点是唯一 Tray 区外例外；扫描位仍受正常门禁。
+                enforce_tray_workspace=(False, True),
             )
             self._require_scan_operation_state(
                 token,
@@ -1573,21 +1585,11 @@ class MushroomRobotService:
                 "place execution",
                 operation_kind=operation_kind,
             )
-            self._controller.execute_base_plan(place_motions[0])
-            self._controller.execute_base_plan(place_motions[1])
+            self._controller.execute_base_plan(place_and_return_motions[0])
             self._controller.suction_release()
-            self._controller.execute_base_plan(place_motions[2])
-
-            self._require_scan_operation_state(
-                token,
-                RobotServiceState.PLANNING,
-                "scan return planning",
-                operation_kind=operation_kind,
-            )
-            return_motion = self._controller.plan_base_target(scan_pose)
             self._execute_scan_motion(
                 token,
-                return_motion,
+                place_and_return_motions[1],
                 operation_kind=operation_kind,
             )
         except Exception as exc:

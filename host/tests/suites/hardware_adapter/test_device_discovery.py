@@ -14,7 +14,7 @@ from config.hardware import (
     HardwareConfigLoadError,
     UsbSerialDeviceConfig,
     UsbVidPid,
-    load_local_hardware_config,
+    load_robot_hardware_config,
 )
 from drivers.device_discovery import (
     AmbiguousDeviceError,
@@ -444,12 +444,12 @@ class HardwareConfigTests(unittest.TestCase):
 
     @patch("drivers.device_discovery.GsUsb.scan")
     @patch("drivers.device_discovery.list_ports.comports")
-    def test_example_config_import_has_no_hardware_side_effects(
+    def test_robot_config_import_has_no_hardware_side_effects(
         self, comports: Mock, scan: Mock
     ) -> None:
-        path = Path(__file__).resolve().parents[3] / "config/examples/hardware.py"
+        path = Path(__file__).resolve().parents[3] / "config/robot_hardware.py"
         spec = importlib.util.spec_from_file_location(
-            "config.hardware_example", path
+            "config.robot_hardware_test", path
         )
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
@@ -459,22 +459,22 @@ class HardwareConfigTests(unittest.TestCase):
         comports.assert_not_called()
         scan.assert_not_called()
 
-    @patch("config.hardware._load_local_module")
-    def test_missing_local_config_has_copy_instruction(self, importer: Mock) -> None:
+    @patch("config.hardware._load_robot_module")
+    def test_missing_robot_config_reports_fixed_path(self, importer: Mock) -> None:
         importer.side_effect = ModuleNotFoundError(
-            "missing", name="config.local.hardware"
+            "missing", name="config.robot_hardware"
         )
         with self.assertRaisesRegex(
             HardwareConfigLoadError,
-            "config/examples/hardware.py.*config/local/hardware.py",
+            "config/robot_hardware.py",
         ):
-            load_local_hardware_config()
+            load_robot_hardware_config()
 
-    @patch("config.hardware._load_local_module")
-    def test_local_config_requires_hardware_config_instance(self, importer: Mock) -> None:
+    @patch("config.hardware._load_robot_module")
+    def test_robot_config_requires_hardware_config_instance(self, importer: Mock) -> None:
         importer.return_value = SimpleNamespace(HARDWARE=object())
         with self.assertRaisesRegex(HardwareConfigLoadError, "HardwareConfig"):
-            load_local_hardware_config()
+            load_robot_hardware_config()
 
 
 if __name__ == "__main__":

@@ -17,9 +17,8 @@ from calibration.base_slide_calibration import (
 from calibration.state_capture import AxisCaptureError, capture_stable_axis_state
 from config.frame_transforms import (
     FixedFrameTransforms,
-    load_frame_transforms_document,
-    save_frame_transforms,
 )
+from config.robot_runtime import load_robot_runtime_config
 from geometry.rigid_transform import RigidTransform
 from kinematics.frame_chain import RobotAxisState
 from motion.unified_protocol import AxisName, AxisState
@@ -30,6 +29,7 @@ from scripts.calibrate_base_slide_frame import (
 )
 from scripts.set_tool_camera_transform import main as tool_camera_main
 from scripts.verify_base_slide_frame import main as verify_main
+from tests.helpers.robot_runtime_config import write_robot_runtime_fixture
 
 
 def make_state(
@@ -288,7 +288,7 @@ class CalibrationScriptTests(unittest.TestCase):
 
     def test_default_save_preserves_tool_camera_when_forced_update(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "frames.json"
+            path = Path(directory) / "robot_runtime.json"
             tool = RigidTransform.from_xyz_rpy_deg(
                 x_mm=1,
                 y_mm=2,
@@ -297,9 +297,9 @@ class CalibrationScriptTests(unittest.TestCase):
                 pitch_deg=5,
                 yaw_deg=6,
             )
-            save_frame_transforms(
+            write_robot_runtime_fixture(
                 path,
-                FixedFrameTransforms(RigidTransform.identity(), tool),
+                transforms=FixedFrameTransforms(RigidTransform.identity(), tool),
                 metadata={"keep": "yes", "validated": True},
             )
             reference = RigidTransform.from_xyz_yaw_deg(
@@ -320,7 +320,7 @@ class CalibrationScriptTests(unittest.TestCase):
                 notes="test",
                 git_commit="abc",
             )
-            document = load_frame_transforms_document(path)
+            document = load_robot_runtime_config(path).frame_transforms
             np.testing.assert_allclose(document.transforms.tool_T_camera.matrix, tool.matrix)
             self.assertEqual(document.metadata["keep"], "yes")
             self.assertFalse(document.metadata["validated"])
@@ -350,13 +350,13 @@ class CalibrationScriptTests(unittest.TestCase):
 
     def test_calibrate_main_preview_writes_nothing(self) -> None:
         with self._provider_module(), tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "frames.json"
+            output = Path(directory) / "robot_runtime.json"
             code = self._call_silently(
                 calibrate_main,
                 [
                     "--tcp-x-mm", "0", "--tcp-y-mm", "0", "--tcp-z-mm", "0",
                     "--tcp-yaw-deg", "0", "--fk-provider", "test_fk_provider:KINEMATICS",
-                    "--samples", "3", "--sample-interval-s", "0", "--output", str(output),
+                    "--samples", "3", "--sample-interval-s", "0", "--config", str(output),
                 ],
                 runtime_factory=FakeRuntime,
             )
@@ -365,27 +365,30 @@ class CalibrationScriptTests(unittest.TestCase):
 
     def test_calibrate_main_writes_only_with_flag(self) -> None:
         with self._provider_module(), tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "frames.json"
+            output = Path(directory) / "robot_runtime.json"
+            write_robot_runtime_fixture(output)
             code = self._call_silently(
                 calibrate_main,
                 [
                     "--tcp-x-mm", "0", "--tcp-y-mm", "0", "--tcp-z-mm", "0",
                     "--tcp-yaw-deg", "0", "--fk-provider", "test_fk_provider:KINEMATICS",
-                    "--samples", "3", "--sample-interval-s", "0", "--output", str(output),
-                    "--write-local",
+                    "--samples", "3", "--sample-interval-s", "0", "--config", str(output),
+                    "--write-config",
                 ],
                 runtime_factory=FakeRuntime,
             )
             self.assertEqual(code, 0)
             self.assertTrue(output.exists())
-            self.assertFalse(load_frame_transforms_document(output).metadata["validated"])
+            self.assertFalse(
+                load_robot_runtime_config(output).frame_transforms.metadata["validated"]
+            )
 
     def test_verify_main_exit_codes_and_validation_metadata(self) -> None:
         with self._provider_module(), tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "frames.json"
-            save_frame_transforms(
+            path = Path(directory) / "robot_runtime.json"
+            write_robot_runtime_fixture(
                 path,
-                FixedFrameTransforms(RigidTransform.identity(), None),
+                transforms=FixedFrameTransforms(RigidTransform.identity(), None),
                 metadata={"validated": False},
             )
             args = [
@@ -397,7 +400,9 @@ class CalibrationScriptTests(unittest.TestCase):
                 self._call_silently(verify_main, args, runtime_factory=FakeRuntime),
                 0,
             )
-            self.assertFalse(load_frame_transforms_document(path).metadata["validated"])
+            self.assertFalse(
+                load_robot_runtime_config(path).frame_transforms.metadata["validated"]
+            )
             self.assertEqual(
                 self._call_silently(
                     verify_main,
@@ -406,14 +411,16 @@ class CalibrationScriptTests(unittest.TestCase):
                 ),
                 0,
             )
-            self.assertTrue(load_frame_transforms_document(path).metadata["validated"])
+            self.assertTrue(
+                load_robot_runtime_config(path).frame_transforms.metadata["validated"]
+            )
 
     def test_verify_main_returns_one_for_threshold_failure(self) -> None:
         with self._provider_module(), tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "frames.json"
-            save_frame_transforms(
+            path = Path(directory) / "robot_runtime.json"
+            write_robot_runtime_fixture(
                 path,
-                FixedFrameTransforms(RigidTransform.identity(), None),
+                transforms=FixedFrameTransforms(RigidTransform.identity(), None),
             )
             code = self._call_silently(
                 verify_main,
@@ -429,13 +436,13 @@ class CalibrationScriptTests(unittest.TestCase):
 
     def test_tool_camera_preview_and_update_preserve_base(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "frames.json"
+            path = Path(directory) / "robot_runtime.json"
             base = RigidTransform.from_xyz_yaw_deg(
                 x_mm=10, y_mm=20, z_mm=30, yaw_deg=40
             )
-            save_frame_transforms(
+            write_robot_runtime_fixture(
                 path,
-                FixedFrameTransforms(base, None),
+                transforms=FixedFrameTransforms(base, None),
                 metadata={"keep": "yes"},
             )
             args = [
@@ -444,15 +451,17 @@ class CalibrationScriptTests(unittest.TestCase):
                 "--config", str(path),
             ]
             self.assertEqual(self._call_silently(tool_camera_main, args), 0)
-            self.assertIsNone(load_frame_transforms_document(path).transforms.tool_T_camera)
+            self.assertIsNone(
+                load_robot_runtime_config(path).frame_transforms.transforms.tool_T_camera
+            )
             self.assertEqual(
                 self._call_silently(
                     tool_camera_main,
-                    args + ["--write-local", "--force"],
+                    args + ["--write-config", "--force"],
                 ),
                 0,
             )
-            document = load_frame_transforms_document(path)
+            document = load_robot_runtime_config(path).frame_transforms
             np.testing.assert_allclose(document.transforms.base_T_slide_zero.matrix, base.matrix)
             self.assertIsNotNone(document.transforms.tool_T_camera)
             self.assertEqual(document.metadata["keep"], "yes")

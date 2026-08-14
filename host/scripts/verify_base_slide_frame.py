@@ -28,23 +28,23 @@ from calibration.state_capture import (  # noqa: E402
     capture_stable_axis_state,
     initialize_read_only_rotary_positions,
 )
-from config.frame_transforms import (  # noqa: E402
-    FrameTransformConfigError,
-    load_frame_transforms_document,
-    save_frame_transforms,
-)
-from config.hardware import HardwareConfigLoadError, load_local_hardware_config  # noqa: E402
+from config.hardware import HardwareConfigLoadError, load_robot_hardware_config  # noqa: E402
 from config.motion_runtime import (  # noqa: E402
     MotionRuntimeConfigLoadError,
-    load_local_motion_config,
+    load_robot_motion_config,
+)
+from config.robot_runtime import (  # noqa: E402
+    DEFAULT_ROBOT_RUNTIME_PATH,
+    RobotRuntimeConfigError,
+    load_robot_runtime_config,
+    update_robot_runtime_frame_transforms,
 )
 from geometry.rigid_transform import RigidTransform  # noqa: E402
 from kinematics.frame_chain import RobotAxisState, SlideZeroKinematics  # noqa: E402
 from motion.authorization import RuntimeMode  # noqa: E402
 
 
-DEFAULT_LOCAL_PATH = HOST_ROOT / "config" / "local" / "frame_transforms.json"
-DEFAULT_FK_PROVIDER = "kinematics.five_axis:load_local_five_axis_kinematics"
+DEFAULT_FK_PROVIDER = "kinematics.five_axis:load_robot_five_axis_kinematics"
 
 
 def capture_and_verify(
@@ -93,7 +93,7 @@ def _build_parser() -> argparse.ArgumentParser:
         parser.add_argument(f"--tcp-{name}-mm", type=float, required=True)
     parser.add_argument("--tcp-yaw-deg", type=float, required=True)
     parser.add_argument("--fk-provider", default=DEFAULT_FK_PROVIDER)
-    parser.add_argument("--config", type=Path, default=DEFAULT_LOCAL_PATH)
+    parser.add_argument("--config", type=Path, default=DEFAULT_ROBOT_RUNTIME_PATH)
     parser.add_argument("--max-position-error-mm", type=float, default=2.0)
     parser.add_argument("--max-yaw-error-deg", type=float, default=2.0)
     parser.add_argument("--samples", type=int, default=20)
@@ -112,14 +112,14 @@ def main(
 ) -> int:
     args = _build_parser().parse_args(argv)
     try:
-        document = load_frame_transforms_document(args.config)
+        document = load_robot_runtime_config(args.config).frame_transforms
         kinematics = load_slide_zero_kinematics(args.fk_provider)
         runtime = (
             runtime_factory()
             if runtime_factory is not None
             else create_upper_motion_runtime(
-                load_local_hardware_config(),
-                load_local_motion_config(),
+                load_robot_hardware_config(),
+                load_robot_motion_config(),
                 mode=RuntimeMode.READ_ONLY,
             )
         )
@@ -147,7 +147,7 @@ def main(
                 raise ValueError("failed verification cannot be saved as validated")
             if not args.force:
                 raise FileExistsError(
-                    "updating an existing local config requires --force"
+                    "updating the robot runtime config requires --force"
                 )
             metadata = dict(document.metadata)
             metadata.update(
@@ -170,11 +170,10 @@ def main(
                     },
                 }
             )
-            save_frame_transforms(
+            update_robot_runtime_frame_transforms(
                 args.config,
                 document.transforms,
                 metadata=metadata,
-                overwrite=True,
             )
             print(f"Saved validation metadata: {args.config}")
         else:
@@ -183,7 +182,7 @@ def main(
     except (
         AxisCaptureError,
         FKProviderLoadError,
-        FrameTransformConfigError,
+        RobotRuntimeConfigError,
         HardwareConfigLoadError,
         MotionRuntimeConfigLoadError,
         FileExistsError,

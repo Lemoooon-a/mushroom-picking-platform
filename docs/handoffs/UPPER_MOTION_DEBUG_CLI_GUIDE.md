@@ -19,7 +19,7 @@ power 语义时才使用 maintenance 脚本。设备枚举和标定工具继续�
 `manual_motion.py` 的调用链为：
 
 ```text
-hardware/motion local config
+当前机械臂正式 hardware/motion 配置
   -> create_upper_motion_runtime()
   -> UpperMotionRuntime
   -> UnifiedMotionController
@@ -180,8 +180,7 @@ enable、自动 home、startup position、完整初始化状态机、自动标�
 
 ```bash
 cd host
-.venv/bin/python scripts/run_motion_demo.py --execute \
-  --tray-workspace-config config/local/tray_workspace.json
+.venv/bin/python scripts/run_motion_demo.py --execute
 ```
 
 执行模式启动顺序为：读取状态、`suction idle`、使能 Shoulder/Elbow/Rotation、验证使能、Z

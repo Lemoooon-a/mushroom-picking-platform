@@ -1,9 +1,0 @@
-{
-  "schema_version": 1,
-  "geometry_confirmed": false,
-  "link_lengths_mm": [null, null],
-  "tcp_height_at_z_zero_mm": null,
-  "metadata": {
-    "notes": "Template only. Measure every null value, then set geometry_confirmed to true. Base XY/yaw and Slide/Z directions are fixed by the mechanical coordinate definition."
-  }
-}

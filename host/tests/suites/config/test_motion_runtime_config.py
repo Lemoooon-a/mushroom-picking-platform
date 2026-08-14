@@ -16,7 +16,7 @@ from config.motion_runtime import (
     LinearAxisPositionLimits,
     MotionRuntimeConfig,
     MotionRuntimeConfigLoadError,
-    load_local_motion_config,
+    load_robot_motion_config,
 )
 from motion.unified_protocol import AxisName
 
@@ -177,7 +177,7 @@ class MotionConfigLoadingTests(unittest.TestCase):
     @patch("drivers.stm32_motion.STM32SerialTransport.open")
     @patch("drivers.device_discovery.GsUsb.scan")
     @patch("drivers.device_discovery.list_ports.comports")
-    def test_example_import_has_no_hardware_side_effects(
+    def test_robot_config_import_has_no_hardware_side_effects(
         self,
         comports: Mock,
         scan: Mock,
@@ -185,9 +185,9 @@ class MotionConfigLoadingTests(unittest.TestCase):
         can_open: Mock,
         feetech_open: Mock,
     ) -> None:
-        path = Path(__file__).resolve().parents[3] / "config/examples/motion.py"
+        path = Path(__file__).resolve().parents[3] / "config/robot_motion.py"
         spec = importlib.util.spec_from_file_location(
-            "config.motion_example",
+            "config.robot_motion_test",
             path,
         )
         assert spec is not None and spec.loader is not None
@@ -201,29 +201,29 @@ class MotionConfigLoadingTests(unittest.TestCase):
         can_open.assert_not_called()
         feetech_open.assert_not_called()
 
-    @patch("config.motion_runtime._load_local_module")
-    def test_missing_local_config_has_copy_instruction(self, importer: Mock) -> None:
+    @patch("config.motion_runtime._load_robot_module")
+    def test_missing_robot_config_reports_fixed_path(self, importer: Mock) -> None:
         importer.side_effect = ModuleNotFoundError(
             "missing",
-            name="config.local.motion",
+            name="config.robot_motion",
         )
         with self.assertRaisesRegex(
             MotionRuntimeConfigLoadError,
-            "config/examples/motion.py.*config/local/motion.py",
+            "config/robot_motion.py",
         ):
-            load_local_motion_config()
+            load_robot_motion_config()
 
-    @patch("config.motion_runtime._load_local_module")
-    def test_local_config_requires_expected_type(self, importer: Mock) -> None:
+    @patch("config.motion_runtime._load_robot_module")
+    def test_robot_config_requires_expected_type(self, importer: Mock) -> None:
         importer.return_value = SimpleNamespace(MOTION=object())
         with self.assertRaisesRegex(MotionRuntimeConfigLoadError, "MotionRuntimeConfig"):
-            load_local_motion_config()
+            load_robot_motion_config()
 
-    @patch("config.motion_runtime._load_local_module")
-    def test_valid_local_config_is_returned(self, importer: Mock) -> None:
+    @patch("config.motion_runtime._load_robot_module")
+    def test_valid_robot_config_is_returned(self, importer: Mock) -> None:
         expected = motion_config()
         importer.return_value = SimpleNamespace(MOTION=expected)
-        self.assertIs(load_local_motion_config(), expected)
+        self.assertIs(load_robot_motion_config(), expected)
 
 
 if __name__ == "__main__":

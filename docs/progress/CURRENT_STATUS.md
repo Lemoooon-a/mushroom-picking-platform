@@ -55,17 +55,17 @@ V1–V3 分别实现版本化 Vision Gateway、原子 PickPlan/Workflow 和顶�
 | V3 | `d17a887` | `feat(host): add top-level robot service runtime` | Service 状态/API、chained plan、纯离线后端、CLI、JSONL 与测试 |
 | V4 | 本报告所在提交 | `docs: document vision and pick runtime boundaries` | runtime/pick/grasp 文档、README 与当前进度同步 |
 
-### 3.3 未提交与本机配置
+### 3.3 当前机械臂正式配置
 
-本轮以 `f3f3802` clean 为起点；V4 终检目标是根仓库、根 index 和子模块工作树均 clean。以下本机文件继续由 Git ignore 保护，未进入任何提交：
+当前机械臂配置直接由 Git 跟踪，不再区分 local 或 example：
 
-- `host/config/local/hardware.py`
-- `host/config/local/motion.py`
-- `host/config/local/five_axis_geometry.json`
-- `host/config/local/frame_transforms.json`
-- `host/config/local/tray_workspace.json`
+- `host/config/robot_hardware.py`
+- `host/config/robot_motion.py`
+- `host/config/robot_geometry.json`
+- `host/config/robot_runtime.json`
 
-本轮未修改五个既有 local 文件，也未创建 `local/vision_runtime.json` 或 `local/grasp_profile.json`。没有使用 `git add -f`、stash、reset、rebase 或 force checkout；没有硬件 I/O 或 push。
+`robot_runtime.json` 集中保存 frame transforms、Tray workspace、视觉、抓取、扫描放置和记录设置；
+所有区块必须同时通过校验。
 
 ## 4. 系统架构
 
@@ -93,10 +93,8 @@ Feetech Rotation axis ──────────────┘        ├�
 - `host/kinematics/`、`host/geometry/`：算法与坐标变换，不直接访问硬件。
 - `host/application/`、`host/vision/`：Service 状态/记录、培养槽门禁、抓取工作流、视觉协议/gateway 和 fail-closed 解析。
 - `host/scripts/`：人工入口；真实动作需显式授权/确认，import 不应产生硬件 I/O。
-- `host/config/` 根：typed models、loaders 和 schema。
+- `host/config/` 根：typed models、loaders、schema 和当前机械臂四份正式配置。
 - `host/config/project/`：当前项目机器的 tracked 参数与规划策略。
-- `host/config/examples/`：可提交模板，不会自动作为 validated 配置加载。
-- `host/config/local/`：机器专属运行参数和真实标定结果；除 `__init__.py` 外均 ignored。
 - `host/calibration/`：标定算法、状态模型和 capture/solve 代码；不保存真实机器 JSON 结果。
 - `host/config/project/workspace_planning.py`：arm-local 偏置求解策略；不含 Base clearance。
 - `host/config/project/robot_motion_envelope.py`：startup/return 与中间安全阶段策略；不是碰撞模型。
@@ -146,7 +144,8 @@ machine protocol v2 提供带 command id 的接受响应与终态 event；Host c
 - 正偏移 arm-local 工作区：X `[50,450] mm`、Y `[150,350] mm`；负偏移：X `[50,450] mm`、Y `[-350,-150] mm`。
 - 培养槽最终 TCP 目标使用 Base frame 绝对坐标：X `[20,480] mm`、Y `[20,700] mm`、Z `[0,180] mm`。
 - 五轴 solver 支持 FK/IK、可达性、关节限位过滤、偏移候选与确定性选择；transition planner 生成 `DIRECT` 或 `LIFT/TRANSIT/LOWER` 阶段。
-- 真实几何来自被忽略的 `host/config/local/five_axis_geometry.json`，Base 外参来自 `host/config/local/frame_transforms.json`。数学测试通过不等于机构无碰撞或实机目标正确。
+- 真实几何来自 Git 跟踪的 `host/config/robot_geometry.json`，Base 外参来自
+  `host/config/robot_runtime.json` 的 `frame_transforms` 区块。数学测试通过不等于机构无碰撞或实机目标正确。
 - 当前 `tool_T_camera` 缺失或未验证；Base 手工运动可用，Camera 目标在 FK/planner/submit 前被拒绝。
 
 ## 8. 系统协调与采摘任务

@@ -20,7 +20,7 @@ from .five_axis import (
     FiveAxisKinematics,
     PlanarLocalTarget,
     load_five_axis_geometry,
-    load_local_five_axis_kinematics,
+    load_robot_five_axis_kinematics,
     rotation_deg_for_output_yaw,
     rotation_output_yaw_deg,
 )
@@ -74,7 +74,7 @@ __all__ = [
     "StageValidationFailedError",
     "UnreachableTargetError",
     "load_five_axis_geometry",
-    "load_local_five_axis_kinematics",
+    "load_robot_five_axis_kinematics",
     "rotation_deg_for_output_yaw",
     "rotation_output_yaw_deg",
 ]

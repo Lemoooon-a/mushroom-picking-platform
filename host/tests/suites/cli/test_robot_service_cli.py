@@ -30,8 +30,26 @@ class RobotServiceCliTests(unittest.TestCase):
         validate_args(parser, dry_run)
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             validate_args(parser, parser.parse_args(["--mode", "execute"]))
-        execute = parser.parse_args(["--mode", "execute", "--confirm-motion", "--confirm-rotation-no-stop"])
+        execute = parser.parse_args(["--mode", "execute", "--confirm-motion"])
         validate_args(parser, execute)
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            parser.parse_args(
+                ["--mode", "execute", "--confirm-motion", "--confirm-rotation-no-stop"]
+            )
+
+    def test_removed_config_path_flags_are_unknown(self) -> None:
+        parser = build_parser()
+        removed = (
+            "--frame-config",
+            "--tray-workspace-config",
+            "--vision-runtime-config",
+            "--grasp-profile-config",
+            "--scan-pick-config",
+            "--record-jsonl",
+        )
+        for flag in removed:
+            with self.subTest(flag=flag), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                parser.parse_args([flag, "/tmp/unused.json"])
 
     def test_shell_dispatches_status_startup_observe_and_pick(self) -> None:
         service = Mock()

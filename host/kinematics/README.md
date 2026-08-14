@@ -38,13 +38,13 @@ yaw = shoulder_deg + elbow_deg + rotation_deg
 ```
 
 Rotation 只影响 yaw，不影响 TCP XYZ；不再使用外部 Base→Slide-zero XY/yaw 或
-Rotation→TCP 位置偏移。当前机器几何从 `config/local/five_axis_geometry.json` 加载。模板位于
-`config/examples/five_axis_geometry.json`。
+Rotation→TCP 位置偏移。当前机械臂正式几何从 `config/robot_geometry.json` 加载；仓库不提供
+local 或 example 几何模板。
 该 example 故意把未知尺寸设为 `null` 且保持
 `geometry_confirmed=false`，避免示例数值进入真实标定。
 
 默认标定 provider 为：
 
 ```text
-kinematics.five_axis:load_local_five_axis_kinematics
+kinematics.five_axis:load_robot_five_axis_kinematics
 ```

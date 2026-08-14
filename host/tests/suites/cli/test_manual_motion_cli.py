@@ -48,6 +48,7 @@ from tests.helpers.motion_cli_test_support import (
     fake_runtime,
     group_result,
 )
+from tests.helpers.robot_runtime_config import write_robot_runtime_fixture
 
 
 class ManualMotionTests(unittest.TestCase):
@@ -286,7 +287,7 @@ class ManualMotionTests(unittest.TestCase):
                 run_plan_base(
                     fake_runtime(),
                     target,
-                    frame_config=path,
+                    config_path=path,
                     five_axis_kinematics=self._plan_model(),
                     emit=lambda _line: None,
                 )
@@ -295,7 +296,7 @@ class ManualMotionTests(unittest.TestCase):
                 run_plan_base(
                     fake_runtime(),
                     target,
-                    frame_config=path,
+                    config_path=path,
                     five_axis_kinematics=self._plan_model(),
                     emit=lambda _line: None,
                 )
@@ -306,23 +307,18 @@ class ManualMotionTests(unittest.TestCase):
             model,
             self._plan_state(model, 350, 250, -350),
         )
-        payload = """{
-  "schema_version": 1,
-  "base_T_slide_zero": {
-    "translation_mm": [0, 0, 0],
-    "rotation_rpy_deg": [0, 0, 0]
-  },
-  "tool_T_camera": null,
-  "metadata": {"validated": false}
-}\n"""
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "frame_transforms.json"
-            path.write_text(payload, encoding="utf-8")
+            path = Path(directory) / "robot_runtime.json"
+            write_robot_runtime_fixture(
+                path,
+                transforms=FixedFrameTransforms(RigidTransform.identity(), None),
+                metadata={"validated": False},
+            )
             before = path.read_bytes()
             run_plan_base(
                 self._plan_runtime(self._plan_state(model, 300, 250, -300)),
                 target,
-                frame_config=path,
+                config_path=path,
                 five_axis_kinematics=model,
                 emit=lambda _line: None,
             )

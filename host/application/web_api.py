@@ -36,6 +36,8 @@ DEFAULT_CORS_ORIGINS = (
     "http://127.0.0.1:3000",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://172.20.10.2:5173",
+    "http://172.20.10.2:4173",
 )
 
 _PLANNING_ERROR_BASE_NAMES = frozenset(
