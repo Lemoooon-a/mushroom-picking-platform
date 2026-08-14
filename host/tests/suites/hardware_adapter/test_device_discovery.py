@@ -291,6 +291,38 @@ class SerialDiscoveryTests(unittest.TestCase):
 
 
 class GsUsbDiscoveryTests(unittest.TestCase):
+    @patch("drivers.device_discovery.usb_util.dispose_resources")
+    @patch("drivers.device_discovery.GsUsb.scan")
+    def test_descriptor_handle_is_released_before_device_is_returned(
+        self,
+        scan: Mock,
+        dispose_resources: Mock,
+    ) -> None:
+        device = FakeGsUsb()
+        device.gs_usb._ctx = object()
+        scan.return_value = [device]
+
+        listed = list_gs_usb_devices()
+
+        self.assertEqual(len(listed), 1)
+        dispose_resources.assert_called_once_with(device.gs_usb)
+
+    @patch("drivers.device_discovery.GsUsb.scan", return_value=[])
+    @patch("drivers.device_discovery.libusb1.get_backend")
+    def test_bundled_libusb_backend_is_loaded_when_system_backend_is_missing(
+        self,
+        get_backend: Mock,
+        _scan: Mock,
+    ) -> None:
+        bundled_backend = object()
+        get_backend.side_effect = [None, bundled_backend]
+
+        self.assertEqual(list_gs_usb_devices(), ())
+
+        self.assertEqual(get_backend.call_count, 2)
+        self.assertEqual(get_backend.call_args_list[0], call())
+        self.assertIn("find_library", get_backend.call_args_list[1].kwargs)
+
     @patch("drivers.device_discovery.GsUsb.scan")
     def test_unique_match_returns_device_and_metadata(self, scan: Mock) -> None:
         expected = FakeGsUsb(serial="CAN-SERIAL", bus=3, address=4)

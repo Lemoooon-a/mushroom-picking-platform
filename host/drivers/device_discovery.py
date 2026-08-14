@@ -8,6 +8,8 @@ from typing import Any
 
 from gs_usb.gs_usb import GsUsb
 from serial.tools import list_ports
+import usb.util as usb_util
+from usb.backend import libusb1
 from usb.core import USBError
 
 from config.hardware import (
@@ -231,6 +233,22 @@ resolve_usb_serial_device = resolve_usb_serial_port
 _OPTIONAL_DESCRIPTOR_ERRORS = (ValueError, USBError, AttributeError, TypeError)
 
 
+def _ensure_gs_usb_backend() -> None:
+    """Load the project-bundled libusb backend when system discovery fails."""
+
+    if libusb1.get_backend() is not None:
+        return
+    try:
+        import libusb_package
+    except ImportError as exc:
+        raise RuntimeError(
+            "libusb 1.0 backend is unavailable; install the Windows dependencies "
+            "from requirements.txt"
+        ) from exc
+    if libusb1.get_backend(find_library=libusb_package.find_library) is None:
+        raise RuntimeError("libusb 1.0 backend could not be loaded")
+
+
 def _safe_gs_usb_metadata(device: object, name: str, getter: Any) -> object | None:
     try:
         return getter()
@@ -239,21 +257,32 @@ def _safe_gs_usb_metadata(device: object, name: str, getter: Any) -> object | No
         return None
 
 
+def _dispose_gs_usb_discovery_handle(usb_device: object) -> None:
+    """Release descriptor-read handles before python-can reopens the device."""
+
+    if getattr(usb_device, "_ctx", None) is None:
+        return
+    usb_util.dispose_resources(usb_device)
+
+
 def list_gs_usb_devices() -> tuple[ResolvedGsUsbDevice, ...]:
     """列出 gs_usb 设备及安全可读的诊断元数据。"""
 
     try:
+        _ensure_gs_usb_backend()
         scanned = GsUsb.scan()
     except Exception as exc:
         raise DeviceMetadataError(f"枚举 gs_usb 设备失败: {exc}") from exc
 
     devices: list[ResolvedGsUsbDevice] = []
     for index, device in enumerate(scanned):
+        usb_device = getattr(device, "gs_usb", None)
         try:
-            usb_device = device.gs_usb
             vid = int(usb_device.idVendor)
             pid = int(usb_device.idProduct)
         except (AttributeError, TypeError, ValueError, USBError) as exc:
+            if usb_device is not None:
+                _dispose_gs_usb_discovery_handle(usb_device)
             raise DeviceMetadataError(
                 f"gs_usb 候选 {index} 无法读取关键 VID/PID: {exc}"
             ) from exc
@@ -278,6 +307,7 @@ def list_gs_usb_devices() -> tuple[ResolvedGsUsbDevice, ...]:
                 device, "product", lambda: device.gs_usb.product
             )
         )
+        _dispose_gs_usb_discovery_handle(usb_device)
         devices.append(
             ResolvedGsUsbDevice(
                 device=device,
