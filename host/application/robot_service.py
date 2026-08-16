@@ -1115,6 +1115,12 @@ class MushroomRobotService:
                 )
             started_controller = self._started_controller
             shutdown_requested = self._shutdown_requested
+            recovering_fault = (
+                token is None
+                and self.state is RobotServiceState.FAULT
+                and self.mode is RobotServiceMode.EXECUTE
+                and started_controller
+            )
         stop_error: Exception | None = None
         if self.mode is RobotServiceMode.EXECUTE and started_controller:
             try:
@@ -1123,7 +1129,7 @@ class MushroomRobotService:
                 stop_error = exc
         state_reader = getattr(self._axis_motion, "get_axis_states", None)
         if (
-            token is not None
+            (token is not None or recovering_fault)
             and self.mode is RobotServiceMode.EXECUTE
             and started_controller
             and callable(state_reader)
@@ -1136,18 +1142,23 @@ class MushroomRobotService:
                     and len(states) == len(_ALL_AXIS_NAMES)
                     and all(
                         isinstance(item, AxisState)
+                        and item.connected
                         and item.busy is False
                         and not item.faulted
                         and item.position_valid
                         for item in states
                     )
+                    and {item.axis for item in states} == set(_ALL_AXIS_NAMES)
                 )
             except Exception as exc:
                 valid_stop = False
                 verification_error = f"stop state verification: {exc}"
             else:
                 verification_error = None
-        elif token is not None and self.mode is RobotServiceMode.EXECUTE:
+        elif (
+            (token is not None or recovering_fault)
+            and self.mode is RobotServiceMode.EXECUTE
+        ):
             valid_stop = False
             verification_error = (
                 f"stop: {stop_error}"
@@ -1173,15 +1184,35 @@ class MushroomRobotService:
                     verification_error = (
                         "cancelled disable did not confirm enabled joint holding"
                     )
+        elif recovering_fault and valid_stop:
+            state_by_axis = {item.axis: item for item in states}
+            rotary_enabled = tuple(
+                state_by_axis[axis].enabled
+                for axis in (
+                    AxisName.SHOULDER,
+                    AxisName.ELBOW,
+                    AxisName.ROTATION,
+                )
+            )
+            if rotary_enabled == (False, False, False):
+                stopped_state = RobotServiceState.DISABLED
+            elif rotary_enabled != (True, True, True):
+                valid_stop = False
+                verification_error = (
+                    "fault recovery did not confirm consistent rotary joint holding"
+                )
         with self._state_lock:
             if stop_error is not None and not self._shutdown_requested:
                 self.state = RobotServiceState.FAULT
                 self.fault = f"stop: {stop_error}"
-            elif token is not None and not self._shutdown_requested:
+            elif (
+                (token is not None or recovering_fault)
+                and not self._shutdown_requested
+            ):
                 if valid_stop:
                     self.state = stopped_state
                     self.fault = None
-                else:
+                elif token is not None:
                     self.state = RobotServiceState.FAULT
                     self.fault = (
                         verification_error

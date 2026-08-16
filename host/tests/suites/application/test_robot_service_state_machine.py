@@ -78,6 +78,7 @@ class _Backend:
         self.block_execute = False
         self.shutdown_error: Exception | None = None
         self.startup_error: Exception | None = None
+        self.stop_error: Exception | None = None
         self.enable_error: Exception | None = None
         self.disable_error: Exception | None = None
         self.action_entered = threading.Event()
@@ -103,7 +104,10 @@ class _Backend:
             self.execute_release.wait(2.0)
         return True
     def return_to_startup(self): self.calls.append("return")
-    def stop(self): self.calls.append("stop")
+    def stop(self):
+        self.calls.append("stop")
+        if self.stop_error is not None:
+            raise self.stop_error
     def enable_joints(self):
         self._action("enable")
         if self.enable_error is not None:
@@ -305,7 +309,7 @@ class RobotServiceStateMachineTests(unittest.TestCase):
         thread.join(1.0)
         self.assertFalse(thread.is_alive())
 
-    def test_stop_without_active_operation_preserves_stable_states(self) -> None:
+    def test_stop_without_active_operation_preserves_non_fault_stable_states(self) -> None:
         created, _, _ = self.make_service(startup=False)
         created.stop()
         self.assertIs(created.state, RobotServiceState.CREATED)
@@ -313,7 +317,6 @@ class RobotServiceStateMachineTests(unittest.TestCase):
         for state in (
             RobotServiceState.READY,
             RobotServiceState.DISABLED,
-            RobotServiceState.FAULT,
         ):
             with self.subTest(state=state.value):
                 service, _, _ = self.make_service()
@@ -325,6 +328,74 @@ class RobotServiceStateMachineTests(unittest.TestCase):
         shut.shutdown()
         shut.stop()
         self.assertIs(shut.state, RobotServiceState.SHUTDOWN)
+
+    def test_stop_recovers_fault_after_stationary_healthy_validation(self) -> None:
+        service, backend, axis_port = self.make_service()
+        service.state = RobotServiceState.FAULT
+        service.fault = "move: simulated failure"
+
+        service.stop()
+
+        self.assertIs(service.state, RobotServiceState.READY)
+        self.assertIsNone(service.fault)
+        self.assertIn("stop", backend.calls)
+        self.assertIn("get-states", axis_port.calls)
+
+    def test_stop_recovers_fault_to_disabled_when_rotary_joints_are_disabled(self) -> None:
+        service, _, axis_port = self.make_service()
+        service.state = RobotServiceState.FAULT
+        service.fault = "joints enable: simulated failure"
+        axis_port.states = _axis_states(rotary_enabled=False)
+
+        service.stop()
+
+        self.assertIs(service.state, RobotServiceState.DISABLED)
+        self.assertIsNone(service.fault)
+
+    def test_stop_preserves_fault_when_axis_state_is_not_recovery_safe(self) -> None:
+        unsafe_states = {
+            "invalid": _axis_states(valid=False),
+            "missing": _axis_states()[:-1],
+        }
+        for name, field_changes in (
+            ("disconnected", {"connected": False}),
+            ("busy", {"busy": True}),
+            (
+                "faulted",
+                {"faulted": True, "fault_code": 1, "fault_message": "fault"},
+            ),
+            ("mixed holding", {"enabled": False}),
+        ):
+            states = list(_axis_states())
+            shoulder = states[list(AxisName).index(AxisName.SHOULDER)]
+            states[list(AxisName).index(AxisName.SHOULDER)] = AxisState(
+                **{**shoulder.__dict__, **field_changes}
+            )
+            unsafe_states[name] = tuple(states)
+
+        for name, states in unsafe_states.items():
+            with self.subTest(name=name):
+                service, _, axis_port = self.make_service()
+                service.state = RobotServiceState.FAULT
+                service.fault = "move: simulated failure"
+                axis_port.states = states
+
+                service.stop()
+
+                self.assertIs(service.state, RobotServiceState.FAULT)
+                self.assertEqual(service.fault, "move: simulated failure")
+
+    def test_stop_failure_replaces_fault_with_stop_error(self) -> None:
+        service, backend, _ = self.make_service()
+        service.state = RobotServiceState.FAULT
+        service.fault = "move: simulated failure"
+        backend.stop_error = RuntimeError("stop failed")
+
+        with self.assertRaisesRegex(RuntimeError, "stop failed"):
+            service.stop()
+
+        self.assertIs(service.state, RobotServiceState.FAULT)
+        self.assertEqual(service.fault, "stop: stop failed")
 
     def test_disabled_joints_can_be_enabled_and_revalidated(self) -> None:
         service, _, axis_port = self.make_service()
