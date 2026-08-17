@@ -60,8 +60,10 @@ Base-frame 正运动学提供者计算 `x/y/z/yaw`。Web 前端不保存或复�
 `FAULT`；达到 `max_picks_per_scan_pose` 会在已经返回扫描位后停止整个任务并报告，但不进入
 `FAULT`。dry-run 仅允许离线后端推进虚拟位姿，不提交硬件命令。
 
-固定放置点为 Base `(250, 1000, 150, 0)`。它是 scan-pick 唯一允许绕过 Tray workspace 的
-目标；放置点和返回扫描位会在移动前作为两段序列完整规划，返回扫描位仍执行正常 Tray 门禁。
+普通目标放置点为 Base `(150, 1000, 150, 0)`，过大目标放置点为
+Base `(450, 1000, 150, 0)`。视觉观察中的 `size_class` 决定使用哪个点；两个放置点是
+scan-pick 仅有的 Tray workspace 区外例外。放置点和返回扫描位会在移动前作为两段序列
+完整规划，返回扫描位仍执行正常 Tray 门禁。
 放置点到位后立即释放并直接返回，不包含放置前接近或放置后回撤阶段。区外例外不会绕过
 OffsetWorkspace、逆运动学、轴/关节限位或 RobotMotionEnvelope。
 

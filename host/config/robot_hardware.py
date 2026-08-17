@@ -14,7 +14,7 @@ FEETECH = UsbSerialDeviceConfig(
 )
 
 STM32_MOTION = UsbSerialDeviceConfig(
-    identity=UsbVidPid(vid=0x0483, pid=0x374B),
+    identity=UsbVidPid(vid=0x1A86, pid=0x7523),
     baudrate=115200,
 )
 

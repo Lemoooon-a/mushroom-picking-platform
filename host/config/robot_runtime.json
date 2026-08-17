@@ -227,7 +227,7 @@
     "maximum_observation_age_s": 8
   },
   "scan_pick": {
-    "schema_version": 3,
+    "schema_version": 4,
     "validated": true,
     "scan_x_positions_mm": [
       150,
@@ -241,7 +241,13 @@
     ],
     "scan_yaw_deg": 0,
     "place_pose": {
-      "x_mm": 250,
+      "x_mm": 150,
+      "y_mm": 1000,
+      "z_mm": 150,
+      "yaw_deg": 0
+    },
+    "oversized_place_pose": {
+      "x_mm": 450,
       "y_mm": 1000,
       "z_mm": 150,
       "yaw_deg": 0

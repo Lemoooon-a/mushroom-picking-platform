@@ -9,6 +9,8 @@ from collections.abc import Sequence
 
 import numpy as np
 
+from vision.target_size import TargetSizeClass
+
 from geometry.rigid_transform import RigidTransform
 from kinematics.frame_chain import RobotAxisState
 
@@ -115,6 +117,7 @@ class VisionTargetObservation:
     orientation: Quaternion | None
     confidence: float | None
     target_id: str | None
+    size_class: TargetSizeClass
     capture_axis_state: RobotAxisState
     capture_motion_state: CaptureMotionState
     camera_T_target: RigidTransform
@@ -131,6 +134,7 @@ class VisionTargetObservation:
         orientation: Quaternion | None = None,
         confidence: float | None = None,
         target_id: str | None = None,
+        size_class: TargetSizeClass = TargetSizeClass.NORMAL,
         camera_T_target: RigidTransform | None = None,
     ) -> None:
         request_id = _non_empty("request_id", request_id)
@@ -145,6 +149,8 @@ class VisionTargetObservation:
             raise ValueError("confidence must be between 0 and 1")
         if target_id is not None:
             target_id = _non_empty("target_id", target_id)
+        if not isinstance(size_class, TargetSizeClass):
+            raise TypeError("size_class must be a TargetSizeClass")
         if orientation is not None and not isinstance(orientation, Quaternion):
             raise TypeError("orientation must be a Quaternion or None")
 
@@ -175,6 +181,7 @@ class VisionTargetObservation:
             ("request_id", request_id), ("frame_id", frame_id), ("timestamp", timestamp),
             ("position_mm", position), ("orientation", orientation), ("confidence", confidence),
             ("target_id", target_id), ("capture_axis_state", capture_axis_state),
+            ("size_class", size_class),
             ("capture_motion_state", capture_motion_state), ("camera_T_target", camera_T_target),
         ):
             object.__setattr__(self, name, value)

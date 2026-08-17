@@ -8,11 +8,15 @@
 
 请求固定为 `protocol_version=1`、`type=capture_request`，并包含 `request_id`、`camera_frame`、`timestamp`。响应只能是：
 
-- `target_detection`：同一 `request_id`、`frame_id`、正深度 `position_mm`，可选 `orientation`、`confidence`、`target_id`；
+- `target_detection`：同一 `request_id`、`frame_id`、正深度 `position_mm`，可选 `orientation`、`confidence`、`target_id`，并用 `size_class=normal|oversized` 标记尺寸类别；
 - `no_target`：同一 `request_id` 和非空 `reason`；
 - `error`：同一 `request_id`、`code`、`message`。
 
-`orientation=null` 表示视觉未提供方向；上层不得据此伪造 yaw。实现严格拒绝未知/缺失字段、非有限数、非正深度、错误版本、request mismatch、非 UTF-8、malformed JSON、超长消息、timeout 和断线。
+`orientation=null` 表示视觉未提供方向；上层不得据此伪造 yaw。新视觉程序必须发送
+`size_class`；仅为兼容旧视觉程序允许缺失并按 `normal` 处理。字段为 `null` 或未知值会被
+拒绝。过小目标不进入候选集合，只有过小目标时返回 `no_target`，建议使用
+`reason=below_minimum_size`。实现继续严格拒绝其他未知/缺失字段、非有限数、非正深度、
+错误版本、request mismatch、非 UTF-8、malformed JSON、超长消息、timeout 和断线。
 
 ## 安全边界
 

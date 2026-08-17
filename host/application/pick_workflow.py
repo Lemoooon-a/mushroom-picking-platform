@@ -118,6 +118,7 @@ class VisionPickWorkflow:
             orientation=result.orientation,
             confidence=result.confidence,
             target_id=result.target_id,
+            size_class=result.size_class,
             capture_axis_state=snapshot.axis_state,
             capture_motion_state=CaptureMotionState.STATIONARY,
         )

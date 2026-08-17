@@ -151,6 +151,36 @@ class JointHoldSnapshot:
     commanded_max_motor_speed_deg_s: float
 
 
+@dataclass(frozen=True)
+class PreparedJointPositionCommand:
+    """已完成安全预检、等待立即提交的一次性 A4 位置命令。"""
+
+    joint_name: str
+    motor_id: int
+    preparation_id: int
+    state: JointState
+    target_motor_multi_turn_deg: float | None
+    max_motor_speed_deg_s: float | None
+
+    def __post_init__(self) -> None:
+        target = self.target_motor_multi_turn_deg
+        speed = self.max_motor_speed_deg_s
+        if (target is None) != (speed is None):
+            raise ValueError(
+                "prepared position target and speed must both be set or both be None"
+            )
+        if target is not None:
+            assert speed is not None
+            if not math.isfinite(target) or not math.isfinite(speed) or speed <= 0:
+                raise ValueError(
+                    "prepared position target and speed must be finite and positive"
+                )
+
+    @property
+    def command_required(self) -> bool:
+        return self.target_motor_multi_turn_deg is not None
+
+
 def wrap_360(angle_deg: float) -> float:
     """将有限角度归一化到 ``[0, 360)``。"""
 
@@ -264,6 +294,8 @@ class CanRotaryJoint:
         self.config = config
         self._initialized = False
         self._last_state: JointState | None = None
+        self._next_preparation_id = 1
+        self._pending_preparation_id: int | None = None
 
     def initialize(
         self,
@@ -275,6 +307,7 @@ class CanRotaryJoint:
     ) -> JointState:
         """用至少三次稳定的 0x94 只读样本建立绝对关节位置。"""
 
+        self._pending_preparation_id = None
         if stable_samples < 3:
             raise ValueError("stable_samples must be at least 3")
         if max_attempts < stable_samples:
@@ -376,6 +409,7 @@ class CanRotaryJoint:
     def enable(self) -> None:
         """发送 0x88，并通过 0x9A 确认保持使能。"""
 
+        self._pending_preparation_id = None
         self.driver.enable()
         if not self.is_enabled():
             raise JointEnableStateError(
@@ -386,6 +420,7 @@ class CanRotaryJoint:
     def disable(self) -> None:
         """发送 0x80，并通过 0x9A 确认已经移除保持力。"""
 
+        self._pending_preparation_id = None
         self.driver.disable()
         if self.is_enabled():
             raise JointEnableStateError(
@@ -400,6 +435,17 @@ class CanRotaryJoint:
     ) -> JointState:
         """提交非阻塞位置目标；仅等待通信应答，不等待机械到位。"""
 
+        prepared = self.prepare_position_command(position_rad, velocity_rad_s)
+        return self.submit_prepared_position_command(prepared)
+
+    def prepare_position_command(
+        self,
+        position_rad: float,
+        velocity_rad_s: float,
+    ) -> PreparedJointPositionCommand:
+        """完成实时安全预检和目标计算，但不发送 A4。"""
+
+        self._pending_preparation_id = None
         self._validate_command(position_rad, velocity_rad_s)
         self._require_initialized()
         single = self.driver.read_single_turn_position()
@@ -442,8 +488,7 @@ class CanRotaryJoint:
 
         delta_joint_rad = position_rad - current.position_rad
         if abs(delta_joint_rad) <= self.config.position_tolerance_rad:
-            self._last_state = current
-            return current
+            return self._prepared_position_command(current)
         current_multi_turn_deg = self.driver.read_multi_turn_position_deg()
         confirmed_single = self.driver.read_single_turn_position()
         confirmed_output_abs_deg = self._output_abs_deg(confirmed_single)
@@ -467,8 +512,7 @@ class CanRotaryJoint:
                 status=status,
                 fault=fault,
             )
-            self._last_state = current
-            return current
+            return self._prepared_position_command(current)
         current = self._compose_state(
             single=confirmed_single,
             position_rad=confirmed_position_rad,
@@ -486,16 +530,70 @@ class CanRotaryJoint:
         max_motor_speed_deg_s = joint_velocity_to_motor_speed_deg_s(
             velocity_rad_s, self.config
         )
-        self.driver.command_position(
-            target_motor_deg=target_motor_multi_turn_deg,
+        return self._prepared_position_command(
+            current,
+            target_motor_multi_turn_deg=target_motor_multi_turn_deg,
             max_motor_speed_deg_s=max_motor_speed_deg_s,
         )
-        self._last_state = current
-        return current
+
+    def submit_prepared_position_command(
+        self,
+        prepared: PreparedJointPositionCommand,
+    ) -> JointState:
+        """立即提交本关节的一次性准备命令，不再次读取实时反馈。"""
+
+        if not isinstance(prepared, PreparedJointPositionCommand):
+            raise JointConfigurationError(
+                f"joint {self.config.name}: prepared command has an invalid type"
+            )
+        if (
+            prepared.joint_name != self.config.name
+            or prepared.motor_id != self.config.motor_id
+        ):
+            raise JointConfigurationError(
+                f"joint {self.config.name} motor ID {self.config.motor_id}: prepared "
+                f"command belongs to joint {prepared.joint_name} motor ID "
+                f"{prepared.motor_id}"
+            )
+        if prepared.preparation_id != self._pending_preparation_id:
+            raise JointConfigurationError(
+                f"joint {self.config.name} motor ID {self.config.motor_id}: prepared "
+                "command is stale or has already been submitted"
+            )
+        self._pending_preparation_id = None
+        if prepared.command_required:
+            assert prepared.target_motor_multi_turn_deg is not None
+            assert prepared.max_motor_speed_deg_s is not None
+            self.driver.command_position(
+                target_motor_deg=prepared.target_motor_multi_turn_deg,
+                max_motor_speed_deg_s=prepared.max_motor_speed_deg_s,
+            )
+        self._last_state = prepared.state
+        return prepared.state
+
+    def _prepared_position_command(
+        self,
+        state: JointState,
+        *,
+        target_motor_multi_turn_deg: float | None = None,
+        max_motor_speed_deg_s: float | None = None,
+    ) -> PreparedJointPositionCommand:
+        preparation_id = self._next_preparation_id
+        self._next_preparation_id += 1
+        self._pending_preparation_id = preparation_id
+        return PreparedJointPositionCommand(
+            joint_name=self.config.name,
+            motor_id=self.config.motor_id,
+            preparation_id=preparation_id,
+            state=state,
+            target_motor_multi_turn_deg=target_motor_multi_turn_deg,
+            max_motor_speed_deg_s=max_motor_speed_deg_s,
+        )
 
     def stop(self) -> JointHoldSnapshot:
         """读取当前位置并提交 A4 位置保持；绝不回退到 0x81。"""
 
+        self._pending_preparation_id = None
         self._require_initialized()
         fault = self.driver.read_fault()
         if fault.error_state != 0:

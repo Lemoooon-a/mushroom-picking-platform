@@ -802,7 +802,12 @@ class MushroomRobotService:
         try:
             observation = workflow.request_observation()
             self._finish_operation(token, final_state=RobotServiceState.READY)
-            self._record("observe", request_id=observation.request_id, final_status="ready")
+            self._record(
+                "observe",
+                request_id=observation.request_id,
+                size_class=observation.size_class,
+                final_status="ready",
+            )
             return observation
         except Exception as exc:
             self._finish_operation(token, final_state=RobotServiceState.READY)
@@ -1601,9 +1606,12 @@ class MushroomRobotService:
                 "place planning",
                 operation_kind=operation_kind,
             )
+            selected_place_pose = scan_profile.place_pose_for(
+                observation.size_class
+            )
             place_and_return_motions = self._controller.plan_base_target_sequence(
-                (scan_profile.place_pose, scan_pose),
-                # 固定放置点是唯一 Tray 区外例外；扫描位仍受正常门禁。
+                (selected_place_pose, scan_pose),
+                # 两个固定放置点是唯二 Tray 区外例外；扫描位仍受正常门禁。
                 enforce_tray_workspace=(False, True),
             )
             self._require_scan_operation_state(
@@ -1630,6 +1638,8 @@ class MushroomRobotService:
         self._record(
             "scan-pick-target",
             request_id=observation.request_id,
+            size_class=observation.size_class,
+            selected_place_pose=selected_place_pose,
             selected_plan=pick_plan,
             final_status=(
                 "simulated" if self.mode is RobotServiceMode.DRY_RUN else "placed"

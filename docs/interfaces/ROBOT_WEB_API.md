@@ -106,8 +106,10 @@ Return 仅在 execute/READY 启用。当前没有 WebSocket、后台任务队列
 `final_reason="no_target"`；目标规划被拒绝时返回 HTTP 200，`final_reason` 为
 `target_rejected:<错误类型>`。运动、吸盘或通信故障仍返回错误响应并由 Service 进入 FAULT。
 由于当前没有真空反馈，`picked_count=1` 只表示动作与吸盘命令完成，不表示物理抓取已经验证。
-固定放置点为 Base `(250, 1000, 150, 0)`；它是唯一的 Tray 区外放置例外。抓取回撤后直接
-到达该点并释放，然后直接返回当前扫描位，不包含放置前后回撤。
+普通目标放置点为 Base `(150, 1000, 150, 0)`，过大目标放置点为
+Base `(450, 1000, 150, 0)`；视觉 `size_class` 决定放置分流。两个放置点是仅有的 Tray
+区外放置例外。抓取回撤后直接到达所选点并释放，然后直接返回当前扫描位，不包含放置前后
+回撤。
 
 ## 4. 请求示例
 
@@ -227,7 +229,9 @@ curl -X POST http://127.0.0.1:8000/api/vision/observe
 curl -X POST http://127.0.0.1:8000/api/vision/plan
 ```
 
-`/api/vision/plan` 会重新拍摄一帧，并返回 `request_id`、Camera 点、capture 五轴快照，以及
+`/api/vision/observe` 的观察对象和 `/api/vision/plan` 的 `camera` 区块都会返回
+`size_class=normal|oversized`。`/api/vision/plan` 会重新拍摄一帧，并返回 `request_id`、
+Camera 点、capture 五轴快照，以及
 Camera 下的 `target_compensation_camera_mm`，以及 Base 下的 `raw_position_mm`、
 `target_compensation_base_mm` 和最终 `position_mm`。最终点用于
 现有 Base planner；响应还包含 `tool_T_camera` 的 provisional/validated 状态、完整计划和最终

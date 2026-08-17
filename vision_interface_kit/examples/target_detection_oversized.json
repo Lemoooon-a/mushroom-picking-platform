@@ -4,7 +4,7 @@
   "request_id": "capture-000001",
   "frame_id": "camera_color_optical_frame",
   "timestamp": 1786060800.125,
-  "target_id": "mushroom-001",
+  "target_id": "mushroom-oversized-001",
   "confidence": 0.95,
   "position_mm": {
     "x": 12.4,
@@ -12,5 +12,5 @@
     "z": 428.7
   },
   "orientation": null,
-  "size_class": "normal"
+  "size_class": "oversized"
 }

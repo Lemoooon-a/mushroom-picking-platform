@@ -18,6 +18,7 @@ from robot.joint import (
     JointMotorFaultError,
     JointMotorMovingError,
     JointPositionOutOfRangeError,
+    PreparedJointPositionCommand,
     joint_position_to_output_abs_deg,
     joint_velocity_to_motor_speed_deg_s,
     resolve_output_angle_to_joint_position,
@@ -392,6 +393,82 @@ class InitializationTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
+    def test_prepare_reads_safety_snapshot_without_sending_a4(self) -> None:
+        driver = FakeDriver(multi_turn_deg=100.0)
+        joint = initialized_joint(driver, make_config())
+        driver.events.clear()
+
+        prepared = joint.prepare_position_command(
+            math.radians(5),
+            math.radians(1),
+        )
+
+        self.assertIsInstance(prepared, PreparedJointPositionCommand)
+        self.assertTrue(prepared.command_required)
+        self.assertEqual(
+            driver.events,
+            ["single", "status", "fault", "multi", "single"],
+        )
+        self.assertEqual(driver.commands, [])
+
+    def test_submit_prepared_sends_once_without_feedback_reads(self) -> None:
+        driver = FakeDriver(multi_turn_deg=100.0)
+        joint = initialized_joint(driver, make_config())
+        prepared = joint.prepare_position_command(
+            math.radians(5),
+            math.radians(1),
+        )
+        driver.events.clear()
+
+        returned = joint.submit_prepared_position_command(prepared)
+
+        self.assertEqual(driver.events, ["command"])
+        self.assertEqual(len(driver.commands), 1)
+        self.assertIs(returned, prepared.state)
+        with self.assertRaisesRegex(JointConfigurationError, "already been submitted"):
+            joint.submit_prepared_position_command(prepared)
+
+    def test_prepared_no_op_submits_without_a4_or_feedback_reads(self) -> None:
+        driver = FakeDriver(multi_turn_deg=100.0)
+        joint = initialized_joint(driver, make_config())
+        prepared = joint.prepare_position_command(
+            math.radians(0.05),
+            math.radians(1),
+        )
+        driver.events.clear()
+
+        returned = joint.submit_prepared_position_command(prepared)
+
+        self.assertFalse(prepared.command_required)
+        self.assertEqual(driver.events, [])
+        self.assertEqual(driver.commands, [])
+        self.assertIs(returned, prepared.state)
+
+    def test_prepared_command_cannot_cross_joint_boundary(self) -> None:
+        shoulder = initialized_joint(FakeDriver(), make_config())
+        elbow_config = make_config(name="elbow", motor_id=2, direction_sign=-1)
+        elbow = initialized_joint(FakeDriver(motor_id=2), elbow_config)
+        prepared = shoulder.prepare_position_command(
+            math.radians(5),
+            math.radians(1),
+        )
+
+        with self.assertRaisesRegex(JointConfigurationError, "belongs to joint"):
+            elbow.submit_prepared_position_command(prepared)
+
+    def test_stop_invalidates_prepared_position_command(self) -> None:
+        driver = FakeDriver(multi_turn_deg=100.0)
+        joint = initialized_joint(driver, make_config())
+        prepared = joint.prepare_position_command(
+            math.radians(5),
+            math.radians(1),
+        )
+
+        joint.stop()
+
+        with self.assertRaisesRegex(JointConfigurationError, "stale"):
+            joint.submit_prepared_position_command(prepared)
+
     def test_enable_disable_and_state_use_protocol_defined_values(self) -> None:
         driver = FakeDriver(motor_state=0x10)
         joint = CanRotaryJoint(driver, make_config())  # type: ignore[arg-type]

@@ -24,6 +24,7 @@ from kinematics.frame_chain import RobotAxisState
 from vision.gateway import FakeVisionGateway
 from vision.observation import CaptureMotionState, Quaternion, Vector3, VisionTargetObservation
 from vision.protocol import NoTarget, TargetDetection, VisionError
+from vision.target_size import TargetSizeClass
 from vision.target_resolver import HandEyeCalibrationUnavailable, VisionTargetResolver
 
 
@@ -236,6 +237,34 @@ class PickWorkflowTests(unittest.TestCase):
         result = workflow.run(self.profile, execute=False)
         self.assertIs(result.outcome, PickOutcome.PLANNED)
         self.assertFalse(any(isinstance(item, tuple) and item[0] == "execute" for item in self.backend.calls))
+
+    def test_oversized_class_reaches_observation_without_changing_pick_target(self) -> None:
+        normal = self.workflow(
+            TargetDetection(
+                "capture-000001",
+                "camera_optical",
+                100,
+                "target",
+                0.9,
+                Vector3(10, 20, 50),
+            )
+        ).request_observation()
+        oversized = self.workflow(
+            TargetDetection(
+                "capture-000001",
+                "camera_optical",
+                100,
+                "target",
+                0.9,
+                Vector3(10, 20, 50),
+                size_class=TargetSizeClass.OVERSIZED,
+            )
+        ).request_observation()
+
+        self.assertIs(oversized.size_class, TargetSizeClass.OVERSIZED)
+        normal_plan = self.planner().plan(normal, self.profile)
+        oversized_plan = self.planner().plan(oversized, self.profile)
+        self.assertEqual(normal_plan.contact_target, oversized_plan.contact_target)
 
     def test_no_target_and_state_change_do_not_plan(self) -> None:
         with self.assertRaises(NoVisionTarget):

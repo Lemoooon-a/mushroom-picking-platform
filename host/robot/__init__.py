@@ -13,6 +13,7 @@ from .joint import (
     JointMotorMovingError,
     JointPositionOutOfRangeError,
     JointState,
+    PreparedJointPositionCommand,
 )
 from .feetech_rotation import (
     FeetechRotationAxis,
@@ -51,6 +52,7 @@ __all__ = [
     "JointMotorMovingError",
     "JointPositionOutOfRangeError",
     "JointState",
+    "PreparedJointPositionCommand",
     "NoJointLimitSolutionError",
     "Planar2RArmController",
     "PlanarArmCommandError",

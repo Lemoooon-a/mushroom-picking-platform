@@ -33,7 +33,16 @@ class RobotRuntimeConfigTests(unittest.TestCase):
                 config.scan_pick.place_pose.z_mm,
                 config.scan_pick.place_pose.yaw_deg,
             ),
-            (250.0, 1000.0, 150.0, 0.0),
+            (150.0, 1000.0, 150.0, 0.0),
+        )
+        self.assertEqual(
+            (
+                config.scan_pick.oversized_place_pose.x_mm,
+                config.scan_pick.oversized_place_pose.y_mm,
+                config.scan_pick.oversized_place_pose.z_mm,
+                config.scan_pick.oversized_place_pose.yaw_deg,
+            ),
+            (450.0, 1000.0, 150.0, 0.0),
         )
         self.assertFalse(hasattr(config.scan_pick, "place_approach_height_mm"))
         self.assertTrue(config.recording.enabled)

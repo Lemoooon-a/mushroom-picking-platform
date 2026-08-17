@@ -8,6 +8,7 @@ from vision.protocol import (
     CaptureRequest, NoTarget, TargetDetection, VisionError, VisionProtocolError,
     decode_message, encode_message,
 )
+from vision.target_size import TargetSizeClass
 
 
 class VisionProtocolTests(unittest.TestCase):
@@ -38,6 +39,34 @@ class VisionProtocolTests(unittest.TestCase):
             decode_message(encode_message(all_optional_null)),
             all_optional_null,
         )
+
+    def test_detection_size_class_is_compatible_and_strict(self) -> None:
+        oversized = TargetDetection(
+            "capture-1",
+            "camera_optical",
+            12.5,
+            "mushroom-1",
+            0.95,
+            Vector3(1, 2, 3),
+            size_class=TargetSizeClass.OVERSIZED,
+        )
+        self.assertEqual(
+            decode_message(encode_message(oversized)).size_class,
+            TargetSizeClass.OVERSIZED,
+        )
+
+        legacy = json.loads(encode_message(oversized))
+        legacy.pop("size_class")
+        self.assertEqual(
+            decode_message(json.dumps(legacy)).size_class,
+            TargetSizeClass.NORMAL,
+        )
+
+        for invalid in (None, "large", 1):
+            with self.subTest(invalid=invalid):
+                payload = dict(legacy, size_class=invalid)
+                with self.assertRaisesRegex(VisionProtocolError, "size_class"):
+                    decode_message(json.dumps(payload))
 
     def test_no_target_and_error(self) -> None:
         self.assertEqual(decode_message(encode_message(NoTarget("capture-1", "no_detection"))), NoTarget("capture-1", "no_detection"))

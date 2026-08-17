@@ -63,6 +63,7 @@ from robot.joint import (
     JointMotorFaultError,
     JointMotorMovingError,
     JointPositionOutOfRangeError,
+    PreparedJointPositionCommand,
 )
 
 
@@ -588,17 +589,23 @@ class UnifiedMotionController:
         validated = self._validate_positions(target)
         for item in target.targets:
             self.authorization.require_axis_motion(item.axis)
-        if any(item.axis in _ROTARY_AXES for item in validated):
-            self._require_rotary_motion_enabled()
         group_id = uuid4().hex
         with self._lock:
             for item in validated:
                 self._ensure_axis_idle(item.axis)
+            if any(item.axis in _ROTARY_AXES for item in validated):
+                self._require_rotary_motion_enabled()
             submitted: list[MotionCommandHandle] = []
             try:
                 validated = self._coordinate_default_can_velocities(validated)
+                prepared_can_commands = self._prepare_can_position_commands(validated)
                 for item in validated:
-                    submitted.append(self._submit_validated(item))
+                    submitted.append(
+                        self._submit_validated(
+                            item,
+                            prepared_can_command=prepared_can_commands.get(item.axis),
+                        )
+                    )
             except UnifiedMotionError as exc:
                 result = self._group_submission_failure(
                     group_id,
@@ -1085,7 +1092,12 @@ class UnifiedMotionController:
             self._prune_records()
         return self.wait(handle, timeout_s=timeout_s)
 
-    def _submit_validated(self, target: AxisTarget) -> MotionCommandHandle:
+    def _submit_validated(
+        self,
+        target: AxisTarget,
+        *,
+        prepared_can_command: PreparedJointPositionCommand | None = None,
+    ) -> MotionCommandHandle:
         backend = self._require_backend(target.axis)
         try:
             token: object | None
@@ -1102,11 +1114,24 @@ class UnifiedMotionController:
                     ),
                 )
             elif target.axis in _CAN_AXES:
-                velocity, _acceleration = self._resolve_motion_parameters(target)
-                token = backend.command_position(
-                    math.radians(target.position),
-                    math.radians(velocity),
-                )
+                if prepared_can_command is None:
+                    velocity, _acceleration = self._resolve_motion_parameters(target)
+                    token = backend.command_position(
+                        math.radians(target.position),
+                        math.radians(velocity),
+                    )
+                else:
+                    submit_prepared = getattr(
+                        backend,
+                        "submit_prepared_position_command",
+                        None,
+                    )
+                    if not callable(submit_prepared):
+                        raise JointError(
+                            f"axis {target.axis.value} backend cannot submit a prepared "
+                            "position command"
+                        )
+                    token = submit_prepared(prepared_can_command)
             else:
                 speed_raw = backend.config.max_speed_raw
                 token = backend.command_position(
@@ -1128,6 +1153,35 @@ class UnifiedMotionController:
         self._active_by_axis[target.axis] = handle.command_id
         self._prune_records()
         return handle
+
+    def _prepare_can_position_commands(
+        self,
+        targets: tuple[AxisTarget, ...],
+    ) -> dict[AxisName, PreparedJointPositionCommand]:
+        """在发送任一组目标前完成所有 MG4010 实时预检和目标计算。"""
+
+        prepared: dict[AxisName, PreparedJointPositionCommand] = {}
+        for target in targets:
+            if target.axis not in _CAN_AXES:
+                continue
+            backend = self._require_backend(target.axis)
+            prepare = getattr(backend, "prepare_position_command", None)
+            if not callable(prepare):
+                raise UnifiedMotionError(
+                    MotionErrorCode.BACKEND_ERROR,
+                    f"axis {target.axis.value} backend cannot prepare a position command",
+                    axis=target.axis,
+                )
+            velocity, _acceleration = self._resolve_motion_parameters(target)
+            try:
+                command = prepare(
+                    math.radians(target.position),
+                    math.radians(velocity),
+                )
+            except Exception as exc:
+                raise self._submission_error(target.axis, exc) from exc
+            prepared[target.axis] = command
+        return prepared
 
     def _submit_absolute_locked(
         self,

@@ -23,6 +23,7 @@ from motion.unified_protocol import (
 )
 from scripts import robot_web_api
 from vision.observation import CaptureMotionState, Vector3, VisionTargetObservation
+from vision.target_size import TargetSizeClass
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,7 @@ class FakeRobotService:
             position_mm=Vector3(20.0, -15.0, 450.0),
             confidence=0.95,
             target_id=None,
+            size_class=TargetSizeClass.OVERSIZED,
             orientation=None,
             capture_axis_state=RobotAxisState(1.0, -2.0, 3.0, 4.0, 5.0),
             capture_motion_state=CaptureMotionState.STATIONARY,
@@ -348,6 +350,7 @@ class RobotWebApiTests(unittest.TestCase):
             payload["camera"]["position_mm"],
             {"x": 20.0, "y": -15.0, "z": 450.0},
         )
+        self.assertEqual(payload["camera"]["size_class"], "oversized")
         self.assertEqual(
             payload["capture_joint_state"],
             {

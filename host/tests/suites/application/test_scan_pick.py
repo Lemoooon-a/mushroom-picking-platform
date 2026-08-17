@@ -21,6 +21,7 @@ from kinematics.frame_chain import RobotAxisState
 from vision.gateway import FakeVisionGateway
 from vision.observation import CaptureMotionState, Vector3
 from vision.protocol import NoTarget, TargetDetection
+from vision.target_size import TargetSizeClass
 from vision.target_resolver import VisionTargetResolver
 
 
@@ -29,6 +30,7 @@ class _ScanBackend:
         self.pose = BaseToolTarget(0.0, 0.0, 0.0, 0.0)
         self.calls: list[object] = []
         self.grip_error: Exception | None = None
+        self.fail_sequence_target: BaseToolTarget | None = None
 
     def startup(self) -> None:
         self.calls.append("startup")
@@ -43,6 +45,8 @@ class _ScanBackend:
 
     def plan_base_sequence(self, targets):
         self.calls.append(("plan_sequence", targets))
+        if self.fail_sequence_target in targets:
+            raise ValueError("placement planning failed")
         return targets
 
     def execute_base_plan(self, plan):
@@ -154,7 +158,8 @@ class ScanAndPickTests(unittest.TestCase):
                 (0.0, 100.0),
                 (0.0, 10.0, 20.0, 30.0),
                 0.0,
-                BaseToolTarget(250.0, 1000.0, 150.0, 0.0),
+                BaseToolTarget(150.0, 1000.0, 150.0, 0.0),
+                BaseToolTarget(450.0, 1000.0, 150.0, 0.0),
                 max_picks,
                 scan_settle_time_s,
             ),
@@ -164,7 +169,7 @@ class ScanAndPickTests(unittest.TestCase):
         return service, backend, observed_poses
 
     @staticmethod
-    def target(request):
+    def target(request, *, size_class=TargetSizeClass.NORMAL):
         return TargetDetection(
             request.request_id,
             request.camera_frame,
@@ -173,6 +178,7 @@ class ScanAndPickTests(unittest.TestCase):
             0.95,
             Vector3(1.0, 2.0, 3.0),
             None,
+            size_class=size_class,
         )
 
     @unittest.mock.patch("application.robot_service.time.sleep")
@@ -335,6 +341,66 @@ class ScanAndPickTests(unittest.TestCase):
         )
         self.assertIs(service.state, RobotServiceState.READY)
 
+    def test_pick_one_routes_oversized_target_to_oversized_place_pose(self) -> None:
+        service, backend, _ = self.make_service(
+            lambda request: self.target(
+                request,
+                size_class=TargetSizeClass.OVERSIZED,
+            )
+        )
+        expected_scan = service.scan_pick_profile.scan_poses[0]
+        oversized_place = service.scan_pick_profile.oversized_place_pose
+
+        result = service.pick_one_at_scan_position(1)
+
+        self.assertEqual(result.total_picked, 1)
+        self.assertIn(("execute", oversized_place), backend.calls)
+        self.assertNotIn(("execute", service.scan_pick_profile.place_pose), backend.calls)
+        self.assertEqual(backend.pose, expected_scan)
+
+    def test_scan_pick_routes_oversized_target_then_reobserves(self) -> None:
+        calls = 0
+
+        def responder(request):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return self.target(
+                    request,
+                    size_class=TargetSizeClass.OVERSIZED,
+                )
+            return NoTarget(request.request_id, "empty")
+
+        service, backend, _ = self.make_service(responder)
+
+        result = service.scan_and_pick()
+
+        self.assertEqual(result.total_picked, 1)
+        self.assertIn(
+            ("execute", service.scan_pick_profile.oversized_place_pose),
+            backend.calls,
+        )
+        self.assertNotIn(
+            ("execute", service.scan_pick_profile.place_pose),
+            backend.calls,
+        )
+
+    def test_oversized_place_planning_failure_stops_without_release(self) -> None:
+        service, backend, _ = self.make_service(
+            lambda request: self.target(
+                request,
+                size_class=TargetSizeClass.OVERSIZED,
+            )
+        )
+        backend.fail_sequence_target = service.scan_pick_profile.oversized_place_pose
+
+        with self.assertRaisesRegex(ValueError, "placement planning failed"):
+            service.pick_one_at_scan_position(1)
+
+        self.assertNotIn("release", backend.calls)
+        self.assertIn("stop", backend.calls)
+        self.assertIs(service.state, RobotServiceState.FAULT)
+
     def test_fixed_place_is_the_only_tray_workspace_exception(self) -> None:
         service, backend, _ = self.make_service(self.target)
         place_pose = service.scan_pick_profile.place_pose
@@ -429,53 +495,59 @@ class ScanAndPickTests(unittest.TestCase):
 
 
 class ScanPickOfflineReachabilityTests(unittest.TestCase):
-    def test_formal_place_pose_round_trips_from_all_scan_positions(self) -> None:
+    def test_both_place_poses_round_trip_from_all_scan_positions(self) -> None:
         runtime_config = load_robot_runtime_config()
         controller, backend = create_offline_planning_controller(
             runtime_config=runtime_config
         )
         backend.startup()
-        place_pose = runtime_config.scan_pick.place_pose
+        place_poses = (
+            runtime_config.scan_pick.place_pose,
+            runtime_config.scan_pick.oversized_place_pose,
+        )
 
-        with self.assertRaises(TargetOutsideTrayWorkspace):
-            controller.plan_base_target(place_pose)
+        for place_pose in place_poses:
+            with self.assertRaises(TargetOutsideTrayWorkspace):
+                controller.plan_base_target(place_pose)
 
-        for scan_index, scan_pose in enumerate(
-            runtime_config.scan_pick.scan_poses,
-            start=1,
-        ):
-            with self.subTest(scan_index=scan_index):
-                controller.execute_base_plan(controller.plan_base_target(scan_pose))
-                place_plan, return_plan = controller.plan_base_target_sequence(
-                    (place_pose, scan_pose),
-                    enforce_tray_workspace=(False, True),
-                )
-                place_solution = place_plan.stages[-1].solution
-                self.assertLessEqual(place_solution.slide_mm, 799.988)
-                self.assertGreaterEqual(place_solution.local_x_mm, 50.0)
-                self.assertLessEqual(place_solution.local_x_mm, 600.0)
-                self.assertTrue(
-                    150.0 <= abs(place_solution.local_y_mm) <= 350.0
-                )
-                controller.execute_base_plan(place_plan)
-                controller.execute_base_plan(return_plan)
+            for scan_index, scan_pose in enumerate(
+                runtime_config.scan_pick.scan_poses,
+                start=1,
+            ):
+                with self.subTest(place_x=place_pose.x_mm, scan_index=scan_index):
+                    controller.execute_base_plan(
+                        controller.plan_base_target(scan_pose)
+                    )
+                    place_plan, return_plan = controller.plan_base_target_sequence(
+                        (place_pose, scan_pose),
+                        enforce_tray_workspace=(False, True),
+                    )
+                    place_solution = place_plan.stages[-1].solution
+                    self.assertLessEqual(place_solution.slide_mm, 799.988)
+                    self.assertGreaterEqual(place_solution.local_x_mm, 50.0)
+                    self.assertLessEqual(place_solution.local_x_mm, 600.0)
+                    self.assertTrue(
+                        150.0 <= abs(place_solution.local_y_mm) <= 350.0
+                    )
+                    controller.execute_base_plan(place_plan)
+                    controller.execute_base_plan(return_plan)
 
-                assert backend.axis_state is not None
-                returned = backend.solver.forward_kinematics_base(
-                    backend.axis_state
-                )
-                self.assertAlmostEqual(
-                    float(returned.translation_mm[0]),
-                    scan_pose.x_mm,
-                )
-                self.assertAlmostEqual(
-                    float(returned.translation_mm[1]),
-                    scan_pose.y_mm,
-                )
-                self.assertAlmostEqual(
-                    float(returned.translation_mm[2]),
-                    scan_pose.z_mm,
-                )
+                    assert backend.axis_state is not None
+                    returned = backend.solver.forward_kinematics_base(
+                        backend.axis_state
+                    )
+                    self.assertAlmostEqual(
+                        float(returned.translation_mm[0]),
+                        scan_pose.x_mm,
+                    )
+                    self.assertAlmostEqual(
+                        float(returned.translation_mm[1]),
+                        scan_pose.y_mm,
+                    )
+                    self.assertAlmostEqual(
+                        float(returned.translation_mm[2]),
+                        scan_pose.z_mm,
+                    )
 
 
 if __name__ == "__main__":

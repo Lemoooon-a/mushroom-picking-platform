@@ -30,6 +30,11 @@ from motion.unified_protocol import (
     RelativeAxisTarget,
 )
 from motion.suction import SuctionMode, SuctionStatus
+from robot.joint import (
+    JointInitializationError,
+    JointMotorFaultError,
+    JointMotorMovingError,
+)
 
 
 class FakeClock:
@@ -99,12 +104,54 @@ class FakeJoint:
         self.enabled = True
         self.enable_calls = 0
         self.disable_calls = 0
+        self.prepare_states: list[object] = []
+        self.prepare_reads = 0
+        self.prepared_commands: list[object] = []
+        self.command_events: list[str] | None = None
 
     def command_position(self, position_rad: float, velocity_rad_s: float) -> object:
         if self.command_error is not None:
             raise self.command_error
         self.commands.append((position_rad, velocity_rad_s))
         return object()
+
+    def prepare_position_command(
+        self,
+        position_rad: float,
+        velocity_rad_s: float,
+    ) -> object:
+        self.prepare_reads += 1
+        if self.command_events is not None:
+            self.command_events.append(f"prepare:{self.config.name}")
+        state = (
+            self.prepare_states.pop(0)
+            if self.prepare_states
+            else joint_state(0.0)
+        )
+        if not state.position_valid:
+            raise JointInitializationError("position invalid")
+        if state.error_state:
+            raise JointMotorFaultError("joint faulted")
+        if state.moving:
+            raise JointMotorMovingError("joint moving during group preflight")
+        prepared = SimpleNamespace(
+            owner=self,
+            position_rad=position_rad,
+            velocity_rad_s=velocity_rad_s,
+            state=state,
+        )
+        self.prepared_commands.append(prepared)
+        return prepared
+
+    def submit_prepared_position_command(self, prepared: object) -> object:
+        if prepared.owner is not self:
+            raise RuntimeError("prepared command belongs to another joint")
+        if self.command_events is not None:
+            self.command_events.append(f"submit:{self.config.name}")
+        if self.command_error is not None:
+            raise self.command_error
+        self.commands.append((prepared.position_rad, prepared.velocity_rad_s))
+        return prepared.state
 
     def get_state(self) -> object:
         self.state_reads += 1
@@ -607,6 +654,21 @@ class SuctionAndRotaryLifecycleTests(ControllerTestCase):
                 AxisTarget(AxisName.SHOULDER, 1.0, 2.0)
             )
         self.assertEqual(self.shoulder.commands, [])
+
+        with self.assertRaisesRegex(
+            UnifiedMotionError,
+            'Run "joints enable" before motion',
+        ):
+            self.controller.submit_positions(
+                MultiAxisTarget(
+                    (
+                        AxisTarget(AxisName.SHOULDER, 1.0, 2.0),
+                        AxisTarget(AxisName.ELBOW, -1.0, 2.0),
+                    )
+                )
+            )
+        self.assertEqual(self.shoulder.prepare_reads, 0)
+        self.assertEqual(self.elbow.prepare_reads, 0)
 
     def test_stop_never_disables_holding_torque(self) -> None:
         self.controller.stop(AxisName.SHOULDER)
@@ -1581,6 +1643,77 @@ class MultiAxisTests(ControllerTestCase):
             tuple(item.axis for item in handle.commands),
             (AxisName.ELBOW, AxisName.SHOULDER),
         )
+
+    def test_can_group_prepares_both_joints_before_either_submission(self) -> None:
+        events: list[str] = []
+        self.shoulder.command_events = events
+        self.elbow.command_events = events
+
+        self.controller.submit_positions(
+            MultiAxisTarget(
+                (
+                    AxisTarget(AxisName.SHOULDER, 20.0, 4.0),
+                    AxisTarget(AxisName.ELBOW, -10.0, 3.0),
+                )
+            )
+        )
+
+        self.assertEqual(
+            events,
+            [
+                "prepare:shoulder",
+                "prepare:elbow",
+                "submit:shoulder",
+                "submit:elbow",
+            ],
+        )
+
+    def test_coupling_after_shoulder_submit_does_not_recheck_prepared_elbow(self) -> None:
+        original_submit = self.shoulder.submit_prepared_position_command
+
+        def submit_shoulder(prepared: object) -> object:
+            self.elbow.prepare_states.append(joint_state(-1.0, moving=True))
+            return original_submit(prepared)
+
+        with patch.object(
+            self.shoulder,
+            "submit_prepared_position_command",
+            side_effect=submit_shoulder,
+        ):
+            handle = self.controller.submit_positions(
+                MultiAxisTarget(
+                    (
+                        AxisTarget(AxisName.SHOULDER, 20.0, 4.0),
+                        AxisTarget(AxisName.ELBOW, -10.0, 3.0),
+                    )
+                )
+            )
+
+        self.assertEqual(
+            tuple(command.axis for command in handle.commands),
+            (AxisName.SHOULDER, AxisName.ELBOW),
+        )
+        self.assertEqual(self.elbow.prepare_reads, 1)
+        self.assertEqual(len(self.elbow.prepare_states), 1)
+        self.assertEqual(len(self.elbow.commands), 1)
+
+    def test_moving_elbow_during_group_preflight_rejects_before_target_commands(self) -> None:
+        self.elbow.prepare_states = [joint_state(0.0, moving=True)]
+
+        with self.assertRaises(MultiAxisSubmissionError) as failure:
+            self.controller.submit_positions(
+                MultiAxisTarget(
+                    (
+                        AxisTarget(AxisName.SHOULDER, 20.0, 4.0),
+                        AxisTarget(AxisName.ELBOW, -10.0, 3.0),
+                    )
+                )
+            )
+
+        self.assertEqual(failure.exception.error_code, MotionErrorCode.BUSY)
+        self.assertEqual(failure.exception.axis, AxisName.ELBOW)
+        self.assertEqual(self.shoulder.commands, [])
+        self.assertEqual(self.elbow.commands, [])
 
     def test_get_group_result_polls_without_waiting(self) -> None:
         self.shoulder.states = [joint_state(0.0, moving=True)]

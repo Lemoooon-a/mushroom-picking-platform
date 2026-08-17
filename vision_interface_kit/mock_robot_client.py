@@ -29,10 +29,12 @@ RESPONSE_FIELDS = {
         "confidence",
         "position_mm",
         "orientation",
+        "size_class",
     },
     "no_target": {"protocol_version", "type", "request_id", "reason"},
     "error": {"protocol_version", "type", "request_id", "code", "message"},
 }
+LEGACY_TARGET_FIELDS = RESPONSE_FIELDS["target_detection"] - {"size_class"}
 
 
 class ProtocolError(ValueError):
@@ -120,9 +122,14 @@ def validate_response(message: dict[str, Any], request_id: str) -> None:
             f"request {request_id!r}"
         )
 
-    expected = RESPONSE_FIELDS[message_type]
     actual = set(message)
-    if actual != expected:
+    expected = RESPONSE_FIELDS[message_type]
+    valid_field_sets = (
+        (expected, LEGACY_TARGET_FIELDS)
+        if message_type == "target_detection"
+        else (expected,)
+    )
+    if actual not in valid_field_sets:
         raise ProtocolError(
             f"invalid fields: missing={sorted(expected - actual)}, "
             f"extra={sorted(actual - expected)}"
@@ -140,6 +147,12 @@ def validate_response(message: dict[str, Any], request_id: str) -> None:
 def _validate_target_detection(message: dict[str, Any]) -> None:
     if message["frame_id"] != CAMERA_FRAME:
         raise ProtocolError(f"frame_id must be {CAMERA_FRAME!r}")
+
+    if "size_class" in message and message["size_class"] not in {
+        "normal",
+        "oversized",
+    }:
+        raise ProtocolError("size_class must be 'normal' or 'oversized'")
 
     position = message["position_mm"]
     if not isinstance(position, dict) or set(position) != {"x", "y", "z"}:

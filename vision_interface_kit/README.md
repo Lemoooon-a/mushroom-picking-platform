@@ -26,11 +26,23 @@ Host 发送 `capture_request`，完整示例见 `examples/capture_request.json`�
 
 Vision 必须返回以下三种响应之一：
 
-- `target_detection`：检测到一个目标，示例见 `examples/target_detection.json`；
+- `target_detection`：检测到一个目标，普通和过大目标示例分别见
+  `examples/target_detection.json` 和 `examples/target_detection_oversized.json`；
 - `no_target`：未检测到目标，示例见 `examples/no_target.json`；
 - `error`：相机、推理或其他视觉处理失败，示例见 `examples/error.json`。
 
-所有响应的 `request_id` 必须与请求完全一致。字段不能缺失，也不能增加协议之外的字段。`target_detection` 中的 `timestamp`、`target_id`、`confidence` 和 `orientation` 即使没有值也必须保留，并使用 JSON `null`。
+所有响应的 `request_id` 必须与请求完全一致。除下述旧版 `size_class` 兼容规则外，字段不能
+缺失，也不能增加协议之外的字段。`target_detection` 中的 `timestamp`、`target_id`、
+`confidence` 和 `orientation` 即使没有值也必须保留，并使用 JSON `null`。
+
+`target_detection.size_class` 必须是 `normal` 或 `oversized`：普通目标发送
+`normal`，尺寸过大但仍可抓取的目标发送 `oversized`。新视觉程序必须始终发送该字段；
+后端仅为兼容旧视觉版本而允许字段缺失，并将缺失解释为 `normal`。字段为 `null` 或
+其他值都会拒绝本次响应。过小目标不进入候选集合；只有过小目标时返回 `no_target`，
+建议使用 `reason=below_minimum_size`。
+
+同一画面中的普通和过大目标进入同一候选集合，沿用视觉程序现有排序规则。后端不根据
+尺寸数值重新分类。
 
 ### 目标位置
 

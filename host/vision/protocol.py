@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import math
 from typing import TypeAlias
 
 from vision.observation import Quaternion, Vector3
+from vision.target_size import TargetSizeClass
 
 
 PROTOCOL_VERSION = 1
@@ -40,6 +41,10 @@ class TargetDetection:
     confidence: float | None
     position_mm: Vector3
     orientation: Quaternion | None = None
+    size_class: TargetSizeClass = field(
+        default=TargetSizeClass.NORMAL,
+        kw_only=True,
+    )
     protocol_version: int = PROTOCOL_VERSION
     type: str = "target_detection"
 
@@ -58,6 +63,8 @@ class TargetDetection:
             raise VisionProtocolError("position_mm.z depth must be positive")
         if self.orientation is not None and not isinstance(self.orientation, Quaternion):
             raise TypeError("orientation must be a Quaternion or None")
+        if not isinstance(self.size_class, TargetSizeClass):
+            raise TypeError("size_class must be a TargetSizeClass")
 
 
 @dataclass(frozen=True)
@@ -104,6 +111,7 @@ def encode_message(message: VisionMessage) -> bytes:
                 "x": message.orientation.x, "y": message.orientation.y,
                 "z": message.orientation.z, "w": message.orientation.w,
             },
+            "size_class": message.size_class.value,
         }
     elif isinstance(message, NoTarget):
         payload = {"protocol_version": message.protocol_version, "type": message.type, "request_id": message.request_id, "reason": message.reason}
@@ -137,7 +145,13 @@ def decode_message(payload: bytes | str) -> VisionMessage:
             _keys(root, {"protocol_version", "type", "request_id", "camera_frame", "timestamp"})
             return CaptureRequest(root.get("request_id"), root.get("camera_frame"), root.get("timestamp"))
         if kind == "target_detection":
-            _keys(root, {"protocol_version", "type", "request_id", "frame_id", "timestamp", "target_id", "confidence", "position_mm", "orientation"})
+            legacy_fields = {"protocol_version", "type", "request_id", "frame_id", "timestamp", "target_id", "confidence", "position_mm", "orientation"}
+            if "size_class" in root:
+                _keys(root, legacy_fields | {"size_class"})
+                size_class = _target_size_class(root.get("size_class"))
+            else:
+                _keys(root, legacy_fields)
+                size_class = TargetSizeClass.NORMAL
             position = _object(root.get("position_mm"), "position_mm", {"x", "y", "z"})
             orientation_value = root.get("orientation")
             orientation = None
@@ -150,6 +164,7 @@ def decode_message(payload: bytes | str) -> VisionMessage:
                 confidence=root.get("confidence"),
                 position_mm=Vector3(position.get("x"), position.get("y"), position.get("z")),
                 orientation=orientation,
+                size_class=size_class,
             )
         if kind == "no_target":
             _keys(root, {"protocol_version", "type", "request_id", "reason"})
@@ -203,7 +218,18 @@ def _optional_finite(name: str, value: object) -> float | None:
     return None if value is None else _finite(name, value)
 
 
+def _target_size_class(value: object) -> TargetSizeClass:
+    if not isinstance(value, str):
+        raise VisionProtocolError("size_class must be 'normal' or 'oversized'")
+    try:
+        return TargetSizeClass(value)
+    except ValueError as exc:
+        raise VisionProtocolError(
+            "size_class must be 'normal' or 'oversized'"
+        ) from exc
+
+
 __all__ = [
     "CaptureRequest", "NoTarget", "PROTOCOL_VERSION", "TargetDetection", "VisionDetectionResult",
-    "VisionError", "VisionMessage", "VisionProtocolError", "decode_message", "encode_message",
+    "TargetSizeClass", "VisionError", "VisionMessage", "VisionProtocolError", "decode_message", "encode_message",
 ]

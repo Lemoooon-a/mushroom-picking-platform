@@ -7,6 +7,7 @@ import math
 
 from application.motion_target import BaseToolTarget
 from config.project.robot_motion_envelope import WORKING_HEIGHT_BASE_Z_MM
+from vision.target_size import TargetSizeClass
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,7 @@ class ScanPickProfile:
     scan_y_positions_mm: tuple[float, float, float, float]
     scan_yaw_deg: float
     place_pose: BaseToolTarget
+    oversized_place_pose: BaseToolTarget
     max_picks_per_scan_pose: int
     scan_settle_time_s: float = 0.0
 
@@ -31,10 +33,16 @@ class ScanPickProfile:
         if yaw != 0.0:
             raise ValueError("scan_yaw_deg must be 0 for the first scan-pick version")
         object.__setattr__(self, "scan_yaw_deg", yaw)
-        if not isinstance(self.place_pose, BaseToolTarget):
-            raise TypeError("place_pose must be a BaseToolTarget")
-        if self.place_pose.yaw_deg != 0.0:
-            raise ValueError("place_pose yaw_deg must be 0 for the first scan-pick version")
+        for name, pose in (
+            ("place_pose", self.place_pose),
+            ("oversized_place_pose", self.oversized_place_pose),
+        ):
+            if not isinstance(pose, BaseToolTarget):
+                raise TypeError(f"{name} must be a BaseToolTarget")
+            if pose.yaw_deg != 0.0:
+                raise ValueError(
+                    f"{name} yaw_deg must be 0 for the first scan-pick version"
+                )
         settle_time = _finite("scan_settle_time_s", self.scan_settle_time_s)
         if settle_time < 0.0:
             raise ValueError("scan_settle_time_s must be non-negative")
@@ -57,6 +65,17 @@ class ScanPickProfile:
     @property
     def scan_z_mm(self) -> float:
         return WORKING_HEIGHT_BASE_Z_MM
+
+    def place_pose_for(self, size_class: TargetSizeClass) -> BaseToolTarget:
+        """按视觉尺寸分类选择唯一放置点；未知分类不允许回退。"""
+
+        if not isinstance(size_class, TargetSizeClass):
+            raise TypeError("size_class must be a TargetSizeClass")
+        if size_class is TargetSizeClass.NORMAL:
+            return self.place_pose
+        if size_class is TargetSizeClass.OVERSIZED:
+            return self.oversized_place_pose
+        raise ValueError(f"unsupported target size class: {size_class!r}")
 
 
 @dataclass(frozen=True)

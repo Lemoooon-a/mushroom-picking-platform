@@ -27,6 +27,6 @@ contact 必须严格低于 150 mm，以保证 contact 段为下探运动。吸�
 
 ## 结果语义
 
-dry-run 返回 `PLANNED` 且零 submit、零等待。execute 阶段失败会 best-effort stop 并返回 `FAILED`；完成 lift 后返回 `PHYSICAL_PICK_UNVERIFIED`。当前没有真空反馈，因此不得报告 object successfully picked。单次 pick 不自动放置；scan-pick 在 lift 后直接移动到固定 Base 放置点 `(250, 1000, 150, 0)`，立即释放并直接返回扫描位，不执行放置前接近或放置后回撤。
+dry-run 返回 `PLANNED` 且零 submit、零等待。execute 阶段失败会 best-effort stop 并返回 `FAILED`；完成 lift 后返回 `PHYSICAL_PICK_UNVERIFIED`。当前没有真空反馈，因此不得报告 object successfully picked。单次 pick 不自动放置；scan-pick 在 lift 后按视觉 `size_class` 移动到普通 Base 放置点 `(150, 1000, 150, 0)` 或过大目标放置点 `(450, 1000, 150, 0)`，立即释放并直接返回扫描位，不执行放置前接近或放置后回撤。
 
 视觉 timeout、no target、低 confidence、过期 observation、hand-eye/grasp 缺失、工作区拒绝和规划失败都不运动并回到 READY；运动或吸盘命令失败进入 FAULT。

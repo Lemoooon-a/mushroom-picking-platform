@@ -341,6 +341,7 @@ def _observe_and_plan_vision_target(
             "confidence": observation.confidence,
             "timestamp": observation.timestamp,
             "target_id": observation.target_id,
+            "size_class": observation.size_class,
             "orientation": observation.orientation,
         },
         "capture_joint_state": observation.capture_axis_state,
