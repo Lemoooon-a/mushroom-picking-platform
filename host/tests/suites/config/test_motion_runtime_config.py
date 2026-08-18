@@ -201,6 +201,26 @@ class MotionConfigLoadingTests(unittest.TestCase):
         can_open.assert_not_called()
         feetech_open.assert_not_called()
 
+    def test_current_robot_motion_values_match_stm32_configuration(self) -> None:
+        motion = load_robot_motion_config()
+        self.assertEqual(
+            motion.default_motion_parameters(),
+            {
+                AxisName.SLIDE: (96.0, 180.0),
+                AxisName.Z: (16.0, 25.0),
+                AxisName.SHOULDER: (30.0, None),
+                AxisName.ELBOW: (30.0, None),
+                AxisName.ROTATION: (None, None),
+            },
+        )
+        self.assertEqual(
+            motion.linear_motion_limits(),
+            {
+                AxisName.SLIDE: (120.0, 180.0),
+                AxisName.Z: (20.0, 25.0),
+            },
+        )
+
     @patch("config.motion_runtime._load_robot_module")
     def test_missing_robot_config_reports_fixed_path(self, importer: Mock) -> None:
         importer.side_effect = ModuleNotFoundError(

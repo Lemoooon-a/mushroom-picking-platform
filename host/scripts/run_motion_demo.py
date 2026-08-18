@@ -14,6 +14,7 @@ import math
 from pathlib import Path
 import shlex
 import sys
+import threading
 
 
 HOST_ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +93,12 @@ STARTUP_FK_YAW_TOLERANCE_DEG = 2.0
 _AXIS_ORDER = tuple(AxisName)
 _ROTARY_AXES = (AxisName.SHOULDER, AxisName.ELBOW, AxisName.ROTATION)
 _STOPPABLE_OR_REPORTED_AXES = _AXIS_ORDER
+_RECOVERABLE_HOME_FAULT_CODES = frozenset(
+    (
+        int(STM32AxisFault.POSITION_INVALID),
+        int(STM32AxisFault.HOMING),
+    )
+)
 class DemoFlowError(RuntimeError):
     """启动或阶段执行未通过必要的安全检查。"""
 
@@ -274,6 +281,9 @@ class DemoMotionFlow:
         self.motion_interrupted = False
         self.startup_fk_valid = False
         self.last_stop_report: StopReport | None = None
+        self._motion_stop_lock = threading.Lock()
+        self._stop_attempt_generation = 0
+        self._confirmed_stop_generation = 0
 
     def startup(self) -> None:
         """读取状态；执行模式下严格 Z→Slide→中心姿态。"""
@@ -520,27 +530,43 @@ class DemoMotionFlow:
         return succeeded
 
     def stop(self) -> None:
-        self.motion_interrupted = True
-        if not self.execute:
-            self.emit("READ_ONLY stop preview; no stop command was sent")
-            return
-        self.last_stop_report = best_effort_stop_axes_once(
-            self.runtime,
-            _STOPPABLE_OR_REPORTED_AXES,
-            emit=self.emit,
-        )
-        self.emit(
-            "Stop requested. No plan will resume automatically. Per-axis results "
-            "above report whether current-position hold or software stop was confirmed."
-        )
-        if self.last_stop_report.failed_axes:
-            failed = ", ".join(
-                axis.value for axis in sorted(
-                    self.last_stop_report.failed_axes, key=lambda item: item.value
-                )
+        # 与每个阶段的“代次检查 + submit”共用同一把锁：STOP 一旦开始，
+        # 旧计划不能在停止命令之间抢跑并提交下一阶段。
+        with self._motion_stop_lock:
+            self._stop_attempt_generation += 1
+            self.motion_interrupted = True
+            if not self.execute:
+                self.emit("READ_ONLY stop preview; no stop command was sent")
+                self._confirmed_stop_generation += 1
+                self.motion_interrupted = False
+                return
+            self.last_stop_report = best_effort_stop_axes_once(
+                self.runtime,
+                _STOPPABLE_OR_REPORTED_AXES,
+                emit=self.emit,
             )
-            raise DemoFlowError(
-                f"stop was not confirmed for axes: {failed}; no 0x81 fallback was sent"
+            unconfirmed_axes = (
+                set(_STOPPABLE_OR_REPORTED_AXES)
+                - self.last_stop_report.confirmed_axes
+            )
+            self.emit(
+                "Stop requested. Per-axis results above report whether current-position "
+                "hold or software stop was confirmed."
+            )
+            if unconfirmed_axes:
+                failed = ", ".join(
+                    axis.value for axis in sorted(
+                        unconfirmed_axes, key=lambda item: item.value
+                    )
+                )
+                raise DemoFlowError(
+                    f"stop was not confirmed for axes: {failed}; no 0x81 fallback was sent"
+                )
+            self._confirmed_stop_generation += 1
+            self.motion_interrupted = False
+            self.emit(
+                "Stop confirmed at the current position; a new position command may be "
+                "submitted without returning to startup."
             )
 
     def suction_command(self, action: str) -> None:
@@ -699,9 +725,7 @@ class DemoMotionFlow:
             blockers.append("axis is not connected")
         if before.busy is not False:
             blockers.append("moving/busy is not confirmed false")
-        if before.faulted and before.fault_code != int(
-            STM32AxisFault.POSITION_INVALID
-        ):
+        if before.faulted and before.fault_code not in _RECOVERABLE_HOME_FAULT_CODES:
             blockers.append(f"blocking fault_code={before.fault_code!r}")
         if blockers:
             raise DemoFlowError(
@@ -734,10 +758,29 @@ class DemoMotionFlow:
                 f"{axis.value} Home position {state.current_position:.6f} mm is not near 0"
             )
 
-    def _execute_stage(self, stage: DemoStage, *, timeout_s: float) -> RobotAxisState:
-        self.runtime.controller.validate_positions(stage.multi_axis_target)
-        self.emit(f"Executing stage: {stage.name}")
-        handle = self.runtime.controller.submit_positions(stage.multi_axis_target)
+    def _execute_stage(
+        self,
+        stage: DemoStage,
+        *,
+        timeout_s: float,
+        stop_attempt_generation: int | None = None,
+        confirmed_stop_generation: int | None = None,
+    ) -> RobotAxisState:
+        with self._motion_stop_lock:
+            if stop_attempt_generation is None:
+                stop_attempt_generation = self._stop_attempt_generation
+            if confirmed_stop_generation is None:
+                confirmed_stop_generation = self._confirmed_stop_generation
+            if (
+                self._stop_attempt_generation != stop_attempt_generation
+                or self._confirmed_stop_generation != confirmed_stop_generation
+            ):
+                raise DemoFlowError(
+                    f"stage {stage.name} cancelled by a concurrent STOP attempt"
+                )
+            self.runtime.controller.validate_positions(stage.multi_axis_target)
+            self.emit(f"Executing stage: {stage.name}")
+            handle = self.runtime.controller.submit_positions(stage.multi_axis_target)
         result = self.runtime.controller.wait_group(handle, timeout_s=timeout_s)
         for line in format_group_result(result):
             self.emit(line)
@@ -753,6 +796,9 @@ class DemoMotionFlow:
 
     def _run_stages(self, stages: Sequence[DemoStage]) -> bool:
         active_stage = "EMPTY_PLAN"
+        with self._motion_stop_lock:
+            stop_attempt_generation = self._stop_attempt_generation
+            confirmed_stop_generation = self._confirmed_stop_generation
         try:
             for stage in stages:
                 active_stage = stage.name
@@ -761,6 +807,8 @@ class DemoMotionFlow:
                     self.virtual_state = self._execute_stage(
                         stage,
                         timeout_s=self._stage_timeout(),
+                        stop_attempt_generation=stop_attempt_generation,
+                        confirmed_stop_generation=confirmed_stop_generation,
                     )
                 elif stage.solution is not None:
                     self.virtual_state = stage.solution.axis_state()
@@ -770,15 +818,44 @@ class DemoMotionFlow:
                     self.virtual_state = _state_with_overrides(self.virtual_state, positions)
             if not self.execute:
                 self.emit("READ_ONLY stage preview complete; no submit command was sent")
-            self.motion_interrupted = False
+            with self._motion_stop_lock:
+                stop_attempted = (
+                    self._stop_attempt_generation != stop_attempt_generation
+                )
+                # 只有未遇到并发 STOP 的本次计划可以更新成功状态。STOP
+                # 成功时已自行清锁；旧计划不能覆盖其后新操作产生的故障锁。
+                if not stop_attempted:
+                    self.motion_interrupted = False
             return True
         except Exception as exc:
-            self._handle_plan_failure(active_stage, exc)
+            self._handle_plan_failure(
+                active_stage,
+                exc,
+                confirmed_stop_generation=confirmed_stop_generation,
+            )
             return False
 
-    def _handle_plan_failure(self, stage: str, exc: BaseException) -> None:
+    def _handle_plan_failure(
+        self,
+        stage: str,
+        exc: BaseException,
+        *,
+        confirmed_stop_generation: int | None = None,
+    ) -> None:
         self.emit(f"{stage} failed: {exc}")
-        self.motion_interrupted = True
+        with self._motion_stop_lock:
+            cancelled_by_confirmed_stop = (
+                confirmed_stop_generation is not None
+                and self._confirmed_stop_generation != confirmed_stop_generation
+            )
+            if not cancelled_by_confirmed_stop:
+                self.motion_interrupted = True
+        if cancelled_by_confirmed_stop:
+            self.emit(
+                f"{stage} ended after a confirmed STOP; the position-command "
+                "interruption lock remains clear."
+            )
+            return
         if self.execute:
             prior = (
                 exc.result.stop_report

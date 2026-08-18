@@ -34,9 +34,9 @@
       "tool_camera_validated_at": "2026-08-11T09:31:06Z",
       "tool_camera_validation_method": "operator_confirmed_after_translation_update",
       "tool_camera_target_compensation_camera_mm": [
-        -5,
-        5,
-        15
+        3,
+        3,
+        20
       ],
       "tool_camera_target_compensation_source": "operator_measured_tcp_bias",
       "tool_camera_target_compensation_set_at": "2026-08-11T11:42:00Z",

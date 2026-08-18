@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import math
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 import tempfile
 import unittest
@@ -19,6 +20,7 @@ from config.project.robot_motion_envelope import (
 from config.robot_runtime import RobotRuntimeConfigError
 from config.tray_workspace import TrayWorkspaceConfig
 from config.project.workspace_planning import ArmLocalWorkspaceStatus
+from drivers.stm32_motion import STM32AxisFault
 from geometry.rigid_transform import RigidTransform
 from kinematics.base_frame_solver import BaseFrameFiveAxisSolver, FiveAxisNoSolutionError
 from kinematics.base_move_transition_planner import BaseMoveTransitionPlanner
@@ -126,6 +128,9 @@ def _axis_state(
     valid: bool = True,
     enabled: bool = True,
     busy: bool | None = False,
+    faulted: bool = False,
+    fault_code: int | None = None,
+    fault_message: str | None = None,
 ) -> AxisState:
     return AxisState(
         axis=axis,
@@ -136,9 +141,9 @@ def _axis_state(
         position_valid=valid,
         current_position=position if valid else None,
         position_unit="mm" if axis in (AxisName.SLIDE, AxisName.Z) else "deg",
-        faulted=False,
-        fault_code=None,
-        fault_message=None,
+        faulted=faulted,
+        fault_code=fault_code,
+        fault_message=fault_message,
     )
 
 
@@ -603,6 +608,7 @@ class StartupExecutionTests(unittest.TestCase):
         self.assertFalse(flow.move(200.0, 250.0, 120.0, 0.0))
         self.assertTrue(any(line.startswith("TRANSIT failed:") for line in output))
         self.assertFalse(any(line.startswith("LOWER failed:") for line in output))
+        self.assertTrue(flow.motion_interrupted)
 
     def test_home_fault_or_timeout_never_runs_later_steps(self) -> None:
         cases = (
@@ -627,6 +633,40 @@ class StartupExecutionTests(unittest.TestCase):
                 self.assertFalse(any(item.startswith("submit:") for item in runtime.log))
                 if failed_axis == "z":
                     self.assertNotIn("home:slide", runtime.log)
+
+    def test_home_preflight_allows_homing_fault_retry_only(self) -> None:
+        runtime = _FakeRuntime()
+        flow, _output = _flow(runtime, execute=True)
+        runtime.controller.states[AxisName.Z] = _axis_state(
+            AxisName.Z,
+            None,
+            homed=False,
+            valid=False,
+            enabled=False,
+            faulted=True,
+            fault_code=int(STM32AxisFault.HOMING),
+            fault_message="stm32_axis.homing",
+        )
+
+        flow._home_and_verify(AxisName.Z, 1.0)
+
+        self.assertIn("home:z", runtime.log)
+        self.assertTrue(runtime.controller.states[AxisName.Z].homed)
+
+        runtime.log.clear()
+        runtime.controller.states[AxisName.Z] = _axis_state(
+            AxisName.Z,
+            None,
+            homed=False,
+            valid=False,
+            enabled=False,
+            faulted=True,
+            fault_code=int(STM32AxisFault.HARDWARE_OR_CONFIG),
+            fault_message="stm32_axis.hardware_or_config",
+        )
+        with self.assertRaisesRegex(DemoFlowError, "blocking fault_code=3"):
+            flow._home_and_verify(AxisName.Z, 1.0)
+        self.assertNotIn("home:z", runtime.log)
 
     def test_rotary_enable_failure_prevents_all_homing_and_motion(self) -> None:
         runtime = _FakeRuntime()
@@ -660,6 +700,7 @@ class StartupExecutionTests(unittest.TestCase):
             runtime.log,
         )
         self.assertTrue(flow.startup_fk_valid)
+        self.assertFalse(flow.motion_interrupted)
 
     def test_execute_stop_attempts_rotation_position_hold(self) -> None:
         runtime = _FakeRuntime()
@@ -671,6 +712,105 @@ class StartupExecutionTests(unittest.TestCase):
             [item for item in runtime.log if item.startswith("stop:")],
             [f"stop:{axis.value}" for axis in AxisName],
         )
+        self.assertFalse(flow.motion_interrupted)
+
+    def test_successful_stop_allows_next_move_from_live_stopped_state(self) -> None:
+        runtime = _FakeRuntime()
+        flow, _output = _flow(runtime, execute=True)
+        flow.startup()
+        flow.stop()
+
+        stopped_state = _state_for_base_target(
+            flow.solver,
+            y_mm=250.0,
+            z_axis_mm=-60.0,
+        )
+        stopped_positions = (
+            stopped_state.slide_mm,
+            stopped_state.z_mm,
+            stopped_state.shoulder_deg,
+            stopped_state.elbow_deg,
+            stopped_state.rotation_deg,
+        )
+        for axis, position in zip(AxisName, stopped_positions, strict=True):
+            previous = runtime.controller.states[axis]
+            runtime.controller.states[axis] = _axis_state(
+                axis,
+                position,
+                homed=previous.homed,
+            )
+        flow.virtual_state = RobotAxisState(0.0, 0.0, 20.0, -80.0, 60.0)
+
+        self.assertEqual(flow._planning_state(), stopped_state)
+        self.assertTrue(flow.move(200.0, 250.0, 120.0, 0.0))
+        self.assertTrue(any(item.startswith("submit:") for item in runtime.log))
+
+    def test_late_abort_from_stopped_move_does_not_restore_interruption_lock(self) -> None:
+        runtime = _FakeRuntime()
+        flow, output = _flow(runtime, execute=True)
+        flow.startup()
+        wait_entered = threading.Event()
+        release_wait = threading.Event()
+        original_wait_group = runtime.controller.wait_group
+
+        def abort_after_stop(handle, *, timeout_s=None):
+            wait_entered.set()
+            self.assertTrue(release_wait.wait(timeout=2.0))
+            arrived = original_wait_group(handle, timeout_s=timeout_s)
+            return MultiAxisCommandResult(
+                group_id=arrived.group_id,
+                status=MotionCommandStatus.ABORTED,
+                results=arrived.results,
+                accepted=True,
+                completed=False,
+                message="aborted by user STOP",
+            )
+
+        runtime.controller.wait_group = abort_after_stop  # type: ignore[method-assign]
+        move_results: list[bool] = []
+        worker = threading.Thread(
+            target=lambda: move_results.append(
+                flow.move(200.0, 250.0, 120.0, 0.0)
+            )
+        )
+        worker.start()
+        self.assertTrue(wait_entered.wait(timeout=1.0))
+
+        flow.stop()
+        self.assertFalse(flow.motion_interrupted)
+        release_wait.set()
+        worker.join(timeout=2.0)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(move_results, [False])
+        self.assertFalse(flow.motion_interrupted)
+        self.assertTrue(
+            any("ended after a confirmed STOP" in line for line in output)
+        )
+
+        runtime.controller.wait_group = original_wait_group  # type: ignore[method-assign]
+        runtime.log.clear()
+        flow.require_base_motion_ready()
+        self.assertTrue(flow.move(200.0, 250.0, 120.0, 0.0))
+        self.assertTrue(any(item.startswith("submit:") for item in runtime.log))
+
+    def test_unconfirmed_stop_keeps_position_commands_blocked(self) -> None:
+        runtime = _FakeRuntime()
+        flow, _output = _flow(runtime, execute=True)
+        flow.startup()
+        original_stop = runtime.controller.stop
+
+        def fail_elbow_stop(axis: AxisName) -> MotionCommandResult:
+            if axis is AxisName.ELBOW:
+                raise RuntimeError("elbow stop failed")
+            return original_stop(axis)
+
+        runtime.controller.stop = fail_elbow_stop  # type: ignore[method-assign]
+
+        with self.assertRaisesRegex(DemoFlowError, "elbow"):
+            flow.stop()
+        self.assertTrue(flow.motion_interrupted)
+        with self.assertRaisesRegex(DemoFlowError, 'then "return"'):
+            flow.require_base_motion_ready()
 
     def test_cli_suction_and_joint_commands_and_quit_lifecycle(self) -> None:
         runtime = _FakeRuntime()

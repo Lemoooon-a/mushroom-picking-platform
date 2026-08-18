@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+from config.motion_runtime import load_robot_motion_config
 from config.project.feetech import END_EFFECTOR_ROTATION_CONFIG
 from config.project.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from drivers.stm32_motion import AxisStatus, STM32CommandSubmission, STM32Message
@@ -365,6 +366,69 @@ class ControllerTestCase(unittest.TestCase):
             handle = self.controller.home_reference(axis)
         self.assertIsInstance(handle, MotionCommandHandle)
         return handle  # type: ignore[return-value]
+
+
+class CurrentRobotMotionConfigTests(ControllerTestCase):
+    def _configured_controller(self) -> UnifiedMotionController:
+        motion = load_robot_motion_config()
+        return UnifiedMotionController(
+            stm32_client=self.stm32,
+            shoulder_joint=self.shoulder,
+            elbow_joint=self.elbow,
+            rotation_axis=self.rotation,
+            linear_position_limits=motion.linear_position_limits(),
+            linear_motion_limits=motion.linear_motion_limits(),
+            arrival_configs=motion.arrival_configs(),
+            default_motion_parameters=motion.default_motion_parameters(),
+            authorization=motion_authorization(),
+        )
+
+    def test_current_linear_defaults_and_limits_match_stm32_configuration(self) -> None:
+        default_controller = self._configured_controller()
+        default_controller.submit_positions(
+            MultiAxisTarget(
+                (
+                    AxisTarget(AxisName.SLIDE, 1.0),
+                    AxisTarget(AxisName.Z, -1.0),
+                )
+            )
+        )
+        self.assertEqual(
+            self.stm32.submissions,
+            [
+                ("slide", 1000, 96000, 180000),
+                ("z", -1000, 16000, 25000),
+            ],
+        )
+
+        limit_controller = self._configured_controller()
+        limit_controller.submit_positions(
+            MultiAxisTarget(
+                (
+                    AxisTarget(AxisName.SLIDE, 2.0, 120.0, 180.0),
+                    AxisTarget(AxisName.Z, -2.0, 20.0, 25.0),
+                )
+            )
+        )
+        self.assertEqual(self.stm32.submissions[-2][2:], (120000, 180000))
+        self.assertEqual(self.stm32.submissions[-1][2:], (20000, 25000))
+
+        for axis, position, velocity, acceleration in (
+            (AxisName.SLIDE, 3.0, 120.001, 180.0),
+            (AxisName.Z, -3.0, 20.001, 25.0),
+        ):
+            before = len(self.stm32.submissions)
+            with self.subTest(axis=axis.value):
+                controller = self._configured_controller()
+                with self.assertRaises(UnifiedMotionError) as failure:
+                    controller.submit_absolute(
+                        AxisTarget(axis, position, velocity, acceleration)
+                    )
+                self.assertEqual(
+                    failure.exception.error_code,
+                    MotionErrorCode.SOFT_LIMIT,
+                )
+                self.assertEqual(len(self.stm32.submissions), before)
 
 
 class RelativeAxisMotionTests(ControllerTestCase):
