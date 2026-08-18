@@ -1,4 +1,4 @@
-"""正负偏置工作区之间的只读安全阶段规划。"""
+"""单一 arm-local 工作区的只读安全阶段规划。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,10 @@ from enum import Enum
 import math
 
 from config.project.robot_motion_envelope import RobotMotionEnvelopeConfig
-from config.project.workspace_planning import OffsetWorkspaceSide, SlideSelectionReason
+from config.project.workspace_planning import (
+    ArmLocalWorkspaceStatus,
+    SlideSelectionReason,
+)
 from geometry.rigid_transform import RigidTransform, angular_difference_deg
 from kinematics.base_frame_solver import (
     BaseFrameFiveAxisSolver,
@@ -27,7 +30,7 @@ class CurrentStateInvalidError(BaseMovePlanningError):
 
 
 class ClearanceHeightUnreachableError(BaseMovePlanningError):
-    """跨区要求的 Base 安全高度超出 Z 轴可达范围。"""
+    """进入工作区要求的 Base 安全高度超出 Z 轴可达范围。"""
 
     def __init__(
         self,
@@ -75,9 +78,9 @@ class BaseMovePlan:
     requested_base_T_tool_target: RigidTransform
     current_local_x_mm: float
     current_local_y_mm: float
-    current_workspace_side: OffsetWorkspaceSide
-    target_workspace_side: OffsetWorkspaceSide
-    requires_side_switch_clearance: bool
+    current_workspace_status: ArmLocalWorkspaceStatus
+    target_workspace_status: ArmLocalWorkspaceStatus
+    requires_workspace_entry_clearance: bool
     clearance_lift_mm: float
     clearance_base_z_mm: float | None
     stages: tuple[BaseMoveStage, ...]
@@ -110,8 +113,8 @@ class BaseMoveTransitionPlanner:
         if not isinstance(base_T_tool_target, RigidTransform):
             raise TypeError("base_T_tool_target must be RigidTransform")
         current_base = self.solver.forward_kinematics_base(current_state)
-        current_side, current_local_x, current_local_y = (
-            self.solver.workspace_side_for_state(current_state)
+        current_status, current_local_x, current_local_y = (
+            self.solver.workspace_status_for_state(current_state)
         )
         try:
             self.solver.constrained_solution(
@@ -127,7 +130,7 @@ class BaseMoveTransitionPlanner:
             ) from exc
 
         if (
-            current_side is OffsetWorkspaceSide.OUTSIDE
+            current_status is ArmLocalWorkspaceStatus.OUTSIDE
             and self._base_planar_pose_equal(current_base, base_T_tool_target)
         ):
             try:
@@ -152,9 +155,9 @@ class BaseMoveTransitionPlanner:
                     requested_base_T_tool_target=base_T_tool_target,
                     current_local_x_mm=current_local_x,
                     current_local_y_mm=current_local_y,
-                    current_workspace_side=current_side,
-                    target_workspace_side=direct_solution.workspace_side,
-                    requires_side_switch_clearance=False,
+                    current_workspace_status=current_status,
+                    target_workspace_status=direct_solution.workspace_status,
+                    requires_workspace_entry_clearance=False,
                     clearance_lift_mm=0.0,
                     clearance_base_z_mm=None,
                     stages=(() if direct_stage is None else (direct_stage,)),
@@ -164,18 +167,13 @@ class BaseMoveTransitionPlanner:
             base_T_tool_target=base_T_tool_target,
             current_state=current_state,
         )
-        target_side = final_solution.workspace_side
-        if target_side is OffsetWorkspaceSide.OUTSIDE:
+        target_status = final_solution.workspace_status
+        if target_status is ArmLocalWorkspaceStatus.OUTSIDE:
             raise BaseMovePlanningError(
                 "solver returned an OUTSIDE final solution; this is an internal error"
             )
 
-        same_allowed_side = (
-            current_side is target_side
-            and current_side
-            in (OffsetWorkspaceSide.POSITIVE, OffsetWorkspaceSide.NEGATIVE)
-        )
-        if same_allowed_side:
+        if current_status is ArmLocalWorkspaceStatus.INSIDE:
             stage = self._stage(
                 BaseMoveStageKind.DIRECT,
                 base_T_tool_target,
@@ -187,9 +185,9 @@ class BaseMoveTransitionPlanner:
                 requested_base_T_tool_target=base_T_tool_target,
                 current_local_x_mm=current_local_x,
                 current_local_y_mm=current_local_y,
-                current_workspace_side=current_side,
-                target_workspace_side=target_side,
-                requires_side_switch_clearance=False,
+                current_workspace_status=current_status,
+                target_workspace_status=target_status,
+                requires_workspace_entry_clearance=False,
                 clearance_lift_mm=0.0,
                 clearance_base_z_mm=None,
                 stages=(() if stage is None else (stage,)),
@@ -200,7 +198,7 @@ class BaseMoveTransitionPlanner:
         clearance_z = max(
             current_z,
             target_z,
-            self.motion_envelope.side_switch.clearance_base_z_mm,
+            self.motion_envelope.workspace_entry.clearance_base_z_mm,
         )
         clearance_lift = max(0.0, clearance_z - current_z)
         lift_target = _pose_with_z(current_base, clearance_z)
@@ -213,7 +211,7 @@ class BaseMoveTransitionPlanner:
                 SlideSelectionReason.KEEP_CURRENT_SLIDE,
                 _branch_name(current_state.elbow_deg),
                 allow_outside_workspace=(
-                    current_side is OffsetWorkspaceSide.OUTSIDE
+                    current_status is ArmLocalWorkspaceStatus.OUTSIDE
                 ),
             )
             transit_planar = RobotAxisState(
@@ -286,9 +284,9 @@ class BaseMoveTransitionPlanner:
             requested_base_T_tool_target=base_T_tool_target,
             current_local_x_mm=current_local_x,
             current_local_y_mm=current_local_y,
-            current_workspace_side=current_side,
-            target_workspace_side=target_side,
-            requires_side_switch_clearance=True,
+            current_workspace_status=current_status,
+            target_workspace_status=target_status,
+            requires_workspace_entry_clearance=True,
             clearance_lift_mm=clearance_lift,
             clearance_base_z_mm=clearance_z,
             stages=stages,

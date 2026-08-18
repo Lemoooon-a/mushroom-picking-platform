@@ -10,7 +10,7 @@ from unittest.mock import patch
 import numpy as np
 
 from config.project.workspace_planning import (
-    OffsetWorkspaceSide,
+    ArmLocalWorkspaceStatus,
     SlideSelectionReason,
 )
 from geometry.rigid_transform import RigidTransform, angular_difference_deg
@@ -149,32 +149,27 @@ class BaseFrameTransformAndGateTests(unittest.TestCase):
             )
 
 
-class OffsetWorkspaceSolverTests(unittest.TestCase):
+class ArmLocalWorkspaceSolverTests(unittest.TestCase):
     def setUp(self) -> None:
         self.model = FiveAxisKinematics(geometry())
 
-    def test_current_slide_is_immediately_kept_in_positive_and_negative_regions(self) -> None:
-        for local_y, side in (
-            (200.0, OffsetWorkspaceSide.POSITIVE),
-            (-200.0, OffsetWorkspaceSide.NEGATIVE),
-        ):
-            with self.subTest(side=side):
-                current = state_for_local_point(
-                    self.model,
-                    local_x_mm=400.0,
-                    local_y_mm=local_y,
-                    slide_mm=120.0,
-                )
-                result = solver(model=self.model).solve_base_target(
-                    base_T_tool_target=target_for_state(self.model, current),
-                    current_state=current,
-                )
-                self.assertAlmostEqual(result.slide_mm, current.slide_mm)
-                self.assertIs(
-                    result.slide_selection_reason,
-                    SlideSelectionReason.KEEP_CURRENT_SLIDE,
-                )
-                self.assertIs(result.workspace_side, side)
+    def test_current_slide_is_immediately_kept_inside_workspace(self) -> None:
+        current = state_for_local_point(
+            self.model,
+            local_x_mm=400.0,
+            local_y_mm=200.0,
+            slide_mm=120.0,
+        )
+        result = solver(model=self.model).solve_base_target(
+            base_T_tool_target=target_for_state(self.model, current),
+            current_state=current,
+        )
+        self.assertAlmostEqual(result.slide_mm, current.slide_mm)
+        self.assertIs(
+            result.slide_selection_reason,
+            SlideSelectionReason.KEEP_CURRENT_SLIDE,
+        )
+        self.assertIs(result.workspace_status, ArmLocalWorkspaceStatus.INSIDE)
 
     def test_current_slide_returns_both_elbow_branches_and_prefers_small_change(self) -> None:
         current = state_for_local_point(
@@ -236,30 +231,12 @@ class OffsetWorkspaceSolverTests(unittest.TestCase):
         )
         self.assertIs(
             result.slide_selection_reason,
-            SlideSelectionReason.POSITIVE_OFFSET_CENTER,
+            SlideSelectionReason.WORKSPACE_CENTER,
         )
         self.assertAlmostEqual(result.slide_mm, 250.0)
         self.assertAlmostEqual(result.local_y_mm, 250.0)
 
-    def test_center_internal_scoring_prefers_less_slide_motion(self) -> None:
-        target = RigidTransform.from_xyz_yaw_deg(
-            x_mm=400,
-            y_mm=500,
-            z_mm=-80,
-            yaw_deg=0,
-        )
-        current = RobotAxisState(600, -80, 0, 0, 0)
-        result = solver(model=self.model).solve_base_target(
-            base_T_tool_target=target,
-            current_state=current,
-        )
-        self.assertIs(
-            result.slide_selection_reason,
-            SlideSelectionReason.NEGATIVE_OFFSET_CENTER,
-        )
-        self.assertAlmostEqual(result.slide_mm, 750.0)
-
-    def test_fallback_is_used_after_both_centers_fail_slide_limits(self) -> None:
+    def test_fallback_is_used_after_center_fails_slide_limits(self) -> None:
         target = RigidTransform.from_xyz_yaw_deg(
             x_mm=400,
             y_mm=500,
@@ -276,12 +253,12 @@ class OffsetWorkspaceSolverTests(unittest.TestCase):
         )
         self.assertIs(
             result.slide_selection_reason,
-            SlideSelectionReason.POSITIVE_OFFSET_FALLBACK,
+            SlideSelectionReason.WORKSPACE_FALLBACK,
         )
         self.assertGreaterEqual(result.local_y_mm, 300.0)
         self.assertLessEqual(result.slide_mm, 200.0)
 
-    def test_negative_fallback_reaches_closed_workspace_boundary(self) -> None:
+    def test_fallback_reaches_closed_workspace_lower_boundary(self) -> None:
         target = RigidTransform.from_xyz_yaw_deg(
             x_mm=400,
             y_mm=160,
@@ -290,18 +267,18 @@ class OffsetWorkspaceSolverTests(unittest.TestCase):
         )
         subject = solver(
             model=self.model,
-            limits=descriptors(slide=(300.0, 400.0)),
+            limits=descriptors(slide=(5.0, 10.0)),
         )
         result = subject.solve_base_target(
             base_T_tool_target=target,
-            current_state=RobotAxisState(300, -80, 0, 0, 0),
+            current_state=RobotAxisState(100, -80, 0, 0, 0),
         )
         self.assertIs(
             result.slide_selection_reason,
-            SlideSelectionReason.NEGATIVE_OFFSET_FALLBACK,
+            SlideSelectionReason.WORKSPACE_FALLBACK,
         )
-        self.assertAlmostEqual(result.local_y_mm, -150.0)
-        self.assertAlmostEqual(result.slide_mm, 310.0)
+        self.assertAlmostEqual(result.local_y_mm, 150.0)
+        self.assertAlmostEqual(result.slide_mm, 10.0)
 
     def test_planar_and_joint_limit_rejections_are_structured(self) -> None:
         cases = (
@@ -406,10 +383,10 @@ class OffsetWorkspaceSolverTests(unittest.TestCase):
         cases = (
             (
                 RigidTransform.from_xyz_yaw_deg(
-                    x_mm=20, y_mm=0, z_mm=-80, yaw_deg=0
+                    x_mm=20, y_mm=250, z_mm=-80, yaw_deg=0
                 ),
                 descriptors(),
-                "outside_offset_workspace",
+                "outside_arm_local_workspace",
             ),
             (
                 RigidTransform.from_xyz_yaw_deg(
@@ -420,7 +397,7 @@ class OffsetWorkspaceSolverTests(unittest.TestCase):
             ),
             (
                 RigidTransform.from_xyz_yaw_deg(
-                    x_mm=450, y_mm=200, z_mm=-80, yaw_deg=170
+                    x_mm=450, y_mm=250, z_mm=-80, yaw_deg=170
                 ),
                 descriptors(rotation=(-5, 5)),
                 "rotation_limit",
@@ -436,19 +413,19 @@ class OffsetWorkspaceSolverTests(unittest.TestCase):
                 )
             self.assertEqual(raised.exception.stage, stage)
 
-    def test_fixed_slide_must_still_satisfy_offset_workspace(self) -> None:
+    def test_fixed_slide_must_still_satisfy_arm_local_workspace(self) -> None:
         with self.assertRaises(FiveAxisNoSolutionError) as raised:
             solver(model=self.model).solve_with_fixed_slide(
                 base_T_tool_target=RigidTransform.from_xyz_yaw_deg(
                     x_mm=400,
-                    y_mm=0,
+                    y_mm=-200,
                     z_mm=-80,
                     yaw_deg=0,
                 ),
                 current_state=RobotAxisState(0, -80, 0, 0, 0),
                 slide_mm=0,
             )
-        self.assertEqual(raised.exception.stage, "outside_offset_workspace")
+        self.assertEqual(raised.exception.stage, "outside_arm_local_workspace")
 
     def test_solution_outputs_complete_target_and_fk_residuals(self) -> None:
         current = state_for_local_point(

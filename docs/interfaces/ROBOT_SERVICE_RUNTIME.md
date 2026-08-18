@@ -40,8 +40,8 @@ Rotation 的软件停止会读取当前反馈位置并立即写回 goal，在保
 
 ## 两种运动入口
 
-- Base-frame task movement：使用 `move_base_target()`，经过 TrayWorkspace、IK、OffsetWorkspace、transition planning 和 motion envelope。
-- Raw/manual axis movement：使用 `move_axis_absolute()` / `move_axis_relative()`，只检查所选轴自身状态、holding/Homing 和软限位，不进行 Base-frame 工作区、IK、side-switch、碰撞或 TCP 路径检查。
+- Base-frame task movement：使用 `move_base_target()`，经过 TrayWorkspace、IK、ArmLocalWorkspace、transition planning 和 motion envelope。
+- Raw/manual axis movement：使用 `move_axis_absolute()` / `move_axis_relative()`，只检查所选轴自身状态、holding/Homing 和软限位，不进行 Base-frame 工作区、IK、workspace-entry、碰撞或 TCP 路径检查。
 
 相对运动在 `UnifiedMotionController` 的同一提交锁内读取调用时当前有效逻辑位置，计算 `current + delta`，校验并走现有绝对提交/到位通路。增量位于轴到位容差内时立即返回 ARRIVED，不发送硬件命令；result 中 `target_position` 仍是解析后的绝对逻辑位置。
 
@@ -54,18 +54,18 @@ STM32 machine protocol 客户端用一把可重入协议锁串行化 sequence/pe
 Base-frame 正运动学提供者计算 `x/y/z/yaw`。Web 前端不保存或复制机械尺寸、坐标变换或
 运动学公式。`return_to_startup()` 继续复用原有 startup-safe pose 与执行通路。
 
-`scan_and_pick()` 在一个顶层 active-operation 内按配置生成 2×4 共 8 个 Base TCP 扫描位。
-每个扫描位到位后重复 `observe → pick → lift to Base Z=150 mm → fixed place → release → return same scan pose`，只有收到
+`scan_and_pick()` 在一个顶层 active-operation 内按配置生成 2×2 共 4 个 Base TCP 扫描位。
+每个扫描位到位后重复 `observe → pick → lift to Base Z=200 mm → fixed place at Z=200 mm → release → return same scan pose`，只有收到
 `no_target` 才进入下一区域。目标规划拒绝只结束当前区域；运动或吸盘失败停止并进入
 `FAULT`；达到 `max_picks_per_scan_pose` 会在已经返回扫描位后停止整个任务并报告，但不进入
 `FAULT`。dry-run 仅允许离线后端推进虚拟位姿，不提交硬件命令。
 
-普通目标放置点为 Base `(150, 1000, 150, 0)`，过大目标放置点为
-Base `(450, 1000, 150, 0)`。视觉观察中的 `size_class` 决定使用哪个点；两个放置点是
+普通目标放置点为 Base `(150, 1000, 200, 0)`，过大目标放置点为
+Base `(450, 1000, 200, 0)`。视觉观察中的 `size_class` 决定使用哪个点；两个放置点是
 scan-pick 仅有的 Tray workspace 区外例外。放置点和返回扫描位会在移动前作为两段序列
 完整规划，返回扫描位仍执行正常 Tray 门禁。
 放置点到位后立即释放并直接返回，不包含放置前接近或放置后回撤阶段。区外例外不会绕过
-OffsetWorkspace、逆运动学、轴/关节限位或 RobotMotionEnvelope。
+ArmLocalWorkspace、逆运动学、轴/关节限位或 RobotMotionEnvelope。
 
 ## 模式
 

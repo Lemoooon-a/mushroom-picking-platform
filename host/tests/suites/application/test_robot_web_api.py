@@ -13,6 +13,7 @@ from application.runtime_state import RobotServiceMode, RobotServiceState
 from application.scan_pick import ScanAndPickResult, ScanPositionResult
 from application.tray_workspace import TargetOutsideTrayWorkspace
 from application.web_api import create_robot_web_app
+from config.project.workspace_planning import ArmLocalWorkspaceStatus
 from kinematics.frame_chain import RobotAxisState
 from motion.unified_protocol import (
     AxisCapabilities,
@@ -33,6 +34,19 @@ class FakeResult:
     stages: tuple[object, ...] = ()
 
 
+@dataclass(frozen=True)
+class FakeBasePlanResult:
+    operation: str = "base-plan"
+    current_workspace_status: ArmLocalWorkspaceStatus = (
+        ArmLocalWorkspaceStatus.INSIDE
+    )
+    target_workspace_status: ArmLocalWorkspaceStatus = (
+        ArmLocalWorkspaceStatus.INSIDE
+    )
+    requires_workspace_entry_clearance: bool = False
+    stages: tuple[object, ...] = ()
+
+
 class FakeRobotService:
     def __init__(self) -> None:
         self.mode = RobotServiceMode.DRY_RUN
@@ -43,6 +57,7 @@ class FakeRobotService:
         self.backend_status: object | None = None
         self.capabilities = {
             "base_frame_motion": True,
+            "workspace_planning": True,
             "axis_listing": True,
         }
 
@@ -90,7 +105,7 @@ class FakeRobotService:
 
     def plan_base_target(self, target):
         self._record("plan_base_target", target)
-        return FakeResult("base-plan")
+        return FakeBasePlanResult()
 
     def move_base_target(self, target):
         self._record("move_base_target", target)
@@ -199,6 +214,8 @@ class RobotWebApiTests(unittest.TestCase):
         capabilities = self.client.get("/api/capabilities")
         self.assertEqual(capabilities.status_code, 200)
         self.assertTrue(capabilities.json()["base_frame_motion"])
+        self.assertTrue(capabilities.json()["workspace_planning"])
+        self.assertNotIn("offset_planning", capabilities.json())
 
         axes = self.client.get("/api/axes")
         self.assertEqual(axes.status_code, 200)
@@ -260,6 +277,11 @@ class RobotWebApiTests(unittest.TestCase):
         ):
             response = self.client.post(path, json=target)
             self.assertEqual(response.status_code, 200)
+            if method_name == "plan_base_target":
+                payload = response.json()
+                self.assertEqual(payload["current_workspace_status"], "inside")
+                self.assertEqual(payload["target_workspace_status"], "inside")
+                self.assertFalse(payload["requires_workspace_entry_clearance"])
             name, args, kwargs = self.service.calls[-1]
             self.assertEqual(name, method_name)
             self.assertEqual(kwargs, {})
@@ -327,7 +349,7 @@ class RobotWebApiTests(unittest.TestCase):
 
         for path in (
             "/api/scan-positions/0/move",
-            "/api/scan-positions/9/pick-one",
+            "/api/scan-positions/5/pick-one",
             "/api/scan-positions/not-an-integer/move",
         ):
             with self.subTest(path=path):

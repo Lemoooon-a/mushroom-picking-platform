@@ -170,7 +170,7 @@ class RobotServiceShell:
             self.emit("Single-axis commands are raw/manual maintenance operations.")
             self.emit(
                 "They enforce only the selected axis state and soft limits; no Base-frame "
-                "workspace, IK, offset-workspace, side-switch, collision, or path checks apply."
+                "workspace, IK, arm-local workspace-entry, collision, or path checks apply."
             )
             return True
         if command == "status":
@@ -285,7 +285,7 @@ def format_capabilities(service: MushroomRobotService) -> tuple[str, ...]:
     return (
         f"Base-frame motion: {available(capabilities.base_frame_motion)}",
         f"Tray workspace gate: {available(capabilities.tray_workspace_gate)}",
-        f"Offset planning: {available(capabilities.offset_planning)}",
+        f"Workspace planning: {available(capabilities.workspace_planning)}",
         f"Robot motion envelope: {available(capabilities.robot_motion_envelope)}",
         f"Joint holding: {available(capabilities.joint_holding)}",
         f"Suction command: {available(capabilities.suction_command)}",

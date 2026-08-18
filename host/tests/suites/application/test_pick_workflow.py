@@ -117,7 +117,7 @@ class PickWorkflowTests(unittest.TestCase):
         plan = self.planner().plan(self.observation(), self.profile)
         self.assertEqual(
             (plan.overhead_target.z_mm, plan.contact_target.z_mm, plan.lift_target.z_mm),
-            (150, 50, 150),
+            (200, 50, 200),
         )
         self.assertEqual(plan.contact_target.yaw_deg, 20)
         self.assertEqual(len([item for item in self.backend.calls if isinstance(item, tuple) and item[0] == "plan"]), 3)
@@ -126,15 +126,25 @@ class PickWorkflowTests(unittest.TestCase):
         profile = GraspProfile(5, GraspYawMode.FIXED, 20, 0.8, 2)
         plan = self.planner().plan(self.observation(), profile)
         self.assertEqual(plan.contact_target.z_mm, 55.0)
-        self.assertEqual(plan.overhead_target.z_mm, 150.0)
-        self.assertEqual(plan.lift_target.z_mm, 150.0)
+        self.assertEqual(plan.overhead_target.z_mm, 200.0)
+        self.assertEqual(plan.lift_target.z_mm, 200.0)
 
     def test_planner_rejects_contact_at_or_above_working_height(self) -> None:
-        with self.assertRaisesRegex(ValueError, "must be below working height"):
-            self.planner().plan(
-                self.observation(),
-                GraspProfile(100, GraspYawMode.FIXED, 20, 0.8, 2),
-            )
+        for contact_offset_mm in (150.0, 151.0):
+            with self.subTest(contact_offset_mm=contact_offset_mm), self.assertRaisesRegex(
+                ValueError,
+                "must be below working height 200 mm",
+            ):
+                self.planner().plan(
+                    self.observation(),
+                    GraspProfile(
+                        contact_offset_mm,
+                        GraspYawMode.FIXED,
+                        20,
+                        0.8,
+                        2,
+                    ),
+                )
 
     def test_hand_eye_compensation_precedes_grasp_stage_offsets(self) -> None:
         calibration = HandEyeCalibration(
@@ -172,7 +182,7 @@ class PickWorkflowTests(unittest.TestCase):
                 plan.contact_target.z_mm,
                 plan.lift_target.z_mm,
             ),
-            (150.0, 40.0, 150.0),
+            (200.0, 40.0, 200.0),
         )
 
     def test_any_planning_failure_returns_no_partial_plan(self) -> None:

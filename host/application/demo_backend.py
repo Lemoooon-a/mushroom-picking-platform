@@ -14,8 +14,8 @@ from config.project.robot_motion_envelope import (
 )
 from config.robot_runtime import RobotRuntimeConfig
 from config.project.workspace_planning import (
-    DEFAULT_OFFSET_WORKSPACE_CONFIG,
-    OffsetWorkspaceConfig,
+    ArmLocalWorkspaceConfig,
+    DEFAULT_ARM_LOCAL_WORKSPACE_CONFIG,
 )
 from geometry.rigid_transform import RigidTransform
 from kinematics.frame_chain import RobotAxisState
@@ -157,7 +157,9 @@ def create_mushroom_robot_controller(
     *,
     execute: bool,
     runtime_config: RobotRuntimeConfig,
-    offset_workspace_config: OffsetWorkspaceConfig = DEFAULT_OFFSET_WORKSPACE_CONFIG,
+    arm_local_workspace_config: ArmLocalWorkspaceConfig = (
+        DEFAULT_ARM_LOCAL_WORKSPACE_CONFIG
+    ),
     motion_envelope: RobotMotionEnvelopeConfig = (
         DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG
     ),
@@ -170,7 +172,7 @@ def create_mushroom_robot_controller(
     workspace = TrayWorkspace(runtime_config.tray_workspace)
     runtime, flow = create_demo_flow(
         execute=execute,
-        offset_workspace_config=offset_workspace_config,
+        arm_local_workspace_config=arm_local_workspace_config,
         motion_envelope=motion_envelope,
         emit=emit,
     )

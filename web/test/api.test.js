@@ -36,6 +36,26 @@ test("TCP plan and execute use the backend BaseTargetRequest shape", async () =>
   );
 });
 
+test("TCP plan preserves single-workspace status and entry-clearance fields", async () => {
+  const payload = {
+    current_workspace_status: "outside",
+    target_workspace_status: "inside",
+    requires_workspace_entry_clearance: true,
+    clearance_lift_mm: 150,
+    stages: [],
+  };
+  const api = createRobotApi("http://robot.test", async () => response(payload));
+
+  const result = await api.planBaseTarget({
+    x_mm: 300,
+    y_mm: 400,
+    z_mm: 120,
+    yaw_deg: 0,
+  });
+
+  assert.deepEqual(result, payload);
+});
+
 test("relative Jog sends only delta to the selected axis endpoint", async () => {
   let observed;
   const api = createRobotApi("http://robot.test", async (url, options) => {

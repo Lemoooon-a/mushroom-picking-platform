@@ -26,9 +26,9 @@ V1–V3 分别实现版本化 Vision Gateway、原子 PickPlan/Workflow 和顶�
 | MG4010E CAN | Implemented | transport、协议 codec、驱动、读状态、位置与 holding 命令 | 长时双电机总线、掉线恢复 | Offline tested；历史实机证据有限 |
 | Shoulder/Elbow | Implemented | 零点、方向、36:1、软限位、enable/disable/state、到位检测 | 原始标定记录与负载回归 | Offline tested；参数声明来自实测 |
 | Rotation | Implemented | RS-485 协议、位置换算、`-150..150°`、torque 生命周期 | 无已验证独立 stop；负载速度未验收 | Offline tested；历史小角度证据 |
-| 五轴运动学 | Implemented | FK/IK、偏移工作区、关节限位过滤、确定性候选选择 | 真实几何与多姿态机械复核 | Mathematical/offline tested |
+| 五轴运动学 | Implemented | FK/IK、单一 arm-local 工作区、关节限位过滤、确定性候选选择 | 真实几何与多姿态机械复核 | Mathematical/offline tested |
 | 多执行器协调 | Implemented | 五轴点到点提交、到位稳定窗、timeout、peer stop、startup/return | 不是轨迹同步；无碰撞/扫掠模型 | Offline integrated |
-| 坐标与工作区策略 | Implemented | Base/Slide/Arm/Tool 链、Tray 最终 TCP、arm-local offset、startup/clearance envelope | 完整机械/碰撞包络尚未建模 | Mathematical/offline tested |
+| 坐标与工作区策略 | Implemented | Base/Slide/Arm/Tool 链、Tray 最终 TCP、单一 arm-local workspace、startup/workspace-entry envelope | 完整机械/碰撞包络尚未建模 | Mathematical/offline tested |
 | 视觉通信与观察 | Implemented | JSON v1、Fake/Socket gateway、timeout/长度/frame/request 校验、CaptureSnapshot | 无真实视觉 producer、内参/深度证据 | Offline tested；真实 producer unavailable |
 | 视觉到机器人 | Implemented with gate | q_capture 绑定、Camera→Tool→Base、低质量/过期/手眼缺失 fail-closed | `tool_T_camera` 当前缺失/未验证 | Offline tested；真实运动 blocked |
 | 抓取规划与流程 | Implemented with gate | GraspProfile、pre/contact/retreat 原子计划、dry-run/execute 阶段、FAULT 规则 | 真实 profile、真空确认、放置/释放、自动恢复 | Offline tested；hardware-blocked |
@@ -96,7 +96,7 @@ Feetech Rotation axis ──────────────┘        ├�
 - `host/config/` 根：typed models、loaders、schema 和当前机械臂四份正式配置。
 - `host/config/project/`：当前项目机器的 tracked 参数与规划策略。
 - `host/calibration/`：标定算法、状态模型和 capture/solve 代码；不保存真实机器 JSON 结果。
-- `host/config/project/workspace_planning.py`：arm-local 偏置求解策略；不含 Base clearance。
+- `host/config/project/workspace_planning.py`：单一 arm-local 工作区与 Slide 候选策略；不含 Base clearance。
 - `host/config/project/robot_motion_envelope.py`：startup/return 与中间安全阶段策略；不是碰撞模型。
 - `host/tests/`：按 config、geometry、kinematics、calibration、protocol、motion、application、vision、cli、hardware_adapter、integration 分组的离线测试。
 - CubeMX/Core 等生成代码与手写 `App/` 代码在子模块中保持原有边界，本轮未重构。
@@ -141,9 +141,10 @@ machine protocol v2 提供带 command id 的接受响应与终态 event；Host c
 - Shoulder：输出绝对角 `100°` 为逻辑零点，方向 `+1`，范围 `[-65,65]°`。
 - Elbow：输出绝对角 `158°` 为逻辑零点，方向 `-1`，范围 `[-160,160]°`。
 - Rotation：`zero_raw=2130`、方向 `+1`，范围 `[-150,150]°`。
-- 正偏移 arm-local 工作区：X `[50,450] mm`、Y `[150,350] mm`；负偏移：X `[50,450] mm`、Y `[-350,-150] mm`。
-- 培养槽最终 TCP 目标使用 Base frame 绝对坐标：X `[20,480] mm`、Y `[20,700] mm`、Z `[0,180] mm`。
-- 五轴 solver 支持 FK/IK、可达性、关节限位过滤、偏移候选与确定性选择；transition planner 生成 `DIRECT` 或 `LIFT/TRANSIT/LOWER` 阶段。
+- Homing 后 startup-safe pose：Base `(400,150,200, yaw=0)`；硬件 Homing 零点和轴标定未改。
+- 单一 arm-local 工作区：X `[100,600] mm`、Y `[150,350] mm`，中心 Y=`250 mm`。
+- 培养槽最终 TCP 目标使用 Base frame 绝对坐标：X `[100,600] mm`、Y `[150,800] mm`、Z `[10,200] mm`。
+- 五轴 solver 支持 FK/IK、可达性、关节限位过滤、单工作区 Slide 候选与确定性选择；transition planner 对 `INSIDE→INSIDE` 生成 `DIRECT`，对 `OUTSIDE→INSIDE` 生成 `LIFT/TRANSIT/LOWER` 阶段。
 - 真实几何来自 Git 跟踪的 `host/config/robot_geometry.json`，Base 外参来自
   `host/config/robot_runtime.json` 的 `frame_transforms` 区块。数学测试通过不等于机构无碰撞或实机目标正确。
 - 当前 `tool_T_camera` 缺失或未验证；Base 手工运动可用，Camera 目标在 FK/planner/submit 前被拒绝。
@@ -154,7 +155,7 @@ machine protocol v2 提供带 command id 的接受响应与终态 event；Host c
 
 `MushroomRobotController` 提供 startup、Base pose plan/move、return、stop、holding、suction、status 与 shutdown。最终任务目标必须先通过 `TrayWorkspace`；startup、return、`LIFT`、`TRANSIT` 不被普通最终目标 Z 门限误拦截。
 
-`MushroomRobotService` 是唯一进程级应用入口。Vision Gateway 只通信/校验，snapshot 把 observation 绑定到拍摄姿态，resolver 只组合 Camera→Base，PickPlanner 生成 pre/contact/retreat，Workflow 只编排阶段；任务运动仍经 controller 的 Base 出口。新增 raw/manual 单轴入口只用于维护、标定和小范围调试，不执行 TrayWorkspace、IK、OffsetWorkspace、side-switch 或碰撞路径检查。
+`MushroomRobotService` 是唯一进程级应用入口。Vision Gateway 只通信/校验，snapshot 把 observation 绑定到拍摄姿态，resolver 只组合 Camera→Base，PickPlanner 生成 pre/contact/retreat，Workflow 只编排阶段；任务运动仍经 controller 的 Base 出口。新增 raw/manual 单轴入口只用于维护、标定和小范围调试，不执行 TrayWorkspace、IK、ArmLocalWorkspace、workspace-entry 或碰撞路径检查。
 
 五轴相对运动读取调用时当前有效逻辑位置，在同一提交临界区完成 busy/fault/Homing/holding 检查、`current + delta` 换算、软限位校验和绝对提交。等待到位在锁外复用现有容差、稳定窗口和 timeout；零增量在轴容差内返回 no-op ARRIVED，不发送运动命令。
 
@@ -183,9 +184,9 @@ machine protocol v2 提供带 command id 的接受响应与终态 event；Host c
 
 ### 9.3 Mathematical Tests
 
-五轴 FK/IK、Base solver、offset workspace、motion envelope、transition planner、RigidTransform、
-frame chain、tray boundary、vision protocol/gateway/snapshot、grasp planner 与状态机均包含在通过的 553 项测试中。输入为合成值或本地
-example，不读取真实机器标定来证明精度。
+五轴 FK/IK、Base solver、arm-local workspace、motion envelope、transition planner、RigidTransform、
+frame chain、tray boundary、vision protocol/gateway/snapshot、grasp planner 与状态机均有离线测试覆盖。输入为合成值或本地
+example，不读取真实机器标定来证明精度；本次单工作区改造也不构成硬件验证。
 
 ### 9.4 Electrical Bench Tests
 
@@ -231,7 +232,7 @@ example，不读取真实机器标定来证明精度。
 5. 仓库没有本轮 Host 组合能力的真实硬件日志，离线通过不能升级为 hardware-tested。
 6. S1 与根提交尚未 push；root gitlink 在其他机器可获取之前，必须先发布子模块提交。
 7. 真实 socket vision producer 与 validated GraspProfile 均不存在；当前只有 Fake gateway 的合成验证。
-8. Raw/manual 单轴运动没有 Base-frame 工作区、逆运动学、跨轴协调、side-switch clearance 或碰撞路径保护，只能用于受控维护操作。
+8. Raw/manual 单轴运动没有 Base-frame 工作区、逆运动学、跨轴协调、workspace-entry clearance 或碰撞路径保护，只能用于受控维护操作。
 
 ### Risks
 

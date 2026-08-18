@@ -36,9 +36,9 @@ from config.robot_runtime import (  # noqa: E402
     load_robot_runtime_config,
 )
 from config.project.workspace_planning import (  # noqa: E402
-    DEFAULT_OFFSET_WORKSPACE_CONFIG,
-    OffsetWorkspaceConfig,
-    OffsetWorkspaceSide,
+    ArmLocalWorkspaceConfig,
+    ArmLocalWorkspaceStatus,
+    DEFAULT_ARM_LOCAL_WORKSPACE_CONFIG,
     SlideSelectionReason,
 )
 from drivers.stm32_motion import STM32AxisFault  # noqa: E402
@@ -812,8 +812,8 @@ class DemoMotionFlow:
             base_T_tool_target=target,
             current_state=current_state,
         )
-        if final.workspace_side is OffsetWorkspaceSide.OUTSIDE:
-            raise DemoFlowError("normal target resolved outside both offset workspaces")
+        if final.workspace_status is ArmLocalWorkspaceStatus.OUTSIDE:
+            raise DemoFlowError("normal target resolved outside the arm-local workspace")
         transit_state = RobotAxisState(
             final.slide_mm,
             self.startup_definition.z_axis_mm,
@@ -925,7 +925,7 @@ class DemoMotionFlow:
         )
         self.emit(
             f"  IK branch={solution.elbow_branch} "
-            f"workspace={solution.workspace_side.name} "
+            f"workspace={solution.workspace_status.name} "
             f"FK residual={solution.position_residual_mm:.9g} mm/"
             f"{solution.yaw_residual_deg:.9g} deg"
         )
@@ -934,8 +934,8 @@ class DemoMotionFlow:
 
     def _emit_regular_plan(self, plan: BaseMovePlan) -> None:
         self.emit(
-            f"BaseMoveTransitionPlanner: current={plan.current_workspace_side.name} "
-            f"target={plan.target_workspace_side.name} "
+            f"BaseMoveTransitionPlanner: current={plan.current_workspace_status.name} "
+            f"target={plan.target_workspace_status.name} "
             f"stages={','.join(stage.kind.name for stage in plan.stages)}"
         )
         self._emit_demo_stages(
@@ -965,12 +965,12 @@ class DemoMotionFlow:
 
     def _emit_fk_status(self, state: RobotAxisState, *, label: str) -> None:
         pose = self.solver.forward_kinematics_base(state)
-        side, local_x, local_y = self.solver.workspace_side_for_state(state)
+        status, local_x, local_y = self.solver.workspace_status_for_state(state)
         self.emit(f"{label}:")
         self._emit_transform(pose)
         self.emit(
             f"  local_x={local_x:.6f} mm local_y={local_y:.6f} mm "
-            f"workspace_side={side.name}"
+            f"workspace_status={status.name}"
         )
 
     def _emit_states(self, states: Sequence[AxisState]) -> None:
@@ -995,7 +995,7 @@ class DemoMotionFlow:
 
     def _emit_workspace(self, tray_workspace: TrayWorkspace) -> None:
         config = tray_workspace.config
-        offset = self.solver.workspace
+        arm_local = self.solver.workspace
         envelope = self.motion_envelope
         startup = envelope.startup_pose
         self.emit("Cultivation-tray workspace in Base frame:")
@@ -1003,23 +1003,14 @@ class DemoMotionFlow:
         self.emit(f"  X: [{config.x_min_mm:g}, {config.x_max_mm:g}] mm")
         self.emit(f"  Y: [{config.y_min_mm:g}, {config.y_max_mm:g}] mm")
         self.emit(f"  Z: [{config.z_min_mm:g}, {config.z_max_mm:g}] mm")
-        self.emit("Positive offset workspace in arm-local frame:")
+        self.emit("Arm-local workspace:")
         self.emit(
-            f"  local X: [{offset.local_x_min_mm:g}, "
-            f"{offset.local_x_max_mm:g}] mm"
+            f"  local X: [{arm_local.local_x_min_mm:g}, "
+            f"{arm_local.local_x_max_mm:g}] mm"
         )
         self.emit(
-            f"  local Y: [{offset.positive_y_min_mm:g}, "
-            f"{offset.positive_y_max_mm:g}] mm"
-        )
-        self.emit("Negative offset workspace in arm-local frame:")
-        self.emit(
-            f"  local X: [{offset.local_x_min_mm:g}, "
-            f"{offset.local_x_max_mm:g}] mm"
-        )
-        self.emit(
-            f"  local Y: [{offset.negative_y_min_mm:g}, "
-            f"{offset.negative_y_max_mm:g}] mm"
+            f"  local Y: [{arm_local.local_y_min_mm:g}, "
+            f"{arm_local.local_y_max_mm:g}] mm"
         )
         self.emit("Robot motion envelope (software safety-stage policy):")
         self.emit(
@@ -1031,8 +1022,8 @@ class DemoMotionFlow:
             f"Z axis={startup.z_axis_mm:g} mm"
         )
         self.emit(
-            "  side-switch clearance Base Z: "
-            f"{envelope.side_switch.clearance_base_z_mm:g} mm (absolute floor)"
+            "  workspace-entry clearance Base Z: "
+            f"{envelope.workspace_entry.clearance_base_z_mm:g} mm (absolute floor)"
         )
         self.emit("Axis and joint soft limits:")
         for axis in _AXIS_ORDER:
@@ -1042,7 +1033,7 @@ class DemoMotionFlow:
                 f"{descriptor.maximum_position:g}] {descriptor.position_unit}"
             )
         self.emit("Tray workspace is not the robot mechanical range.")
-        self.emit("Offset workspace is not expressed in Base coordinates.")
+        self.emit("Arm-local workspace is not expressed in Base coordinates.")
         self.emit("Robot motion envelope is not a collision model.")
 
     def _emit_transform(self, transform: RigidTransform) -> None:
@@ -1101,7 +1092,9 @@ def build_parser() -> argparse.ArgumentParser:
 def create_demo_flow(
     *,
     execute: bool,
-    offset_workspace_config: OffsetWorkspaceConfig = DEFAULT_OFFSET_WORKSPACE_CONFIG,
+    arm_local_workspace_config: ArmLocalWorkspaceConfig = (
+        DEFAULT_ARM_LOCAL_WORKSPACE_CONFIG
+    ),
     motion_envelope: RobotMotionEnvelopeConfig = (
         DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG
     ),
@@ -1115,7 +1108,7 @@ def create_demo_flow(
     solver = _configured_solver(
         runtime,
         load_robot_five_axis_kinematics(),
-        workspace_config=offset_workspace_config,
+        workspace_config=arm_local_workspace_config,
     )
     return runtime, DemoMotionFlow(
         runtime=runtime,
@@ -1185,7 +1178,7 @@ def _configured_solver(
     runtime: object,
     model: FiveAxisKinematics,
     *,
-    workspace_config: OffsetWorkspaceConfig,
+    workspace_config: ArmLocalWorkspaceConfig,
 ) -> BaseFrameFiveAxisSolver:
     descriptors = {
         descriptor.name: descriptor for descriptor in runtime.controller.list_axes()

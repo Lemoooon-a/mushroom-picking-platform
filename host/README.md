@@ -603,7 +603,7 @@ cd host
 .venv/bin/python scripts/robot_service.py --mode dry-run --fake-position 0 0 100
 ```
 
-`read-only` 和 `dry-run` 都不执行设备发现或构造硬件 runtime；dry-run 使用正式几何、Base solver、TrayWorkspace、OffsetWorkspace 和 RobotMotionEnvelope 进行纯算法规划。`execute` 沿用现有 MotionAuthorization，并要求：
+`read-only` 和 `dry-run` 都不执行设备发现或构造硬件 runtime；dry-run 使用正式几何、Base solver、TrayWorkspace、ArmLocalWorkspace 和 RobotMotionEnvelope 进行纯算法规划。`execute` 沿用现有 MotionAuthorization，并要求：
 
 ```bash
 .venv/bin/python scripts/robot_service.py --mode execute \
@@ -617,5 +617,5 @@ cd host
 
 Service 还提供 `axes`、`axis state/states`、`axis move-abs` 和 `axis move-rel`。这些是
 raw/manual maintenance operations：只执行所选轴自身状态与软限位门禁，不经过 TrayWorkspace、
-Base-frame IK、OffsetWorkspace、side-switch clearance 或碰撞路径检查。相对增量基于调用时读取的
+Base-frame IK、ArmLocalWorkspace、workspace-entry clearance 或碰撞路径检查。相对增量基于调用时读取的
 当前有效逻辑位置，并在 controller 提交锁内解析为绝对目标；零增量在到位容差内直接完成且不提交硬件命令。

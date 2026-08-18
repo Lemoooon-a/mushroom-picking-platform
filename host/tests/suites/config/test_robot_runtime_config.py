@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from application.tray_workspace import TrayWorkspace
 from config.hardware import HardwareConfig, load_robot_hardware_config
 from config.motion_runtime import MotionRuntimeConfig, load_robot_motion_config
 from config.robot_runtime import (
@@ -25,7 +26,64 @@ class RobotRuntimeConfigTests(unittest.TestCase):
         self.assertEqual(config.source_path, DEFAULT_ROBOT_RUNTIME_PATH)
         self.assertTrue(config.vision_runtime.validated)
         self.assertEqual(config.vision_runtime.host, "172.20.10.10")
-        self.assertEqual(len(config.scan_pick.scan_poses), 8)
+        self.assertEqual(len(config.scan_pick.scan_poses), 4)
+        self.assertEqual(
+            (
+                config.tray_workspace.x_min_mm,
+                config.tray_workspace.x_max_mm,
+                config.tray_workspace.y_min_mm,
+                config.tray_workspace.y_max_mm,
+                config.tray_workspace.z_min_mm,
+                config.tray_workspace.z_max_mm,
+            ),
+            (100.0, 600.0, 150.0, 800.0, 10.0, 200.0),
+        )
+        self.assertEqual(
+            config.scan_pick.scan_y_positions_mm,
+            (312.5, 637.5),
+        )
+        self.assertEqual(
+            tuple(
+                (pose.x_mm, pose.y_mm, pose.z_mm)
+                for pose in config.scan_pick.scan_poses
+            ),
+            (
+                (150.0, 312.5, 200.0),
+                (150.0, 637.5, 200.0),
+                (350.0, 312.5, 200.0),
+                (350.0, 637.5, 200.0),
+            ),
+        )
+        self.assertTrue(
+            all(pose.z_mm == 200.0 for pose in config.scan_pick.scan_poses)
+        )
+        tray_workspace = TrayWorkspace(config.tray_workspace)
+        for x_mm in (100.0, 600.0):
+            with self.subTest(x_mm=x_mm):
+                self.assertTrue(tray_workspace.check_xyz(x_mm, 400.0, 100.0).allowed)
+        for y_mm in (150.0, 800.0):
+            with self.subTest(y_mm=y_mm):
+                self.assertTrue(tray_workspace.check_xyz(300.0, y_mm, 100.0).allowed)
+        for point in (
+            (300.0, 149.0, 100.0),
+            (300.0, 801.0, 100.0),
+            (99.0, 400.0, 100.0),
+            (601.0, 400.0, 100.0),
+            (300.0, 400.0, 9.0),
+            (300.0, 400.0, 201.0),
+        ):
+            with self.subTest(outside_point=point):
+                self.assertFalse(tray_workspace.check_xyz(*point).allowed)
+        self.assertTrue(
+            all(
+                tray_workspace.check_xyz(
+                    pose.x_mm,
+                    pose.y_mm,
+                    pose.z_mm,
+                ).allowed
+                for pose in config.scan_pick.scan_poses
+            )
+        )
         self.assertEqual(
             (
                 config.scan_pick.place_pose.x_mm,
@@ -33,7 +91,7 @@ class RobotRuntimeConfigTests(unittest.TestCase):
                 config.scan_pick.place_pose.z_mm,
                 config.scan_pick.place_pose.yaw_deg,
             ),
-            (150.0, 1000.0, 150.0, 0.0),
+            (150.0, 1000.0, 200.0, 0.0),
         )
         self.assertEqual(
             (
@@ -42,7 +100,7 @@ class RobotRuntimeConfigTests(unittest.TestCase):
                 config.scan_pick.oversized_place_pose.z_mm,
                 config.scan_pick.oversized_place_pose.yaw_deg,
             ),
-            (450.0, 1000.0, 150.0, 0.0),
+            (450.0, 1000.0, 200.0, 0.0),
         )
         self.assertFalse(hasattr(config.scan_pick, "place_approach_height_mm"))
         self.assertTrue(config.recording.enabled)

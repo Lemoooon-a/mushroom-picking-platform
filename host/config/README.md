@@ -29,13 +29,13 @@ Robot Service 与 Web API 固定读取 `robot_runtime.json`，不接受配置路
 | 配置 | 坐标系 | 应用对象 | 不应用于 |
 | --- | --- | --- | --- |
 | `TrayWorkspaceConfig` | Base frame | 普通 `plan/move_to_base_pose()` 和未来视觉最终 TCP | Homing、startup、return、`LIFT`、`TRANSIT`、raw debug |
-| `OffsetWorkspaceConfig` | arm-local / Slide-relative | solver 侧别、Slide 保持/候选、正负偏置切换判断 | Tray 门限、startup pose、Base clearance |
-| `RobotMotionEnvelopeConfig` | Base/轴逻辑混合但字段显式标注 | startup/return 与 side-switch 中间阶段 | 普通最终任务许可、完整碰撞检测、物理安全认证 |
+| `ArmLocalWorkspaceConfig` | arm-local / Slide-relative | solver 状态、Slide 保持/中心/fallback 候选 | Tray 门限、startup pose、Base clearance |
+| `RobotMotionEnvelopeConfig` | Base/轴逻辑混合但字段显式标注 | startup/return 与 workspace-entry 中间阶段 | 普通最终任务许可、完整碰撞检测、物理安全认证 |
 
 正常目标调用链为：
 
 ```text
-Base final TCP → TrayWorkspace → Base solver → OffsetWorkspace
+Base final TCP → TrayWorkspace → Base solver → ArmLocalWorkspace
                → transition planner → RobotMotionEnvelope policy → execution
 ```
 

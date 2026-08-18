@@ -166,12 +166,12 @@ class ManualMotionTests(unittest.TestCase):
 
     def test_plan_base_is_read_only_and_prints_complete_five_axis_preview(self) -> None:
         model = self._plan_model()
-        current = self._plan_state(model, 300, 250, -300)
+        current = self._plan_state(model, 300, 0, -300)
         runtime = self._plan_runtime(current)
         output: list[str] = []
         target = self._plan_target(
             model,
-            self._plan_state(model, 350, -250, -350),
+            self._plan_state(model, 350, 250, -350),
         )
         self.assertTrue(
             run_plan_base(
@@ -196,10 +196,10 @@ class ManualMotionTests(unittest.TestCase):
         rendered = "\n".join(output)
         for expected in (
             "Current Base TCP pose:",
-            "Current workspace side: POSITIVE",
-            "Target workspace side: NEGATIVE",
+            "Current workspace status: OUTSIDE",
+            "Target workspace status: INSIDE",
             "Slide selection reason: KEEP_CURRENT_SLIDE",
-            "Clearance lift: 150.000000000 mm",
+            "Clearance lift: 200.000000000 mm",
             "Stage count: 3",
             "Stage 1: LIFT",
             "Stage 2: TRANSIT",
@@ -210,7 +210,7 @@ class ManualMotionTests(unittest.TestCase):
         ):
             self.assertIn(expected, rendered)
 
-    def test_plan_base_same_side_prints_one_direct_stage(self) -> None:
+    def test_plan_base_inside_workspace_prints_one_direct_stage(self) -> None:
         model = self._plan_model()
         current = self._plan_state(model, 300, 250, -300)
         runtime = self._plan_runtime(current)
@@ -231,7 +231,7 @@ class ManualMotionTests(unittest.TestCase):
         rendered = "\n".join(output)
         self.assertIn("Stage count: 1", rendered)
         self.assertIn("Stage 1: DIRECT", rendered)
-        self.assertIn("Target workspace side: POSITIVE", rendered)
+        self.assertIn("Target workspace status: INSIDE", rendered)
         runtime.controller.validate_positions.assert_called_once()
         runtime.controller.submit_positions.assert_not_called()
 
@@ -239,11 +239,11 @@ class ManualMotionTests(unittest.TestCase):
         model = self._plan_model(149.0)
         target = self._plan_target(
             model,
-            self._plan_state(model, 350, -250, -200),
+            self._plan_state(model, 350, 250, -200),
         )
         with self.assertRaises(ClearanceHeightUnreachableError):
             run_plan_base(
-                self._plan_runtime(self._plan_state(model, 300, 250, -100)),
+                self._plan_runtime(self._plan_state(model, 300, 0, -100)),
                 target,
                 frame_document=self._frame_document(validated=True, base_z_mm=149.0),
                 five_axis_kinematics=model,

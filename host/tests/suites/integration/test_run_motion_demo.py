@@ -18,7 +18,7 @@ from config.project.robot_motion_envelope import (
 )
 from config.robot_runtime import RobotRuntimeConfigError
 from config.tray_workspace import TrayWorkspaceConfig
-from config.project.workspace_planning import OffsetWorkspaceSide
+from config.project.workspace_planning import ArmLocalWorkspaceStatus
 from geometry.rigid_transform import RigidTransform
 from kinematics.base_frame_solver import BaseFrameFiveAxisSolver, FiveAxisNoSolutionError
 from kinematics.base_move_transition_planner import BaseMoveTransitionPlanner
@@ -448,7 +448,7 @@ def _application_controller(
 
 
 class StartupSafePoseSolverTests(unittest.TestCase):
-    def test_fixed_center_pose_is_outside_without_relaxing_normal_targets(self) -> None:
+    def test_startup_pose_is_inside_and_available_to_normal_solver(self) -> None:
         subject = _solver()
         solved = solve_startup_safe_pose(
             subject,
@@ -457,18 +457,20 @@ class StartupSafePoseSolverTests(unittest.TestCase):
         self.assertAlmostEqual(solved.solution.slide_mm, 0.0)
         self.assertAlmostEqual(solved.solution.z_mm, 0.0)
         self.assertAlmostEqual(solved.base_T_tool_target.translation_mm[0], 400.0)
-        self.assertAlmostEqual(solved.base_T_tool_target.translation_mm[1], 0.0)
-        self.assertIs(solved.solution.workspace_side, OffsetWorkspaceSide.OUTSIDE)
+        self.assertAlmostEqual(solved.base_T_tool_target.translation_mm[1], 150.0)
+        self.assertAlmostEqual(solved.base_T_tool_target.translation_mm[2], 180.0)
+        self.assertIs(
+            solved.solution.workspace_status,
+            ArmLocalWorkspaceStatus.INSIDE,
+        )
         self.assertLess(solved.solution.position_residual_mm, 1e-6)
-
         normal = subject.solve_base_target(
             base_T_tool_target=solved.base_T_tool_target,
             current_state=solved.solution.axis_state(),
         )
-        self.assertIsNot(normal.workspace_side, OffsetWorkspaceSide.OUTSIDE)
-        self.assertNotAlmostEqual(normal.slide_mm, 0.0)
+        self.assertIs(normal.workspace_status, ArmLocalWorkspaceStatus.INSIDE)
 
-    def test_selected_branch_minimizes_current_shoulder_elbow_change(self) -> None:
+    def test_startup_selects_the_only_joint_limit_valid_branch(self) -> None:
         subject = _solver()
         near_positive = solve_startup_safe_pose(
             subject,
@@ -479,7 +481,13 @@ class StartupSafePoseSolverTests(unittest.TestCase):
             current_state=RobotAxisState(0.0, 0.0, 60.0, -120.0, 60.0),
         )
         self.assertEqual(near_positive.solution.elbow_branch, "elbow-positive")
-        self.assertEqual(near_negative.solution.elbow_branch, "elbow-negative")
+        self.assertEqual(near_negative.solution.elbow_branch, "elbow-positive")
+        self.assertTrue(
+            any(
+                rejection.startswith("elbow-negative: Shoulder")
+                for rejection in near_negative.branch_rejections
+            )
+        )
 
     def test_custom_startup_pose_is_injected_into_demo_flow(self) -> None:
         startup = StartupSafePoseConfig(base_x_mm=420.0)
@@ -744,15 +752,20 @@ class StartupExecutionTests(unittest.TestCase):
             any("Cultivation-tray workspace in Base frame:" in line for line in output)
         )
         self.assertTrue(
-            any("Positive offset workspace in arm-local frame:" in line for line in output)
+            any("Arm-local workspace:" in line for line in output)
         )
         for message in (
             "Tray workspace is not the robot mechanical range.",
-            "Offset workspace is not expressed in Base coordinates.",
+            "Arm-local workspace is not expressed in Base coordinates.",
             "Robot motion envelope is not a collision model.",
         ):
             self.assertIn(message, output)
-        self.assertTrue(any("side-switch clearance Base Z: 150 mm" in line for line in output))
+        self.assertTrue(
+            any(
+                "workspace-entry clearance Base Z: 200 mm" in line
+                for line in output
+            )
+        )
         self.assertFalse(
             any(item.startswith(("validate:", "submit:", "stop:")) for item in runtime.log),
             runtime.log,
@@ -820,17 +833,22 @@ class DemoPlanningTests(unittest.TestCase):
         )
         self.assertFalse(any(item.startswith("submit:") for item in runtime.log))
 
-    def test_first_positive_and_negative_targets_are_transit_then_lower(self) -> None:
-        for target_y in (250.0, -250.0):
-            with self.subTest(target_y=target_y):
-                runtime = _FakeRuntime()
-                flow, output = _flow(runtime, execute=False)
-                flow.startup()
-                self.assertTrue(flow.move(200.0, target_y, 120.0, 0.0))
-                special = [line for line in output if line.strip().startswith(("1.", "2."))]
-                self.assertTrue(any("1. TRANSIT:" in line for line in special))
-                self.assertTrue(any("2. LOWER:" in line for line in special))
-                self.assertFalse(any("LIFT:" in line for line in special))
+    def test_first_inside_target_is_transit_then_lower(self) -> None:
+        runtime = _FakeRuntime()
+        flow, output = _flow(runtime, execute=False)
+        flow.startup()
+        self.assertTrue(flow.move(200.0, 250.0, 120.0, 0.0))
+        special = [line for line in output if line.strip().startswith(("1.", "2."))]
+        self.assertTrue(any("1. TRANSIT:" in line for line in special))
+        self.assertTrue(any("2. LOWER:" in line for line in special))
+        self.assertFalse(any("LIFT:" in line for line in special))
+
+    def test_first_negative_target_is_rejected(self) -> None:
+        runtime = _FakeRuntime()
+        flow, _output = _flow(runtime, execute=False)
+        flow.startup()
+        with self.assertRaises(FiveAxisNoSolutionError):
+            flow.move(200.0, -250.0, 120.0, 0.0)
 
     def test_first_target_at_z_home_uses_transit_only(self) -> None:
         runtime = _FakeRuntime()
@@ -841,7 +859,7 @@ class DemoPlanningTests(unittest.TestCase):
         self.assertTrue(any("1. TRANSIT:" in line for line in special_lines))
         self.assertFalse(any("LOWER:" in line for line in special_lines))
 
-    def test_regular_same_side_and_cross_side_keep_existing_planner_semantics(self) -> None:
+    def test_regular_inside_moves_are_direct(self) -> None:
         runtime = _FakeRuntime()
         flow, output = _flow(runtime, execute=False)
         flow.startup()
@@ -850,14 +868,8 @@ class DemoPlanningTests(unittest.TestCase):
         self.assertTrue(flow.move(250.0, 250.0, 110.0, 0.0))
         self.assertTrue(any("stages=DIRECT" in line for line in output))
         output.clear()
-        self.assertTrue(flow.move(200.0, -250.0, 100.0, 0.0))
-        self.assertTrue(any("stages=LIFT,TRANSIT,LOWER" in line for line in output))
-        output.clear()
-        self.assertTrue(flow.move(250.0, -250.0, 110.0, 0.0))
+        self.assertTrue(flow.move(200.0, 300.0, 100.0, 0.0))
         self.assertTrue(any("stages=DIRECT" in line for line in output))
-        output.clear()
-        self.assertTrue(flow.move(200.0, 250.0, 100.0, 0.0))
-        self.assertTrue(any("stages=LIFT,TRANSIT,LOWER" in line for line in output))
 
     def test_return_to_startup_is_lift_to_home_then_transit(self) -> None:
         runtime = _FakeRuntime()
@@ -874,7 +886,7 @@ class DemoPlanningTests(unittest.TestCase):
         self.assertAlmostEqual(flow.virtual_state.z_mm, 0.0)
         pose = flow.solver.forward_kinematics_base(flow.virtual_state)
         self.assertAlmostEqual(pose.translation_mm[0], 400.0)
-        self.assertAlmostEqual(pose.translation_mm[1], 0.0)
+        self.assertAlmostEqual(pose.translation_mm[1], 150.0)
 
 
 if __name__ == "__main__":

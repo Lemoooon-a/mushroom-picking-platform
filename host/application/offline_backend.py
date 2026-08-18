@@ -14,7 +14,10 @@ from config.project.joints import ELBOW_JOINT_CONFIG, SHOULDER_JOINT_CONFIG
 from config.project.robot_motion_envelope import (
     DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG, RobotMotionEnvelopeConfig,
 )
-from config.project.workspace_planning import DEFAULT_OFFSET_WORKSPACE_CONFIG, OffsetWorkspaceConfig
+from config.project.workspace_planning import (
+    ArmLocalWorkspaceConfig,
+    DEFAULT_ARM_LOCAL_WORKSPACE_CONFIG,
+)
 from config.robot_runtime import RobotRuntimeConfig
 from geometry.rigid_transform import RigidTransform
 from kinematics.base_frame_solver import BaseFrameFiveAxisSolver, BaseFrameSolverConfig
@@ -180,13 +183,15 @@ class OfflinePlanningBackend:
 def create_offline_planning_controller(
     *,
     runtime_config: RobotRuntimeConfig,
-    offset_workspace_config: OffsetWorkspaceConfig = DEFAULT_OFFSET_WORKSPACE_CONFIG,
+    arm_local_workspace_config: ArmLocalWorkspaceConfig = (
+        DEFAULT_ARM_LOCAL_WORKSPACE_CONFIG
+    ),
     motion_envelope: RobotMotionEnvelopeConfig = DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
 ) -> tuple[MushroomRobotController, OfflinePlanningBackend]:
     solver = BaseFrameFiveAxisSolver(
         five_axis_kinematics=load_robot_five_axis_kinematics(),
         axis_descriptors=_offline_descriptors(),
-        config=BaseFrameSolverConfig(workspace=offset_workspace_config),
+        config=BaseFrameSolverConfig(workspace=arm_local_workspace_config),
     )
     backend = OfflinePlanningBackend(
         solver,

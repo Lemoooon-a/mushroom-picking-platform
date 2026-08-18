@@ -106,6 +106,8 @@ class RobotServiceCliTests(unittest.TestCase):
         )
         output = "\n".join(format_capabilities(service))
         self.assertIn("Base-frame motion: available", output)
+        self.assertIn("Workspace planning: available", output)
+        self.assertNotIn("Offset planning", output)
         self.assertIn("Vision gateway: fake available", output)
         self.assertIn("Hand-eye calibration: missing", output)
         self.assertIn("Pick planning: unavailable", output)

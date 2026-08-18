@@ -75,9 +75,9 @@ cd /Users/sd/Projects/mushroom-picking-platform/host
 | POST | `/api/vision/observe` | `request_observation()` | 无请求体 |
 | POST | `/api/vision/plan` | `request_observation()` → `resolve_camera_point()` → `plan_base_target()` | 新拍一帧，按 capture 快照转换到 Base 后只规划；不执行运动 |
 | POST | `/api/pick` | `pick()` | 无请求体，使用已加载 GraspProfile |
-| POST | `/api/scan-positions/{scan_index}/move` | `move_to_scan_position()` | 移动到已校验的第 `1..8` 个扫描位；无请求体 |
+| POST | `/api/scan-positions/{scan_index}/move` | `move_to_scan_position()` | 移动到已校验的第 `1..4` 个扫描位；无请求体 |
 | POST | `/api/scan-positions/{scan_index}/pick-one` | `pick_one_at_scan_position()` | 确保位于指定扫描位，识别并抓取一颗，放置后返回；无请求体 |
-| POST | `/api/scan-pick` | `scan_and_pick()` | 无请求体；同步完成固定 8 区域扫描、区域内重复抓取与固定位置放置 |
+| POST | `/api/scan-pick` | `scan_and_pick()` | 无请求体；同步完成固定 4 区域扫描、区域内重复抓取与固定位置放置 |
 
 `web/` 前端通过 `GET /api/status` 每秒轮询进程级状态。Service 仅在 `READY` 或
 `DISABLED` 读取实时 backend 状态；活动状态和 `FAULT` 的 `backend_status` 为 `null`。
@@ -92,11 +92,12 @@ Return 仅在 execute/READY 启用。当前没有 WebSocket、后台任务队列
 `final_reason`。运行时固定从 Git 跟踪的 `host/config/robot_runtime.json` 的 `scan_pick` 区块
 读取参数；区块缺失或未确认时，整个 Service 在构造硬件 Runtime 前 fail-closed。
 
-八个扫描位统一使用 Base Z=150 mm；该高度也用于视觉抓取的 overhead/lift 和正负偏置
-工作区换向，不再由 scan-pick JSON 单独配置。
+四个扫描位统一使用 Base Z=200 mm；该高度也用于视觉抓取的 overhead/lift 和 arm-local
+工作区进入过渡，不再由 scan-pick JSON 单独配置。X 为 `150/350 mm`，两个 Y 为
+`312.5/637.5 mm`。
 
-`scan_index` 固定为 `1..8`，顺序与 `ScanPickProfile.scan_poses` 一致：`1..4` 是第一个 X
-位置下依次排列的四个 Y，`5..8` 是第二个 X 位置下依次排列的四个 Y。真实坐标只保存在后端
+`scan_index` 固定为 `1..4`，顺序与 `ScanPickProfile.scan_poses` 一致：`1..2` 是 `X=150 mm`
+下的两个 Y，`3..4` 是 `X=350 mm` 下的两个 Y。真实坐标只保存在后端
 已校验配置中，前端不得复制坐标。非法编号返回 400，扫描配置缺失或未校验返回 409。
 
 `/api/scan-positions/{scan_index}/move` 返回现有 `MotionResult`；dry-run 只规划并返回
@@ -106,8 +107,8 @@ Return 仅在 execute/READY 启用。当前没有 WebSocket、后台任务队列
 `final_reason="no_target"`；目标规划被拒绝时返回 HTTP 200，`final_reason` 为
 `target_rejected:<错误类型>`。运动、吸盘或通信故障仍返回错误响应并由 Service 进入 FAULT。
 由于当前没有真空反馈，`picked_count=1` 只表示动作与吸盘命令完成，不表示物理抓取已经验证。
-普通目标放置点为 Base `(150, 1000, 150, 0)`，过大目标放置点为
-Base `(450, 1000, 150, 0)`；视觉 `size_class` 决定放置分流。两个放置点是仅有的 Tray
+普通目标放置点为 Base `(150, 1000, 200, 0)`，过大目标放置点为
+Base `(450, 1000, 200, 0)`；视觉 `size_class` 决定放置分流。两个放置点是仅有的 Tray
 区外放置例外。抓取回撤后直接到达所选点并释放，然后直接返回当前扫描位，不包含放置前后
 回撤。
 
@@ -158,7 +159,7 @@ Base 目标规划或执行：
 加速度和超时若提供则必须大于零；额外请求字段会被拒绝。
 
 > raw/manual 单轴运动不经过 Base-frame 工作区、逆运动学（Inverse Kinematics, IK）、偏置
-> 工作区、跨区 clearance 或碰撞路径规划，只适用于维护、标定和受控的小范围调试。Web 层
+> 工作区、workspace-entry clearance 或碰撞路径规划，只适用于维护、标定和受控的小范围调试。Web 层
 > 不增加第二份单轴限位，实际门禁和软限位仍由 Service 与统一运动层执行。
 
 ## 5. HTTP 错误
@@ -237,4 +238,4 @@ Camera 下的 `target_compensation_camera_mm`，以及 Base 下的 `raw_position
 现有 Base planner；响应还包含 `tool_T_camera` 的 provisional/validated 状态、完整计划和最终
 五轴解。成功路径只调用规划接口；不会调用 `move_base_target()`、`execute_base_plan()`、
 `/api/pick` 或任何吸盘接口。422 规划错误额外返回现有 `rejection_reason`（例如
-`outside_tray_workspace`、`outside_offset_workspace` 或 `planar_unreachable`）。
+`outside_tray_workspace`、`outside_arm_local_workspace` 或 `planar_unreachable`）。

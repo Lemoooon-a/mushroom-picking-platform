@@ -1,4 +1,4 @@
-"""固定八区域扫描抓取配置加载器。"""
+"""固定四区域扫描抓取配置加载器。"""
 
 from __future__ import annotations
 

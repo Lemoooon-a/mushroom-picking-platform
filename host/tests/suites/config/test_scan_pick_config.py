@@ -20,12 +20,12 @@ class ScanPickConfigTests(unittest.TestCase):
             path.write_text(json.dumps(payload), encoding="utf-8")
             return load_validated_scan_pick_profile(path)
 
-    def test_loads_two_by_four_scan_poses_in_fixed_order(self) -> None:
+    def test_loads_two_by_two_scan_poses_in_fixed_order(self) -> None:
         payload = {
             "schema_version": 4,
             "validated": True,
             "scan_x_positions_mm": [10, 20],
-            "scan_y_positions_mm": [1, 2, 3, 4],
+            "scan_y_positions_mm": [1, 2],
             "scan_yaw_deg": 0,
             "place_pose": {"x_mm": 50, "y_mm": 60, "z_mm": 70, "yaw_deg": 0},
             "oversized_place_pose": {
@@ -44,17 +44,13 @@ class ScanPickConfigTests(unittest.TestCase):
             [
                 (10.0, 1.0),
                 (10.0, 2.0),
-                (10.0, 3.0),
-                (10.0, 4.0),
                 (20.0, 1.0),
                 (20.0, 2.0),
-                (20.0, 3.0),
-                (20.0, 4.0),
             ],
         )
         self.assertTrue(all(pose.yaw_deg == 0.0 for pose in profile.scan_poses))
-        self.assertTrue(all(pose.z_mm == 150.0 for pose in profile.scan_poses))
-        self.assertEqual(profile.scan_z_mm, 150.0)
+        self.assertTrue(all(pose.z_mm == 200.0 for pose in profile.scan_poses))
+        self.assertEqual(profile.scan_z_mm, 200.0)
         self.assertEqual(
             (
                 profile.place_pose.x_mm,
@@ -75,12 +71,16 @@ class ScanPickConfigTests(unittest.TestCase):
             profile.oversized_place_pose,
         )
 
+        payload["scan_y_positions_mm"] = [1, 2, 3]
+        with self.assertRaisesRegex(ScanPickConfigError, "exactly 2 numbers"):
+            self._load(payload)
+
     def test_oversized_place_pose_is_required(self) -> None:
         payload = {
             "schema_version": 4,
             "validated": True,
             "scan_x_positions_mm": [10, 20],
-            "scan_y_positions_mm": [1, 2, 3, 4],
+            "scan_y_positions_mm": [1, 2],
             "scan_yaw_deg": 0,
             "place_pose": {
                 "x_mm": 50,
@@ -102,7 +102,7 @@ class ScanPickConfigTests(unittest.TestCase):
             "schema_version": 4,
             "validated": True,
             "scan_x_positions_mm": [10, 20],
-            "scan_y_positions_mm": [1, 2, 3, 4],
+            "scan_y_positions_mm": [1, 2],
             "scan_yaw_deg": 0,
             "place_pose": {"x_mm": 50, "y_mm": 60, "z_mm": 70, "yaw_deg": 0},
             "oversized_place_pose": {
@@ -128,7 +128,7 @@ class ScanPickConfigTests(unittest.TestCase):
             "schema_version": 4,
             "validated": True,
             "scan_x_positions_mm": [10, 20],
-            "scan_y_positions_mm": [1, 2, 3, 4],
+            "scan_y_positions_mm": [1, 2],
             "scan_yaw_deg": 1,
             "place_pose": {"x_mm": 50, "y_mm": 60, "z_mm": 70, "yaw_deg": 0},
             "oversized_place_pose": {
@@ -151,7 +151,7 @@ class ScanPickConfigTests(unittest.TestCase):
             "schema_version": 3,
             "validated": True,
             "scan_x_positions_mm": [10, 20],
-            "scan_y_positions_mm": [1, 2, 3, 4],
+            "scan_y_positions_mm": [1, 2],
             "scan_yaw_deg": 0,
             "place_pose": {"x_mm": 50, "y_mm": 60, "z_mm": 70, "yaw_deg": 0},
             "oversized_place_pose": {
@@ -188,7 +188,7 @@ class ScanPickConfigTests(unittest.TestCase):
             "schema_version": 4,
             "validated": True,
             "scan_x_positions_mm": [10, 20],
-            "scan_y_positions_mm": [1, 2, 3, 4],
+            "scan_y_positions_mm": [1, 2],
             "scan_yaw_deg": 0,
             "place_pose": {
                 "x_mm": 50,

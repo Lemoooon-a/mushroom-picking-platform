@@ -1,4 +1,4 @@
-"""Base 根目标到受偏置工作区约束的五轴逻辑目标求解。"""
+"""Base 根目标到受单一 arm-local 工作区约束的五轴逻辑目标求解。"""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ import math
 import numpy as np
 
 from config.project.workspace_planning import (
-    DEFAULT_OFFSET_WORKSPACE_CONFIG,
-    OffsetWorkspaceConfig,
-    OffsetWorkspaceSide,
+    ArmLocalWorkspaceConfig,
+    ArmLocalWorkspaceStatus,
+    DEFAULT_ARM_LOCAL_WORKSPACE_CONFIG,
     SlideSelectionReason,
 )
 from geometry.rigid_transform import RigidTransform, angular_difference_deg
@@ -28,11 +28,6 @@ from motion.unified_protocol import (
 
 _AXIS_ORDER = tuple(AxisName)
 _LINEAR_AXES = frozenset((AxisName.SLIDE, AxisName.Z))
-_SIDE_ORDER = {
-    OffsetWorkspaceSide.POSITIVE: 0,
-    OffsetWorkspaceSide.NEGATIVE: 1,
-    OffsetWorkspaceSide.OUTSIDE: 2,
-}
 
 
 class BaseFrameSolverError(ValueError):
@@ -71,7 +66,7 @@ class SolverWeights:
 
 @dataclass(frozen=True)
 class BaseFrameSolverConfig:
-    """模型兼容性、数值容差和集中偏置工作区配置。"""
+    """模型兼容性、数值容差和集中 arm-local 工作区配置。"""
 
     model_roll_pitch_tolerance_deg: float = 1e-6
     position_residual_tolerance_mm: float = 1e-6
@@ -79,8 +74,8 @@ class BaseFrameSolverConfig:
     linear_solve_tolerance: float = 1e-9
     position_equality_tolerance_mm: float = 1e-6
     angle_equality_tolerance_deg: float = 1e-6
-    workspace: OffsetWorkspaceConfig = field(
-        default_factory=lambda: DEFAULT_OFFSET_WORKSPACE_CONFIG
+    workspace: ArmLocalWorkspaceConfig = field(
+        default_factory=lambda: DEFAULT_ARM_LOCAL_WORKSPACE_CONFIG
     )
     weights: SolverWeights = field(default_factory=SolverWeights)
 
@@ -94,15 +89,15 @@ class BaseFrameSolverConfig:
             "angle_equality_tolerance_deg",
         ):
             _require_positive(field_name, getattr(self, field_name))
-        if not isinstance(self.workspace, OffsetWorkspaceConfig):
-            raise TypeError("workspace must be OffsetWorkspaceConfig")
+        if not isinstance(self.workspace, ArmLocalWorkspaceConfig):
+            raise TypeError("workspace must be ArmLocalWorkspaceConfig")
         if not isinstance(self.weights, SolverWeights):
             raise TypeError("weights must be SolverWeights")
 
 
 @dataclass(frozen=True)
 class FiveAxisSolution:
-    """一组通过偏置矩形、五轴限位和完整 FK 重建的逻辑轴目标。"""
+    """一组通过 arm-local 工作区、五轴限位和完整 FK 重建的逻辑轴目标。"""
 
     slide_mm: float
     z_mm: float
@@ -111,7 +106,7 @@ class FiveAxisSolution:
     rotation_deg: float
     local_x_mm: float
     local_y_mm: float
-    workspace_side: OffsetWorkspaceSide
+    workspace_status: ArmLocalWorkspaceStatus
     slide_selection_reason: SlideSelectionReason
     elbow_branch: str
     position_error_xyz_mm: tuple[float, float, float]
@@ -149,7 +144,7 @@ class FiveAxisSolution:
 
 
 class BaseFrameFiveAxisSolver:
-    """按当前 Slide、偏置中心、有限 fallback 的固定层级求五轴解。"""
+    """按当前 Slide、工作区中心、有限 fallback 的固定层级求五轴解。"""
 
     def __init__(
         self,
@@ -167,7 +162,7 @@ class BaseFrameFiveAxisSolver:
             raise TypeError("config must be BaseFrameSolverConfig")
 
     @property
-    def workspace(self) -> OffsetWorkspaceConfig:
+    def workspace(self) -> ArmLocalWorkspaceConfig:
         return self.config.workspace
 
     def forward_kinematics_base(self, state: RobotAxisState) -> RigidTransform:
@@ -175,19 +170,19 @@ class BaseFrameFiveAxisSolver:
             raise TypeError("state must be RobotAxisState")
         return self.five_axis_kinematics.forward_kinematics(state)
 
-    def workspace_side_for_state(
+    def workspace_status_for_state(
         self,
         state: RobotAxisState,
-    ) -> tuple[OffsetWorkspaceSide, float, float]:
-        """用当前真实 FK 和统一局部 helper 判断当前偏置区。"""
+    ) -> tuple[ArmLocalWorkspaceStatus, float, float]:
+        """用当前真实 FK 和统一局部 helper 判断当前工作区状态。"""
 
         base_T_tool = self.five_axis_kinematics.forward_kinematics(state)
         local = self.five_axis_kinematics.compute_arm_local_target(
             base_T_tool,
             state.slide_mm,
         )
-        side = self.workspace.classify(local.local_x_mm, local.local_y_mm)
-        return side, local.local_x_mm, local.local_y_mm
+        status = self.workspace.classify(local.local_x_mm, local.local_y_mm)
+        return status, local.local_x_mm, local.local_y_mm
 
     def solve_base_target(
         self,
@@ -253,22 +248,18 @@ class BaseFrameFiveAxisSolver:
         if current_solutions:
             return self._sort_priority(current_solutions, current_state)
 
-        center_solutions: list[FiveAxisSolution] = []
-        for side in (OffsetWorkspaceSide.POSITIVE, OffsetWorkspaceSide.NEGATIVE):
-            center_slide = self._slide_for_local_y(
-                base_target,
-                self.workspace.center_y(side),
-            )
-            center_solutions.extend(
-                self._solutions_for_slide(
-                    base_target,
-                    output_yaw_deg,
-                    current_state,
-                    center_slide,
-                    self.workspace.center_reason(side),
-                    counts,
-                )
-            )
+        center_slide = self._slide_for_local_y(
+            base_target,
+            self.workspace.center_y_mm,
+        )
+        center_solutions = self._solutions_for_slide(
+            base_target,
+            output_yaw_deg,
+            current_state,
+            center_slide,
+            SlideSelectionReason.WORKSPACE_CENTER,
+            counts,
+        )
         if center_solutions:
             return self._sort_priority(center_solutions, current_state)
 
@@ -278,38 +269,36 @@ class BaseFrameFiveAxisSolver:
         )
         fallback_solutions: list[FiveAxisSolution] = []
         seen_slides: list[float] = []
-        for side in (OffsetWorkspaceSide.POSITIVE, OffsetWorkspaceSide.NEGATIVE):
-            for local_y in self.workspace.fallback_local_y_candidates(
-                side,
-                current_local.local_y_mm,
-            ):
-                slide = self._slide_for_local_y(base_target, local_y)
-                if any(
-                    math.isclose(
-                        slide,
-                        existing,
-                        rel_tol=0.0,
-                        abs_tol=self.workspace.boundary_tolerance_mm,
-                    )
-                    for existing in seen_slides
-                ):
-                    continue
-                seen_slides.append(slide)
-                fallback_solutions.extend(
-                    self._solutions_for_slide(
-                        base_target,
-                        output_yaw_deg,
-                        current_state,
-                        slide,
-                        self.workspace.fallback_reason(side),
-                        counts,
-                    )
+        for local_y in self.workspace.fallback_local_y_candidates(
+            current_local.local_y_mm,
+        ):
+            slide = self._slide_for_local_y(base_target, local_y)
+            if any(
+                math.isclose(
+                    slide,
+                    existing,
+                    rel_tol=0.0,
+                    abs_tol=self.workspace.boundary_tolerance_mm,
                 )
+                for existing in seen_slides
+            ):
+                continue
+            seen_slides.append(slide)
+            fallback_solutions.extend(
+                self._solutions_for_slide(
+                    base_target,
+                    output_yaw_deg,
+                    current_state,
+                    slide,
+                    SlideSelectionReason.WORKSPACE_FALLBACK,
+                    counts,
+                )
+            )
         return self._finish_priority(
             fallback_solutions,
             current_state,
             counts,
-            "offset_fallback",
+            "workspace_fallback",
         )
 
     def constrained_solution(
@@ -334,12 +323,12 @@ class BaseFrameFiveAxisSolver:
             base_target,
             axis_state.slide_mm,
         )
-        side = self.workspace.classify(local.local_x_mm, local.local_y_mm)
-        if side is OffsetWorkspaceSide.OUTSIDE and not allow_outside_workspace:
+        status = self.workspace.classify(local.local_x_mm, local.local_y_mm)
+        if status is ArmLocalWorkspaceStatus.OUTSIDE and not allow_outside_workspace:
             raise FiveAxisNoSolutionError(
-                "constrained stage is outside both offset workspaces",
-                stage="outside_offset_workspace",
-                stage_counts={"outside_offset_workspace": 1},
+                "constrained stage is outside the arm-local workspace",
+                stage="outside_arm_local_workspace",
+                stage_counts={"outside_arm_local_workspace": 1},
             )
         for axis, value in _state_positions(axis_state).items():
             if not self._within_limit(axis, value):
@@ -353,7 +342,7 @@ class BaseFrameFiveAxisSolver:
             state=axis_state,
             local_x_mm=local.local_x_mm,
             local_y_mm=local.local_y_mm,
-            workspace_side=side,
+            workspace_status=status,
             slide_selection_reason=slide_selection_reason,
             elbow_branch=elbow_branch,
             current_state=axis_state,
@@ -409,9 +398,9 @@ class BaseFrameFiveAxisSolver:
             base_target,
             slide_mm,
         )
-        side = self.workspace.classify(local.local_x_mm, local.local_y_mm)
-        if side is OffsetWorkspaceSide.OUTSIDE:
-            counts["outside_offset_workspace"] += 1
+        status = self.workspace.classify(local.local_x_mm, local.local_y_mm)
+        if status is ArmLocalWorkspaceStatus.OUTSIDE:
+            counts["outside_arm_local_workspace"] += 1
             return []
         if not self._within_limit(AxisName.Z, local.z_axis_mm):
             counts["z_limit"] += 1
@@ -457,7 +446,7 @@ class BaseFrameFiveAxisSolver:
                         state=state,
                         local_x_mm=local.local_x_mm,
                         local_y_mm=local.local_y_mm,
-                        workspace_side=side,
+                        workspace_status=status,
                         slide_selection_reason=reason,
                         elbow_branch=_branch_name(elbow_deg),
                         current_state=current_state,
@@ -477,7 +466,7 @@ class BaseFrameFiveAxisSolver:
         state: RobotAxisState,
         local_x_mm: float,
         local_y_mm: float,
-        workspace_side: OffsetWorkspaceSide,
+        workspace_status: ArmLocalWorkspaceStatus,
         slide_selection_reason: SlideSelectionReason,
         elbow_branch: str,
         current_state: RobotAxisState,
@@ -511,7 +500,7 @@ class BaseFrameFiveAxisSolver:
             rotation_deg=state.rotation_deg,
             local_x_mm=float(local_x_mm),
             local_y_mm=float(local_y_mm),
-            workspace_side=workspace_side,
+            workspace_status=workspace_status,
             slide_selection_reason=slide_selection_reason,
             elbow_branch=elbow_branch,
             position_error_xyz_mm=error_xyz,
@@ -532,7 +521,7 @@ class BaseFrameFiveAxisSolver:
             return self._sort_priority(solutions, current_state)
         stage = _failure_stage(counts)
         raise FiveAxisNoSolutionError(
-            "no five-axis solution passed offset workspace, axis limits, planar "
+            "no five-axis solution passed arm-local workspace, axis limits, planar "
             f"IK, and FK reconstruction (priority={priority_name}, stage={stage}, "
             f"counts={dict(counts)})",
             stage=stage,
@@ -550,10 +539,9 @@ class BaseFrameFiveAxisSolver:
                 abs(item.shoulder_deg - current_state.shoulder_deg),
                 abs(item.elbow_deg - current_state.elbow_deg),
                 abs(item.rotation_deg - current_state.rotation_deg),
-                abs(item.local_y_mm - self.workspace.center_y(item.workspace_side)),
+                abs(item.local_y_mm - self.workspace.center_y_mm),
                 item.position_residual_mm,
                 item.yaw_residual_deg,
-                _SIDE_ORDER[item.workspace_side],
                 item.elbow_branch,
                 item.slide_mm,
                 item.shoulder_deg,
@@ -714,7 +702,7 @@ def _empty_counts() -> dict[str, int]:
     return {
         "slide_candidates": 0,
         "slide_limit": 0,
-        "outside_offset_workspace": 0,
+        "outside_arm_local_workspace": 0,
         "z_limit": 0,
         "planar_unreachable": 0,
         "shoulder_limit": 0,
@@ -728,7 +716,7 @@ def _empty_counts() -> dict[str, int]:
 
 def _failure_stage(counts: Mapping[str, int]) -> str:
     rejection_order = (
-        "outside_offset_workspace",
+        "outside_arm_local_workspace",
         "slide_limit",
         "z_limit",
         "planar_unreachable",

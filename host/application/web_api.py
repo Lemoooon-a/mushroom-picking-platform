@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat
 
 from application.motion_target import BaseToolTarget
+from application.scan_pick import SCAN_POSITION_COUNT
 from application.robot_service import (
     MushroomRobotService,
     RobotServiceCapabilityError,
@@ -275,7 +276,7 @@ def create_robot_web_app(
         tags=["vision and pick"],
     )
     def move_to_scan_position(
-        scan_index: Annotated[int, Path(ge=1, le=8)],
+        scan_index: Annotated[int, Path(ge=1, le=SCAN_POSITION_COUNT)],
     ) -> JSONResponse:
         return _invoke(service.move_to_scan_position, scan_index)
 
@@ -284,7 +285,7 @@ def create_robot_web_app(
         tags=["vision and pick"],
     )
     def pick_one_at_scan_position(
-        scan_index: Annotated[int, Path(ge=1, le=8)],
+        scan_index: Annotated[int, Path(ge=1, le=SCAN_POSITION_COUNT)],
     ) -> JSONResponse:
         return _invoke(service.pick_one_at_scan_position, scan_index)
 

@@ -236,8 +236,8 @@ CORS（Cross-Origin Resource Sharing，跨源资源共享）默认允许：
 
 合法 `{axis}`：`slide`、`z`、`shoulder`、`elbow`、`rotation`。
 
-合法 `{scan_index}`：整数 `1..8`。前端直接生成八个按钮；`1..4` 对应第一个 X 下的四个
-Y，`5..8` 对应第二个 X 下的四个 Y。真实扫描坐标不进入前端契约，由后端已校验配置解析。
+合法 `{scan_index}`：整数 `1..4`。顺序为 `X=150` 下两个 Y，再到 `X=350` 下两个 Y；
+真实扫描坐标不进入前端契约，由后端已校验配置解析。
 
 ## 8. 请求契约
 
@@ -309,7 +309,7 @@ STOP 成功路径还会尝试把吸附输出切换为 `idle`。命令成功不�
   "capabilities": {
     "base_frame_motion": true,
     "tray_workspace_gate": true,
-    "offset_planning": true,
+    "workspace_planning": true,
     "robot_motion_envelope": true,
     "joint_holding": true,
     "suction_command": true,
@@ -461,7 +461,7 @@ function derivePermissions(status, pending) {
 }
 ```
 
-手动八区域建议调用顺序：
+手动四区域建议调用顺序：
 
 1. 点击位置按钮时调用 `POST /api/scan-positions/{scan_index}/move`；dry-run 下应显示
    `executed=false`，不能提示已真实到位。

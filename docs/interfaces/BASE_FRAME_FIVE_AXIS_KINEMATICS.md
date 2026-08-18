@@ -58,40 +58,39 @@ base_T_tool_target = requested_base_T_tool_target
 当前状态由调用方传入，只用于冗余选择和连续性评分。纯数学模块不查询硬件、本机文件或
 startup position。
 
-## 6. Offset Workspace Constraints
+## 6. Arm-Local Workspace Constraints
 
-偏置矩形是运动学强约束，不只是可视化提示。分类使用移除 Slide 平移后的机械臂平面局部坐标，
+arm-local 矩形是运动学强约束，不只是可视化提示。分类使用移除 Slide 平移后的机械臂平面局部坐标，
 而不是 Base 全局 Y：
 
 ```text
-Positive: local_x in [50, 450] mm, local_y in [150, 350] mm, center_y=+250 mm
-Negative: local_x in [50, 450] mm, local_y in [-350, -150] mm, center_y=-250 mm
+local_x in [100, 600] mm, local_y in [150, 350] mm, center_y=250 mm
 ```
 
-边界包含在内；中心空白区和矩形外部均为 `OUTSIDE`。最终普通五轴解必须位于正偏置区或负偏置
-区。局部边界、容差和 10 mm fallback 步长集中在 `config/project/workspace_planning.py`；该配置不再
+边界包含在内；矩形外部均为 `OUTSIDE`。最终普通五轴解必须位于该单一工作区内。局部边界、
+容差和 10 mm fallback 步长集中在 `config/project/workspace_planning.py`；该配置不再
 包含 startup 或 Base-frame clearance。
 
-该 arm-local 偏置区只回答当前 Slide 下肩肘解是否有效以及是否需要重新分配 Slide；它不是
+该 arm-local 工作区只回答当前 Slide 下肩肘解是否有效以及是否需要重新分配 Slide；它不是
 Base frame 中的培养槽任务许可。最终用户目标另由应用层 `TrayWorkspace` 在调用本求解器前检查，
 两类配置不得合并。
 
-### Positive and Negative Offset Regions
+### Workspace Status
 
-`compute_arm_local_target()` 是 solver、当前状态侧别判断和诊断共用的唯一局部目标换算入口，
+`compute_arm_local_target()` 是 solver、当前工作区状态判断和诊断共用的唯一局部目标换算入口，
 不会在多个模块重复手写 `tool_y - slide`。
 
 ### Keep-Current-Slide Policy
 
 当前 Slide 下只要存在通过工作区、完整五轴闭区间限位、平面 IK 和 FK 残差的合法解，就立即使用
-`KEEP_CURRENT_SLIDE`。此时不得为了更靠近偏置区中心而重新移动 Slide，也不生成中心或 fallback
+`KEEP_CURRENT_SLIDE`。此时不得为了更靠近工作区中心而重新移动 Slide，也不生成中心或 fallback
 候选。
 
 ### Slide Candidate Selection Priority
 
-固定优先级为 `KEEP_CURRENT_SLIDE > OFFSET_CENTER > OFFSET_FALLBACK`。当前 Slide 失败后同时验证
-正负中心候选，并只在两个中心均失败后，以每侧最多 64 个、默认 10 mm 步长的有限候选搜索矩形
-内部。同一优先级内按 Slide、Shoulder、Elbow、Rotation 变化量、距该侧中心距离、FK 残差和稳定
+固定优先级为 `KEEP_CURRENT_SLIDE > WORKSPACE_CENTER > WORKSPACE_FALLBACK`。当前 Slide 失败后验证
+唯一中心候选 `slide=target_y-250`，并只在中心失败后以最多 64 个、默认 10 mm 步长的有限候选搜索矩形
+内部。同一优先级内按 Slide、Shoulder、Elbow、Rotation 变化量、距工作区中心距离、FK 残差和稳定
 枚举顺序作字典序选择。
 
 ## 7. Shoulder/Elbow branches
@@ -106,11 +105,11 @@ FK 与 IK 共用 `rotation_output_yaw_deg()` / `rotation_deg_for_output_yaw()`�
 yaw 为 Shoulder、Elbow 与 Rotation 逻辑角之和。反解后枚举相差 360° 的周期等价角，只保留
 Rotation 软限位内的值，并优先选择最接近当前 Rotation 的等价值。
 
-## 9. Workspace-Side Classification
+## 9. Workspace Status Classification
 
-当前侧别由当前实际五轴状态经 FK 得到 `base_T_tool(current_q)`，再由统一 helper 计算
-`local_x/local_y`；不得由历史标签、Slide 正负或 Base 全局 Y 推断。目标侧别来自最终选中的
-`FiveAxisSolution.workspace_side`。
+当前状态由当前实际五轴状态经 FK 得到 `base_T_tool(current_q)`，再由统一 helper 计算
+`local_x/local_y`，结果为 `INSIDE` 或 `OUTSIDE`。目标状态来自最终选中的
+`FiveAxisSolution.workspace_status`。
 
 ## 10. FK residual verification
 
@@ -144,16 +143,15 @@ metadata，既有标定/审计脚本也保留；这些字段不再是 Base-frame
 缺失时 loader 以 identity 兼容相机配置。正式运动学门禁改为几何配置中的连杆长度和现场测得的
 `tcp_height_at_z_zero_mm` 都存在，且 `geometry_confirmed=true`。
 
-## 13. Safe Side-Switch Transition
+## 13. Safe Workspace-Entry Transition
 
-同一合法侧输出一个 `DIRECT`。`POSITIVE <-> NEGATIVE`，以及 `OUTSIDE` 当前状态需要改变任意
-平面轴时，固定输出 `LIFT`、`TRANSIT`、`LOWER`。跨正负偏置区必须先抬升，再横向过渡，最后
-下降。
+`INSIDE` 到 `INSIDE` 输出一个 `DIRECT`。`OUTSIDE` 当前状态需要改变任意平面轴并进入合法工作区
+时，固定输出 `LIFT`、`TRANSIT`、`LOWER`：先抬升，再横向过渡，最后下降。
 
 ### LIFT, TRANSIT, and LOWER Invariants
 
 - `LIFT` 保持当前 Base X/Y/yaw 与 Slide/Shoulder/Elbow/Rotation，只由正式 IK 换算 Z；
-- `TRANSIT` 使用最终解的四个平面轴，并在 clearance Base Z 完成侧别切换；
+- `TRANSIT` 使用最终解的四个平面轴，并在 clearance Base Z 完成工作区进入；
 - `LOWER` 使用最终完整解，与 `TRANSIT` 的四个平面轴完全相同，因此只改变 Z。
 
 每阶段都形成完整 `MultiAxisTarget`，检查五轴限位、工作区语义和 FK 平移/yaw 残差；任一阶段
@@ -162,25 +160,25 @@ metadata，既有标定/审计脚本也保留；这些字段不再是 Base-frame
 ### Clearance Height Calculation
 
 ```text
-clearance_base_z = max(current_tcp_base_z, target_tcp_base_z, 150 mm)
+clearance_base_z = max(current_tcp_base_z, target_tcp_base_z, 200 mm)
 ```
 
-150 mm 来自 `config/project/robot_motion_envelope.py` 的当前项目软件安全阶段策略，是 Base 绝对最低高度，
-不是相对当前位置再抬升 150 mm。先在 Base frame
+200 mm 来自 `config/project/robot_motion_envelope.py` 的当前项目软件安全阶段策略，是 Base 绝对最低高度，
+不是相对当前位置再抬升 200 mm。先在 Base frame
 构造该高度，再通过正式几何 helper 求 Z 逻辑位置，不使用固定轴增量。若当前或目标已经高于
-150 mm，则保持两者中较高高度；当前 TCP 已在最高点且高于 150 mm 时，`LIFT` 是零位移验证，
+200 mm，则保持两者中较高高度；当前 TCP 已在最高点且高于 200 mm 时，`LIFT` 是零位移验证，
 随后可直接 `TRANSIT`。要求的安全高度超出 Z 逻辑范围时拒绝整个计划。
 
-150 mm 不是培养槽正常作业 Z 上限。应用层只检查最终任务目标；`LIFT`/`TRANSIT` 可高于培养槽
-Z 上限，但仍必须通过本节已有的轴软限位、阶段约束与完整 FK 验证。
+200 mm 与当前培养槽 Z 上限数值相同，但来源仍是独立的 motion-envelope 策略。应用层只检查最终任务目标；
+`LIFT`/`TRANSIT` 不重复执行 Tray 门禁，但仍必须通过本节已有的轴软限位、阶段约束与完整 FK 验证。
 
 `BaseMoveTransitionPlanner` 由装配处显式注入 `RobotMotionEnvelopeConfig`；solver 只持有
-`OffsetWorkspaceConfig`。planner 不加载 local 文件、不访问硬件，也不从 Demo 脚本读取常量。
+`ArmLocalWorkspaceConfig`。planner 不加载 local 文件、不访问硬件，也不从 Demo 脚本读取常量。
 
 ### OUTSIDE Conservative Policy
 
 当前 `OUTSIDE` 时，只有能以当前 Slide/Shoulder/Elbow/Rotation 完整 FK 证明 Base X/Y/yaw 不变、
-仅 Z 改变，才允许单阶段 `DIRECT`；其余到合法侧的平面运动一律使用三阶段。
+仅 Z 改变，才允许单阶段 `DIRECT`；其余进入合法工作区的平面运动一律使用三阶段。
 
 ### Planning-Only CLI
 
@@ -195,7 +193,7 @@ Z 上限，但仍必须通过本节已有的轴软限位、阶段约束与完整
 - 不检查自碰撞、环境碰撞、线缆、奇异邻域速度、路径连续性或动态可达性；
 - 候选优选不是数学唯一解，也不是碰撞或路径意义下的全局最优解；
 - 离线 FK/IK 和软限位通过不等于真实机构已安全验证。
-- `RobotMotionEnvelopeConfig` 仅集中 startup 和 side-switch 阶段策略，不包含完整机械包络、
+- `RobotMotionEnvelopeConfig` 仅集中 startup 和 workspace-entry 阶段策略，不包含完整机械包络、
   自碰撞、环境碰撞或动态障碍。
 
 ## 15. Future real-motion integration

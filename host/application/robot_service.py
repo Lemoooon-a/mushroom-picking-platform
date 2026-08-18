@@ -21,6 +21,7 @@ from application.pick_workflow import (
 )
 from application.runtime_state import RobotServiceMode, RobotServiceState
 from application.scan_pick import (
+    SCAN_POSITION_COUNT,
     ScanAndPickResult,
     ScanPickProfile,
     ScanPositionResult,
@@ -77,7 +78,7 @@ class _ActiveOperation:
 class RobotServiceCapabilities:
     base_frame_motion: bool
     tray_workspace_gate: bool
-    offset_planning: bool
+    workspace_planning: bool
     robot_motion_envelope: bool
     joint_holding: bool
     suction_command: bool
@@ -219,7 +220,7 @@ class MushroomRobotService:
         return RobotServiceCapabilities(
             base_frame_motion=base.base_frame_motion,
             tray_workspace_gate=True,
-            offset_planning=True,
+            workspace_planning=True,
             robot_motion_envelope=True,
             joint_holding=base.rotary_joint_enable_control,
             suction_command=base.suction_control,
@@ -1004,7 +1005,7 @@ class MushroomRobotService:
         return result
 
     def scan_and_pick(self) -> ScanAndPickResult:
-        """以单个 Service operation 完成固定八区域扫描、抓取和放置。"""
+        """以单个 Service operation 完成固定四区域扫描、抓取和放置。"""
 
         operation_kind = "scan-pick"
         workflow, grasp_profile, scan_profile = self._scan_pick_context(
@@ -1452,9 +1453,13 @@ class MushroomRobotService:
         scan_profile: ScanPickProfile | None = None,
     ) -> BaseToolTarget:
         if isinstance(scan_index, bool) or not isinstance(scan_index, int):
-            raise TypeError("scan_index must be an integer from 1 through 8")
-        if not 1 <= scan_index <= 8:
-            raise ValueError("scan_index must be from 1 through 8")
+            raise TypeError(
+                f"scan_index must be an integer from 1 through {SCAN_POSITION_COUNT}"
+            )
+        if not 1 <= scan_index <= SCAN_POSITION_COUNT:
+            raise ValueError(
+                f"scan_index must be from 1 through {SCAN_POSITION_COUNT}"
+            )
         profile = scan_profile or self._require_scan_pick_profile()
         return profile.scan_poses[scan_index - 1]
 
