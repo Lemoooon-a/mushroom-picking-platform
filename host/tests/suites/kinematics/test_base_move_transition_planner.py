@@ -6,10 +6,13 @@ from unittest.mock import patch
 
 from config.project.robot_motion_envelope import (
     RobotMotionEnvelopeConfig,
-    SideSwitchClearanceConfig,
     WORKING_HEIGHT_BASE_Z_MM,
+    WorkspaceEntryClearanceConfig,
 )
-from config.project.workspace_planning import OffsetWorkspaceSide, SlideSelectionReason
+from config.project.workspace_planning import (
+    ArmLocalWorkspaceStatus,
+    SlideSelectionReason,
+)
 from geometry.rigid_transform import RigidTransform, angular_difference_deg
 from kinematics.base_frame_solver import BaseFrameFiveAxisSolver, FiveAxisNoSolutionError
 from kinematics.base_move_transition_planner import (
@@ -70,7 +73,7 @@ def planner(
     *,
     z: tuple[float, float] = (-500.0, 0.0),
     base_z_mm: float = 300.0,
-    clearance_base_z_mm: float = 150.0,
+    clearance_base_z_mm: float = 200.0,
 ) -> BaseMoveTransitionPlanner:
     solver = BaseFrameFiveAxisSolver(
         five_axis_kinematics=model(base_z_mm),
@@ -79,7 +82,7 @@ def planner(
     return BaseMoveTransitionPlanner(
         solver,
         motion_envelope=RobotMotionEnvelopeConfig(
-            side_switch=SideSwitchClearanceConfig(clearance_base_z_mm)
+            workspace_entry=WorkspaceEntryClearanceConfig(clearance_base_z_mm)
         ),
     )
 
@@ -116,87 +119,78 @@ class BaseMoveTransitionPlannerTests(unittest.TestCase):
     def _target(self, state: RobotAxisState) -> RigidTransform:
         return self.subject.solver.forward_kinematics_base(state)
 
-    def test_same_positive_and_negative_side_are_single_direct(self) -> None:
-        for y in (250.0, -250.0):
-            with self.subTest(y=y):
-                current = state_for_point(self.model, 400, y, -300)
-                target_state = state_for_point(self.model, 450, y, -350)
-                plan = self.subject.plan(
-                    current_state=current,
-                    base_T_tool_target=self._target(target_state),
-                )
-                self.assertEqual(
-                    tuple(stage.kind for stage in plan.stages),
-                    (BaseMoveStageKind.DIRECT,),
-                )
-                self.assertFalse(plan.requires_side_switch_clearance)
-                self.assertIsNone(plan.clearance_base_z_mm)
-                self.assertIs(
-                    plan.stages[0].solution.slide_selection_reason,
-                    SlideSelectionReason.KEEP_CURRENT_SLIDE,
-                )
+    def test_inside_to_inside_is_single_direct(self) -> None:
+        current = state_for_point(self.model, 400, 250, -300)
+        target_state = state_for_point(self.model, 450, 250, -350)
+        plan = self.subject.plan(
+            current_state=current,
+            base_T_tool_target=self._target(target_state),
+        )
+        self.assertEqual(
+            tuple(stage.kind for stage in plan.stages),
+            (BaseMoveStageKind.DIRECT,),
+        )
+        self.assertFalse(plan.requires_workspace_entry_clearance)
+        self.assertIsNone(plan.clearance_base_z_mm)
+        self.assertIs(
+            plan.stages[0].solution.slide_selection_reason,
+            SlideSelectionReason.KEEP_CURRENT_SLIDE,
+        )
 
-    def test_positive_to_negative_and_reverse_use_three_fixed_stages(self) -> None:
-        for current_y, target_y in ((250.0, -250.0), (-250.0, 250.0)):
-            with self.subTest(current_y=current_y, target_y=target_y):
-                current = state_for_point(self.model, 400, current_y, -300)
-                target_state = state_for_point(self.model, 450, target_y, -350)
-                plan = self.subject.plan(
-                    current_state=current,
-                    base_T_tool_target=self._target(target_state),
-                )
-                self.assertEqual(
-                    tuple(stage.kind for stage in plan.stages),
-                    (
-                        BaseMoveStageKind.LIFT,
-                        BaseMoveStageKind.TRANSIT,
-                        BaseMoveStageKind.LOWER,
-                    ),
-                )
-                lift, transit, lower = (stage.solution for stage in plan.stages)
-                for field in ("slide_mm", "shoulder_deg", "elbow_deg", "rotation_deg"):
-                    self.assertAlmostEqual(getattr(lift, field), getattr(current, field))
-                for field in ("slide_mm", "shoulder_deg", "elbow_deg", "rotation_deg"):
-                    self.assertAlmostEqual(getattr(transit, field), getattr(lower, field))
-                self.assertAlmostEqual(lift.z_mm, transit.z_mm)
-                self.assertNotAlmostEqual(lower.z_mm, transit.z_mm)
-                self.assertTrue(plan.requires_side_switch_clearance)
-                lift_target, transit_target, lower_target = (
-                    stage.base_T_tool_target for stage in plan.stages
-                )
-                requested = self._target(target_state)
-                for index in (0, 1):
-                    self.assertAlmostEqual(
-                        lift_target.translation_mm[index],
-                        plan.current_base_T_tool.translation_mm[index],
-                    )
-                    self.assertAlmostEqual(
-                        transit_target.translation_mm[index],
-                        requested.translation_mm[index],
-                    )
-                self.assertAlmostEqual(
-                    lift_target.yaw_deg,
-                    plan.current_base_T_tool.yaw_deg,
-                )
-                self.assertAlmostEqual(transit_target.yaw_deg, requested.yaw_deg)
-                self.assertAlmostEqual(
-                    lift_target.translation_mm[2],
-                    plan.clearance_base_z_mm,
-                )
-                self.assertAlmostEqual(
-                    transit_target.translation_mm[2],
-                    plan.clearance_base_z_mm,
-                )
-                self.assertTrue(
-                    (abs(lower_target.matrix - requested.matrix) < 1e-9).all()
-                )
+    def test_outside_to_inside_uses_three_fixed_stages(self) -> None:
+        current = state_for_point(self.model, 400, 0, -300)
+        target_state = state_for_point(self.model, 450, 250, -350)
+        plan = self.subject.plan(
+            current_state=current,
+            base_T_tool_target=self._target(target_state),
+        )
+        self.assertEqual(
+            tuple(stage.kind for stage in plan.stages),
+            (
+                BaseMoveStageKind.LIFT,
+                BaseMoveStageKind.TRANSIT,
+                BaseMoveStageKind.LOWER,
+            ),
+        )
+        lift, transit, lower = (stage.solution for stage in plan.stages)
+        for field in ("slide_mm", "shoulder_deg", "elbow_deg", "rotation_deg"):
+            self.assertAlmostEqual(getattr(lift, field), getattr(current, field))
+        for field in ("slide_mm", "shoulder_deg", "elbow_deg", "rotation_deg"):
+            self.assertAlmostEqual(getattr(transit, field), getattr(lower, field))
+        self.assertAlmostEqual(lift.z_mm, transit.z_mm)
+        self.assertNotAlmostEqual(lower.z_mm, transit.z_mm)
+        self.assertTrue(plan.requires_workspace_entry_clearance)
+        lift_target, transit_target, lower_target = (
+            stage.base_T_tool_target for stage in plan.stages
+        )
+        requested = self._target(target_state)
+        for index in (0, 1):
+            self.assertAlmostEqual(
+                lift_target.translation_mm[index],
+                plan.current_base_T_tool.translation_mm[index],
+            )
+            self.assertAlmostEqual(
+                transit_target.translation_mm[index],
+                requested.translation_mm[index],
+            )
+        self.assertAlmostEqual(lift_target.yaw_deg, plan.current_base_T_tool.yaw_deg)
+        self.assertAlmostEqual(transit_target.yaw_deg, requested.yaw_deg)
+        self.assertAlmostEqual(
+            lift_target.translation_mm[2],
+            plan.clearance_base_z_mm,
+        )
+        self.assertAlmostEqual(
+            transit_target.translation_mm[2],
+            plan.clearance_base_z_mm,
+        )
+        self.assertTrue((abs(lower_target.matrix - requested.matrix) < 1e-9).all())
 
-    def test_clearance_is_absolute_base_z_floor_of_150_mm(self) -> None:
+    def test_clearance_is_absolute_base_z_floor_of_200_mm(self) -> None:
         cases = ((-250.0, -350.0), (-350.0, -250.0), (-300.0, -300.0))
         for current_z, target_z in cases:
             with self.subTest(current_z=current_z, target_z=target_z):
-                current = state_for_point(self.model, 400, 250, current_z)
-                target = state_for_point(self.model, 400, -250, target_z)
+                current = state_for_point(self.model, 400, 0, current_z)
+                target = state_for_point(self.model, 400, 250, target_z)
                 plan = self.subject.plan(
                     current_state=current,
                     base_T_tool_target=self._target(target),
@@ -206,7 +200,7 @@ class BaseMoveTransitionPlannerTests(unittest.TestCase):
                     max(
                         plan.current_base_T_tool.translation_mm[2],
                         self._target(target).translation_mm[2],
-                        150.0,
+                        200.0,
                     ),
                 )
                 self.assertAlmostEqual(
@@ -218,8 +212,8 @@ class BaseMoveTransitionPlannerTests(unittest.TestCase):
 
     def test_clearance_uses_injected_motion_envelope(self) -> None:
         subject = planner(clearance_base_z_mm=120.0)
-        current = state_for_point(subject.solver.five_axis_kinematics, 400, 250, -250)
-        target = state_for_point(subject.solver.five_axis_kinematics, 400, -250, -350)
+        current = state_for_point(subject.solver.five_axis_kinematics, 400, 0, -250)
+        target = state_for_point(subject.solver.five_axis_kinematics, 400, 250, -350)
         plan = subject.plan(
             current_state=current,
             base_T_tool_target=subject.solver.forward_kinematics_base(target),
@@ -227,22 +221,22 @@ class BaseMoveTransitionPlannerTests(unittest.TestCase):
         self.assertEqual(plan.clearance_base_z_mm, 120.0)
 
     def test_clearance_floor_at_z_upper_limit_is_allowed_and_above_is_rejected(self) -> None:
-        allowed_subject = planner(base_z_mm=150.0)
+        allowed_subject = planner(base_z_mm=200.0)
         allowed_model = allowed_subject.solver.five_axis_kinematics
-        current = state_for_point(allowed_model, 400, 250, 0)
-        target = state_for_point(allowed_model, 400, -250, -100)
+        current = state_for_point(allowed_model, 400, 0, 0)
+        target = state_for_point(allowed_model, 400, 250, -100)
         allowed = allowed_subject.plan(
             current_state=current,
             base_T_tool_target=allowed_subject.solver.forward_kinematics_base(target),
         )
         self.assertAlmostEqual(allowed.stages[0].solution.z_mm, 0.0)
-        self.assertAlmostEqual(allowed.clearance_base_z_mm, 150.0)
+        self.assertAlmostEqual(allowed.clearance_base_z_mm, 200.0)
         self.assertAlmostEqual(allowed.clearance_lift_mm, 0.0)
 
-        rejected_subject = planner(base_z_mm=149.0)
+        rejected_subject = planner(base_z_mm=199.0)
         rejected_model = rejected_subject.solver.five_axis_kinematics
-        too_low_current = state_for_point(rejected_model, 400, 250, 0)
-        rejected_target = state_for_point(rejected_model, 400, -250, -100)
+        too_low_current = state_for_point(rejected_model, 400, 0, 0)
+        rejected_target = state_for_point(rejected_model, 400, 250, -100)
         with self.assertRaises(ClearanceHeightUnreachableError) as raised:
             rejected_subject.plan(
                 current_state=too_low_current,
@@ -252,22 +246,22 @@ class BaseMoveTransitionPlannerTests(unittest.TestCase):
             )
         self.assertAlmostEqual(
             raised.exception.required_clearance_base_z_mm,
-            150.0,
+            200.0,
         )
         self.assertEqual(raised.exception.z_logical_limit, (-500.0, 0.0))
 
-    def test_current_tcp_above_150_mm_switches_without_additional_lift(self) -> None:
-        current = state_for_point(self.model, 400, 250, -120)
-        target = state_for_point(self.model, 400, -250, -200)
+    def test_current_tcp_above_200_mm_enters_without_additional_lift(self) -> None:
+        current = state_for_point(self.model, 400, 0, -80)
+        target = state_for_point(self.model, 400, 250, -200)
         plan = self.subject.plan(
             current_state=current,
             base_T_tool_target=self._target(target),
         )
         self.assertAlmostEqual(
             plan.current_base_T_tool.translation_mm[2],
-            180.0,
+            220.0,
         )
-        self.assertAlmostEqual(plan.clearance_base_z_mm, 180.0)
+        self.assertAlmostEqual(plan.clearance_base_z_mm, 220.0)
         self.assertAlmostEqual(plan.clearance_lift_mm, 0.0)
         self.assertAlmostEqual(plan.stages[0].solution.z_mm, current.z_mm)
         self.assertEqual(
@@ -278,9 +272,9 @@ class BaseMoveTransitionPlannerTests(unittest.TestCase):
             ),
         )
 
-    def test_side_switch_at_shared_working_height_has_no_z_stage(self) -> None:
-        current = state_for_point(self.model, 400, 250, -150)
-        target = state_for_point(self.model, 400, -250, -150)
+    def test_workspace_entry_at_shared_working_height_has_no_z_stage(self) -> None:
+        current = state_for_point(self.model, 400, 0, -100)
+        target = state_for_point(self.model, 400, 250, -100)
         plan = self.subject.plan(
             current_state=current,
             base_T_tool_target=self._target(target),
@@ -298,38 +292,45 @@ class BaseMoveTransitionPlannerTests(unittest.TestCase):
         )
 
     def test_outside_calibration_pose_at_top_can_transit_without_lift(self) -> None:
-        current = state_for_point(self.model, 400, 0, -120)
+        current = state_for_point(self.model, 400, 0, -80)
         target = state_for_point(self.model, 400, 250, -200)
         plan = self.subject.plan(
             current_state=current,
             base_T_tool_target=self._target(target),
         )
-        self.assertIs(plan.current_workspace_side, OffsetWorkspaceSide.OUTSIDE)
-        self.assertIs(plan.target_workspace_side, OffsetWorkspaceSide.POSITIVE)
-        self.assertAlmostEqual(plan.current_base_T_tool.translation_mm[2], 180.0)
-        self.assertAlmostEqual(plan.clearance_base_z_mm, 180.0)
+        self.assertIs(
+            plan.current_workspace_status,
+            ArmLocalWorkspaceStatus.OUTSIDE,
+        )
+        self.assertIs(
+            plan.target_workspace_status,
+            ArmLocalWorkspaceStatus.INSIDE,
+        )
+        self.assertAlmostEqual(plan.current_base_T_tool.translation_mm[2], 220.0)
+        self.assertAlmostEqual(plan.clearance_base_z_mm, 220.0)
         self.assertAlmostEqual(plan.clearance_lift_mm, 0.0)
         self.assertAlmostEqual(plan.stages[0].solution.z_mm, current.z_mm)
 
     def test_outside_current_with_planar_change_uses_conservative_three_stages(self) -> None:
-        for target_y, expected_side in (
-            (250, OffsetWorkspaceSide.POSITIVE),
-            (-250, OffsetWorkspaceSide.NEGATIVE),
-        ):
-            with self.subTest(target_y=target_y):
-                current = state_for_point(self.model, 400, 0, -300)
-                target = state_for_point(self.model, 450, target_y, -350)
-                plan = self.subject.plan(
-                    current_state=current,
-                    base_T_tool_target=self._target(target),
-                )
-                self.assertIs(plan.current_workspace_side, OffsetWorkspaceSide.OUTSIDE)
-                self.assertEqual(len(plan.stages), 3)
-                self.assertIs(
-                    plan.stages[0].solution.workspace_side,
-                    OffsetWorkspaceSide.OUTSIDE,
-                )
-                self.assertIs(plan.stages[1].solution.workspace_side, expected_side)
+        current = state_for_point(self.model, 400, 0, -300)
+        target = state_for_point(self.model, 450, 250, -350)
+        plan = self.subject.plan(
+            current_state=current,
+            base_T_tool_target=self._target(target),
+        )
+        self.assertIs(
+            plan.current_workspace_status,
+            ArmLocalWorkspaceStatus.OUTSIDE,
+        )
+        self.assertEqual(len(plan.stages), 3)
+        self.assertIs(
+            plan.stages[0].solution.workspace_status,
+            ArmLocalWorkspaceStatus.OUTSIDE,
+        )
+        self.assertIs(
+            plan.stages[1].solution.workspace_status,
+            ArmLocalWorkspaceStatus.INSIDE,
+        )
 
     def test_outside_current_allows_only_proven_pure_z_direct(self) -> None:
         current = state_for_point(self.model, 400, 0, -300)
@@ -348,7 +349,10 @@ class BaseMoveTransitionPlannerTests(unittest.TestCase):
             tuple(stage.kind for stage in plan.stages),
             (BaseMoveStageKind.DIRECT,),
         )
-        self.assertIs(plan.target_workspace_side, OffsetWorkspaceSide.OUTSIDE)
+        self.assertIs(
+            plan.target_workspace_status,
+            ArmLocalWorkspaceStatus.OUTSIDE,
+        )
         solution = plan.stages[0].solution
         for field in ("slide_mm", "shoulder_deg", "elbow_deg", "rotation_deg"):
             self.assertAlmostEqual(getattr(solution, field), getattr(current, field))
@@ -356,7 +360,7 @@ class BaseMoveTransitionPlannerTests(unittest.TestCase):
 
     def test_invalid_current_axis_state_is_rejected_before_target_plan(self) -> None:
         current = state_for_point(self.model, 400, 250, 1.0)
-        target = state_for_point(self.model, 400, -250, -300)
+        target = state_for_point(self.model, 400, 250, -300)
         with self.assertRaises(CurrentStateInvalidError):
             self.subject.plan(
                 current_state=current,
@@ -364,8 +368,8 @@ class BaseMoveTransitionPlannerTests(unittest.TestCase):
             )
 
     def test_every_stage_fk_reconstructs_its_base_target(self) -> None:
-        current = state_for_point(self.model, 400, 250, -300)
-        target = state_for_point(self.model, 450, -200, -350)
+        current = state_for_point(self.model, 400, 0, -300)
+        target = state_for_point(self.model, 450, 200, -350)
         plan = self.subject.plan(
             current_state=current,
             base_T_tool_target=self._target(target),
@@ -387,8 +391,8 @@ class BaseMoveTransitionPlannerTests(unittest.TestCase):
             )
 
     def test_stage_validation_failure_rejects_the_whole_plan(self) -> None:
-        current = state_for_point(self.model, 400, 250, -300)
-        target = state_for_point(self.model, 450, -250, -350)
+        current = state_for_point(self.model, 400, 0, -300)
+        target = state_for_point(self.model, 450, 250, -350)
         original = self.subject.solver.constrained_solution
         call_count = 0
 

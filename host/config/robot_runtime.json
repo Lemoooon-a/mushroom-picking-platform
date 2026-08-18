@@ -192,15 +192,15 @@
     "schema_version": 1,
     "frame": "base",
     "x_min_mm": 100,
-    "x_max_mm": 500,
-    "y_min_mm": -120,
-    "y_max_mm": 780,
+    "x_max_mm": 600,
+    "y_min_mm": 150,
+    "y_max_mm": 800,
     "z_min_mm": 10,
     "z_max_mm": 200,
     "boundary_tolerance_mm": 0.000001,
     "metadata": {
       "validated": true,
-      "source": "User-confirmed Base-frame cultivation-tray boundaries: X 10..50 cm, Y -12..78 cm; stored in millimetres",
+      "source": "User-confirmed Base-frame cultivation-tray boundaries: X 100..600 mm, Y 150..800 mm",
       "z_range_definition": "Absolute final TCP height in Base frame; not Z-axis logical position or displacement from Home",
       "z_range_source": "User-confirmed absolute Base TCP limits; tcp_height_at_z_zero_mm confirmed as 200 mm"
     }
@@ -234,22 +234,20 @@
       350
     ],
     "scan_y_positions_mm": [
-      0,
-      233.333333333333,
-      466.666666666667,
-      700
+      312.5,
+      637.5
     ],
     "scan_yaw_deg": 0,
     "place_pose": {
       "x_mm": 150,
       "y_mm": 1000,
-      "z_mm": 150,
+      "z_mm": 200,
       "yaw_deg": 0
     },
     "oversized_place_pose": {
       "x_mm": 450,
       "y_mm": 1000,
-      "z_mm": 150,
+      "z_mm": 200,
       "yaw_deg": 0
     },
     "scan_settle_time_s": 0.5,

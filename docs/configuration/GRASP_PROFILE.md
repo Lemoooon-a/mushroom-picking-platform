@@ -16,7 +16,7 @@
 
 `from_observation` 在 orientation 缺失时明确拒绝，不回退为 0°；非零 roll/pitch 也不会被静默丢弃。
 
-抓取的 overhead/lift 与扫描、正负偏置区换向共用绝对 Base Z=150 mm。contact 为视觉目标经手眼标定和目标补偿后的 Base Z，再叠加 `contact_offset_mm`，且必须严格低于 150 mm。
+抓取的 overhead/lift 与扫描、arm-local 工作区进入过渡共用绝对 Base Z=200 mm。contact 为视觉目标经手眼标定和目标补偿后的 Base Z，再叠加 `contact_offset_mm`，且必须严格低于 200 mm。
 
 项目运行固定使用 Git 跟踪的 `host/config/robot_runtime.json`；修改 `grasp_profile` 区块前必须
 独立确认并保持 `validated=true`。loader 对旧 schema、缺失、placeholder、NaN/Inf 或未验证

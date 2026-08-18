@@ -322,6 +322,8 @@ class RobotServiceTests(unittest.TestCase):
             service.capabilities.hand_eye_calibration,
             HandEyeCalibrationStatus.PROVISIONAL,
         )
+        self.assertTrue(service.capabilities.workspace_planning)
+        self.assertFalse(hasattr(service.capabilities, "offset_planning"))
         with self.assertRaisesRegex(
             RobotServiceCapabilityError,
             "Hand-eye calibration is missing or not validated",

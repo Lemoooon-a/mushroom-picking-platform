@@ -156,10 +156,10 @@ class ScanAndPickTests(unittest.TestCase):
             ),
             scan_pick_profile=ScanPickProfile(
                 (0.0, 100.0),
-                (0.0, 10.0, 20.0, 30.0),
+                (0.0, 10.0),
                 0.0,
-                BaseToolTarget(150.0, 1000.0, 150.0, 0.0),
-                BaseToolTarget(450.0, 1000.0, 150.0, 0.0),
+                BaseToolTarget(150.0, 1000.0, 200.0, 0.0),
+                BaseToolTarget(450.0, 1000.0, 200.0, 0.0),
                 max_picks,
                 scan_settle_time_s,
             ),
@@ -182,7 +182,7 @@ class ScanAndPickTests(unittest.TestCase):
         )
 
     @unittest.mock.patch("application.robot_service.time.sleep")
-    def test_scans_eight_poses_and_reobserves_after_each_place(self, sleep) -> None:
+    def test_scans_four_poses_and_reobserves_after_each_place(self, sleep) -> None:
         calls = 0
 
         def responder(request):
@@ -202,7 +202,7 @@ class ScanAndPickTests(unittest.TestCase):
 
         self.assertEqual(result.result, "completed")
         self.assertEqual(result.total_picked, 2)
-        self.assertEqual(len(result.visited_scan_positions), 8)
+        self.assertEqual(len(result.visited_scan_positions), 4)
         self.assertEqual(
             (result.visited_scan_positions[0].detected_count,
              result.visited_scan_positions[0].picked_count,
@@ -227,7 +227,7 @@ class ScanAndPickTests(unittest.TestCase):
             if isinstance(entry, tuple) and entry[0] == "plan_sequence"
             for target in entry[1]
         ]
-        first_contact = next(target for target in planned_targets if target.z_mm == 53.0)
+        first_contact = next(target for target in planned_targets if target.z_mm == 103.0)
         self.assertEqual(first_contact.x_mm, 11.0)
         self.assertTrue(all(target.yaw_deg == 0.0 for target in planned_targets))
         self.assertEqual(backend.calls.count("grip"), 2)
@@ -256,7 +256,7 @@ class ScanAndPickTests(unittest.TestCase):
             self.assertEqual(backend.calls, [("plan", expected_pose)])
             self.assertIs(service.state, RobotServiceState.READY)
 
-        for invalid_index in (0, 9, True, 1.0):
+        for invalid_index in (0, 5, True, 1.0):
             with self.subTest(scan_index=invalid_index):
                 with self.assertRaises((TypeError, ValueError)):
                     service.move_to_scan_position(invalid_index)
@@ -417,9 +417,9 @@ class ScanAndPickTests(unittest.TestCase):
         service, backend, observed_poses = self.make_service(
             lambda request: NoTarget(request.request_id, "empty")
         )
-        expected_scan = service.scan_pick_profile.scan_poses[7]
+        expected_scan = service.scan_pick_profile.scan_poses[3]
 
-        result = service.pick_one_at_scan_position(8)
+        result = service.pick_one_at_scan_position(4)
 
         self.assertEqual(result.result, "completed")
         self.assertEqual(result.total_picked, 0)
@@ -431,7 +431,7 @@ class ScanAndPickTests(unittest.TestCase):
                 position.picked_count,
                 position.final_reason,
             ),
-            (8, 0, 0, "no_target"),
+            (4, 0, 0, "no_target"),
         )
         self.assertEqual(observed_poses, [expected_scan])
         self.assertEqual(backend.pose, expected_scan)
@@ -501,6 +501,22 @@ class ScanPickOfflineReachabilityTests(unittest.TestCase):
             runtime_config=runtime_config
         )
         backend.startup()
+        assert backend.axis_state is not None
+        startup_pose = backend.solver.forward_kinematics_base(backend.axis_state)
+        self.assertEqual(
+            tuple(round(float(value), 9) for value in startup_pose.translation_mm),
+            (400.0, 150.0, 200.0),
+        )
+        self.assertAlmostEqual(startup_pose.yaw_deg, 0.0)
+        self.assertAlmostEqual(backend.axis_state.slide_mm, 0.0)
+        self.assertAlmostEqual(backend.axis_state.z_mm, 0.0)
+        self.assertAlmostEqual(backend.axis_state.shoulder_deg, -37.16781965284249)
+        self.assertAlmostEqual(backend.axis_state.elbow_deg, 115.44772974485191)
+        self.assertAlmostEqual(backend.axis_state.rotation_deg, -78.27991009200943)
+        startup_status, _, _ = backend.solver.workspace_status_for_state(
+            backend.axis_state
+        )
+        self.assertEqual(startup_status.value, "inside")
         place_poses = (
             runtime_config.scan_pick.place_pose,
             runtime_config.scan_pick.oversized_place_pose,
@@ -522,13 +538,19 @@ class ScanPickOfflineReachabilityTests(unittest.TestCase):
                         (place_pose, scan_pose),
                         enforce_tray_workspace=(False, True),
                     )
+                    self.assertTrue(
+                        all(
+                            abs(float(stage.base_T_tool_target.translation_mm[2]) - 200.0)
+                            <= 1e-9
+                            for plan in (place_plan, return_plan)
+                            for stage in plan.stages
+                        )
+                    )
                     place_solution = place_plan.stages[-1].solution
                     self.assertLessEqual(place_solution.slide_mm, 799.988)
-                    self.assertGreaterEqual(place_solution.local_x_mm, 50.0)
+                    self.assertGreaterEqual(place_solution.local_x_mm, 100.0)
                     self.assertLessEqual(place_solution.local_x_mm, 600.0)
-                    self.assertTrue(
-                        150.0 <= abs(place_solution.local_y_mm) <= 350.0
-                    )
+                    self.assertTrue(150.0 <= place_solution.local_y_mm <= 350.0)
                     controller.execute_base_plan(place_plan)
                     controller.execute_base_plan(return_plan)
 

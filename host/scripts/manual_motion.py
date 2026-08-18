@@ -654,15 +654,18 @@ def _emit_base_move_plan(
         f"x={plan.current_local_x_mm:.9f} mm "
         f"y={plan.current_local_y_mm:.9f} mm"
     )
-    emit(f"Current workspace side: {plan.current_workspace_side.name}")
+    emit(f"Current workspace status: {plan.current_workspace_status.name}")
     final = plan.stages[-1].solution
     emit(
         "Final target local coordinates: "
         f"x={final.local_x_mm:.9f} mm y={final.local_y_mm:.9f} mm"
     )
-    emit(f"Target workspace side: {plan.target_workspace_side.name}")
+    emit(f"Target workspace status: {plan.target_workspace_status.name}")
     emit(f"Slide selection reason: {final.slide_selection_reason.name}")
-    emit(f"Side switch required: {plan.requires_side_switch_clearance}")
+    emit(
+        "Workspace-entry clearance required: "
+        f"{plan.requires_workspace_entry_clearance}"
+    )
     emit(f"Clearance lift: {plan.clearance_lift_mm:.9f} mm")
     clearance = (
         "none"
@@ -691,7 +694,7 @@ def _emit_base_move_plan(
         emit(
             f"    local_x={solution.local_x_mm:.9f} mm "
             f"local_y={solution.local_y_mm:.9f} mm "
-            f"side={solution.workspace_side.name}"
+            f"workspace={solution.workspace_status.name}"
         )
         emit("  Validation:")
         emit(

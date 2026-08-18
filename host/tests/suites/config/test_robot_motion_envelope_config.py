@@ -11,9 +11,9 @@ import config.project.workspace_planning as workspace_planning
 from config.project.robot_motion_envelope import (
     DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG,
     RobotMotionEnvelopeConfig,
-    SideSwitchClearanceConfig,
     StartupSafePoseConfig,
     WORKING_HEIGHT_BASE_Z_MM,
+    WorkspaceEntryClearanceConfig,
 )
 
 
@@ -24,29 +24,35 @@ class RobotMotionEnvelopeConfigTests(unittest.TestCase):
             envelope.startup_pose,
             StartupSafePoseConfig(
                 base_x_mm=400.0,
-                base_y_mm=0.0,
+                base_y_mm=150.0,
                 tool_yaw_deg=0.0,
                 slide_mm=0.0,
                 z_axis_mm=0.0,
             ),
         )
-        self.assertEqual(WORKING_HEIGHT_BASE_Z_MM, 150.0)
+        self.assertEqual(WORKING_HEIGHT_BASE_Z_MM, 200.0)
         self.assertEqual(
-            envelope.side_switch.clearance_base_z_mm,
+            envelope.workspace_entry.clearance_base_z_mm,
             WORKING_HEIGHT_BASE_Z_MM,
         )
 
     def test_invalid_nested_types_and_clearance_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
-            SideSwitchClearanceConfig(0.0)
+            WorkspaceEntryClearanceConfig(0.0)
         with self.assertRaises(TypeError):
             RobotMotionEnvelopeConfig(startup_pose=object())  # type: ignore[arg-type]
 
     def test_config_exports_are_consistent(self) -> None:
-        self.assertIs(config.OffsetWorkspaceConfig, workspace_planning.OffsetWorkspaceConfig)
+        self.assertIs(
+            config.ArmLocalWorkspaceConfig,
+            workspace_planning.ArmLocalWorkspaceConfig,
+        )
         self.assertIs(config.RobotMotionEnvelopeConfig, RobotMotionEnvelopeConfig)
         self.assertIs(config.StartupSafePoseConfig, StartupSafePoseConfig)
-        self.assertIs(config.SideSwitchClearanceConfig, SideSwitchClearanceConfig)
+        self.assertIs(
+            config.WorkspaceEntryClearanceConfig,
+            WorkspaceEntryClearanceConfig,
+        )
         self.assertEqual(config.WORKING_HEIGHT_BASE_Z_MM, WORKING_HEIGHT_BASE_Z_MM)
 
     def test_pure_config_imports_do_not_read_local_files(self) -> None:

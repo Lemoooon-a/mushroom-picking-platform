@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import math
 
 
-WORKING_HEIGHT_BASE_Z_MM = 150.0
+WORKING_HEIGHT_BASE_Z_MM = 200.0
 
 
 def _finite(name: str, value: object) -> float:
@@ -23,7 +23,7 @@ class StartupSafePoseConfig:
     """专用于 Homing 后 startup/return 的固定安全姿态策略。"""
 
     base_x_mm: float = 400.0
-    base_y_mm: float = 0.0
+    base_y_mm: float = 150.0
     tool_yaw_deg: float = 0.0
     slide_mm: float = 0.0
     z_axis_mm: float = 0.0
@@ -40,8 +40,8 @@ class StartupSafePoseConfig:
 
 
 @dataclass(frozen=True)
-class SideSwitchClearanceConfig:
-    """跨正负偏置区时采用的绝对 Base TCP Z 最低高度。"""
+class WorkspaceEntryClearanceConfig:
+    """从区外进入 arm-local 工作区时采用的绝对 Base TCP Z 最低高度。"""
 
     clearance_base_z_mm: float = WORKING_HEIGHT_BASE_Z_MM
 
@@ -61,15 +61,17 @@ class RobotMotionEnvelopeConfig:
     """
 
     startup_pose: StartupSafePoseConfig = field(default_factory=StartupSafePoseConfig)
-    side_switch: SideSwitchClearanceConfig = field(
-        default_factory=SideSwitchClearanceConfig
+    workspace_entry: WorkspaceEntryClearanceConfig = field(
+        default_factory=WorkspaceEntryClearanceConfig
     )
 
     def __post_init__(self) -> None:
         if not isinstance(self.startup_pose, StartupSafePoseConfig):
             raise TypeError("startup_pose must be StartupSafePoseConfig")
-        if not isinstance(self.side_switch, SideSwitchClearanceConfig):
-            raise TypeError("side_switch must be SideSwitchClearanceConfig")
+        if not isinstance(self.workspace_entry, WorkspaceEntryClearanceConfig):
+            raise TypeError(
+                "workspace_entry must be WorkspaceEntryClearanceConfig"
+            )
 
 
 DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG = RobotMotionEnvelopeConfig()
@@ -78,7 +80,7 @@ DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG = RobotMotionEnvelopeConfig()
 __all__ = [
     "DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG",
     "RobotMotionEnvelopeConfig",
-    "SideSwitchClearanceConfig",
     "StartupSafePoseConfig",
     "WORKING_HEIGHT_BASE_Z_MM",
+    "WorkspaceEntryClearanceConfig",
 ]

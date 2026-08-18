@@ -10,10 +10,13 @@ from config.project.robot_motion_envelope import WORKING_HEIGHT_BASE_Z_MM
 from vision.target_size import TargetSizeClass
 
 
+SCAN_POSITION_COUNT = 4
+
+
 @dataclass(frozen=True)
 class ScanPickProfile:
     scan_x_positions_mm: tuple[float, float]
-    scan_y_positions_mm: tuple[float, float, float, float]
+    scan_y_positions_mm: tuple[float, float]
     scan_yaw_deg: float
     place_pose: BaseToolTarget
     oversized_place_pose: BaseToolTarget
@@ -25,7 +28,7 @@ class ScanPickProfile:
             "scan_x_positions_mm", self.scan_x_positions_mm, length=2
         )
         y_positions = _finite_tuple(
-            "scan_y_positions_mm", self.scan_y_positions_mm, length=4
+            "scan_y_positions_mm", self.scan_y_positions_mm, length=2
         )
         object.__setattr__(self, "scan_x_positions_mm", x_positions)
         object.__setattr__(self, "scan_y_positions_mm", y_positions)
@@ -108,4 +111,9 @@ def _finite(name: str, value: object) -> float:
     return converted
 
 
-__all__ = ["ScanAndPickResult", "ScanPickProfile", "ScanPositionResult"]
+__all__ = [
+    "SCAN_POSITION_COUNT",
+    "ScanAndPickResult",
+    "ScanPickProfile",
+    "ScanPositionResult",
+]

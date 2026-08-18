@@ -1,4 +1,4 @@
-"""主机侧静态配置；公开旧名称使用惰性导入，避免纯数学模块加载硬件驱动。"""
+"""主机侧静态配置；公开名称使用惰性导入，避免纯数学模块加载硬件驱动。"""
 
 from __future__ import annotations
 
@@ -15,14 +15,14 @@ _JOINT_NAMES = {
     "JOINT_CONFIGS",
     "SHOULDER_JOINT_CONFIG",
 }
-_OFFSET_WORKSPACE_NAMES = {
-    "DEFAULT_OFFSET_WORKSPACE_CONFIG",
-    "OffsetWorkspaceConfig",
+_ARM_LOCAL_WORKSPACE_NAMES = {
+    "ArmLocalWorkspaceConfig",
+    "DEFAULT_ARM_LOCAL_WORKSPACE_CONFIG",
 }
 _ROBOT_MOTION_ENVELOPE_NAMES = {
     "DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG",
     "RobotMotionEnvelopeConfig",
-    "SideSwitchClearanceConfig",
+    "WorkspaceEntryClearanceConfig",
     "StartupSafePoseConfig",
     "WORKING_HEIGHT_BASE_Z_MM",
 }
@@ -46,7 +46,7 @@ def __getattr__(name: str) -> object:
         from .project import joints
 
         return getattr(joints, name)
-    if name in _OFFSET_WORKSPACE_NAMES:
+    if name in _ARM_LOCAL_WORKSPACE_NAMES:
         from .project import workspace_planning
 
         return getattr(workspace_planning, name)
@@ -68,7 +68,7 @@ def __getattr__(name: str) -> object:
 __all__ = sorted(
     _FEETECH_NAMES
     | _JOINT_NAMES
-    | _OFFSET_WORKSPACE_NAMES
+    | _ARM_LOCAL_WORKSPACE_NAMES
     | _ROBOT_MOTION_ENVELOPE_NAMES
     | _ROBOT_RUNTIME_NAMES
     | _TRAY_WORKSPACE_NAMES

@@ -718,11 +718,16 @@ function renderPlan(plan) {
     ["Path", stageNames.length ? stageNames.join(" → ") : "Plan accepted"],
     [
       "Workspace",
-      plan?.current_workspace_side && plan?.target_workspace_side
-        ? `${plan.current_workspace_side} → ${plan.target_workspace_side}`
+      plan?.current_workspace_status && plan?.target_workspace_status
+        ? `${plan.current_workspace_status} → ${plan.target_workspace_status}`
         : "—",
     ],
-    ["Clearance", plan?.requires_side_switch_clearance ? `${formatNumber(plan.clearance_lift_mm)} mm lift` : "Not required"],
+    [
+      "Entry clearance",
+      plan?.requires_workspace_entry_clearance
+        ? `${formatNumber(plan.clearance_lift_mm)} mm lift`
+        : "Not required",
+    ],
     ["Stages", stages.length ? String(stages.length) : "—"],
   ];
 

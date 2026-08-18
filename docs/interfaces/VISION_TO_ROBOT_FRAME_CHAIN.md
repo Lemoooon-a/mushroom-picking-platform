@@ -26,7 +26,7 @@ base_T_target_raw
   @ camera_T_target
 ```
 
-其中 `tool` 明确表示 TCP。现有 `tool_T_camera` 数值、Camera frame 名称、视觉协议、8 点扫描、
+其中 `tool` 明确表示 TCP。现有 `tool_T_camera` 数值、Camera frame 名称、视觉协议、4 点扫描、
 observe/plan/pick/place 流程都保持不变。
 
 ## 2. 与机械 Base 简化的关系
@@ -51,7 +51,7 @@ yaw = shoulder + elbow + rotation
 - `target_compensation_camera_mm` 在 Camera 检测点上只应用一次；
 - Camera 与 Base 补偿不能同时为非零；
 - Base TCP workspace 对最终补偿后的目标执行门限；
-- arm-local offset workspace 随后只负责 IK 构型与 Slide 选择。
+- arm-local workspace 随后只负责 IK 构型与 Slide 选择。
 
 `frame_transforms.json` 中历史 `base_T_slide_zero` 及 `metadata.validated` 不再验证或门禁视觉
 Base 坐标。`tool_camera_validated` 仍只表示 TCP→Camera 安装关系的验证状态。

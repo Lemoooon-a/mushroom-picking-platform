@@ -93,6 +93,6 @@ base_target_final.xyz
 
 ## 7. 安全边界
 
-Base TCP workspace 是最终普通任务目标的绝对 Base XYZ 门限；arm-local offset workspace 只用于
+Base TCP workspace 是最终普通任务目标的绝对 Base XYZ 门限；arm-local workspace 只用于
 Shoulder/Elbow IK 构型和 Slide 候选，两者不能互换。离线 FK/IK、工作区和软限位通过不等于
 完成真实机构验证。

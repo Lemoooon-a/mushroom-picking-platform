@@ -15,11 +15,11 @@ Vision Observation → VisionTargetResolver → Base TCP Goal ┘
                        TrayWorkspace(Base) → IK → stages → execution
 ```
 
-控制器只维护应用层培养槽任务门限，不复制机械臂局部正负偏置区、IK、Slide 选择、跨区规划或
+控制器只维护应用层培养槽任务门限，不复制机械臂局部单一工作区、IK、Slide 选择、区外进入规划或
 轴执行。
 
 装配层明确区分三份配置：`TrayWorkspaceConfig` 检查 Base 最终任务 TCP，
-`OffsetWorkspaceConfig` 注入 solver 的 arm-local 策略，`RobotMotionEnvelopeConfig` 注入 planner
+`ArmLocalWorkspaceConfig` 注入 solver 的 arm-local 策略，`RobotMotionEnvelopeConfig` 注入 planner
 和 startup/return 专用流程。
 
 ## 2. 正式可用接口
@@ -52,11 +52,11 @@ Camera frame 坐标，也不支持任意 roll/pitch。
 到位和静止稳定窗由统一控制器确认，阶段后的状态快照不再用单次 `busy` 样本推翻已确认的
 `ARRIVED`；后续阶段提交仍执行忙碌保护。
 
-`plan_base_target(BaseToolTarget, enforce_tray_workspace=...)` 是 Robot Service 和 PickPlanner 的统一值对象入口。只有已知的 pre-grasp/retreat 中间高位阶段可设置 `False`；这不会绕过 Base solver、OffsetWorkspace、轴/关节限位或 RobotMotionEnvelope。
+`plan_base_target(BaseToolTarget, enforce_tray_workspace=...)` 是 Robot Service 和 PickPlanner 的统一值对象入口。只有已知的 pre-grasp/retreat 中间高位阶段可设置 `False`；这不会绕过 Base solver、ArmLocalWorkspace、轴/关节限位或 RobotMotionEnvelope。
 
-`startup()` 与 `return_to_startup()` 直接使用专用启动流程，因此允许访问培养槽任务区外的
-`STARTUP_SAFE_POSE`。普通 `move_to_base_pose(startup_x, startup_y, startup_z)` 不享有该例外。
-阶段规划产生的 `LIFT`/`TRANSIT` 只受现有轴限位、偏置区阶段规则和完整 FK 验证约束，不对每个
+`startup()` 与 `return_to_startup()` 直接使用专用启动流程。当前 `STARTUP_SAFE_POSE` 为 Base
+`(400,150,200, yaw=0)`；普通 `move_to_base_pose()` 仍必须经过正常任务门禁。
+阶段规划产生的 `LIFT`/`TRANSIT` 只受现有轴限位、工作区进入规则和完整 FK 验证约束，不对每个
 阶段重复应用培养槽正常 Z 范围；最终 `DIRECT`/`LOWER` 落点来自已经通过任务门限的目标。
 
 ## 3. 预留且受门禁的接口
@@ -129,25 +129,25 @@ robot = create_mushroom_robot_controller(
 )
 ```
 
-工厂使用 tracked `DEFAULT_OFFSET_WORKSPACE_CONFIG` 与
+工厂使用 tracked `DEFAULT_ARM_LOCAL_WORKSPACE_CONFIG` 与
 `DEFAULT_ROBOT_MOTION_ENVELOPE_CONFIG`，并接收已经完整校验的统一 Runtime 配置。相同 envelope 实例
-同时提供 startup pose 和 planner side-switch clearance，CLI、controller、solver 与 planner
+同时提供 startup pose 和 planner workspace-entry clearance，CLI、controller、solver 与 planner
 不会各自创建第二份数值。
 
 仓库不提供推测边界。本机已按用户明确输入配置 Base X
-`[20, 480] mm`、Base Y `[20, 700] mm`、Base Z `[0, 180] mm`，并设置
+`[100, 600] mm`、Base Y `[150, 800] mm`、Base Z `[10, 200] mm`，并设置
 `metadata.validated=true`。当前机械臂的边界直接维护在 Git 跟踪的 `config/robot_runtime.json`
 中，变更后必须重新验收。
 配置缺失、仍为 `null` 或未确认时，工厂和真实 CLI 在创建 Runtime、打开硬件前失败关闭。
 
-Base Z `[0, 180] mm` 是最终 TCP 的绝对任务许可高度。上限 `180 mm` 是当前 Base 标定和 TCP
-几何的静态计算结果，不会在运行时自动更新；若二者变化，必须重新计算并人工确认。
+Base Z `[10, 200] mm` 是最终 TCP 的绝对任务许可高度，不会在运行时自动更新；工具或任务边界
+变化后必须重新测量并人工确认。
 
 构造本身不打开硬件。显式 `startup()` 才由原流程打开 Runtime 并执行对应 READ_ONLY 或 MOTION
 模式；`shutdown()` 关闭通信资源。真实执行仍必须由调用者显式传入 `execute=True`，沿用现有运动
 授权规则。正常 CLI 的 `move` 命令调用 `MushroomRobotController.move_to_base_pose()`；`workspace`
-命令只读显示 Base-frame 培养槽边界、arm-local 正负偏置区、Robot motion envelope、startup、
-side-switch clearance 和轴/关节限位，并明确 envelope 不是碰撞模型。
+命令只读显示 Base-frame 培养槽边界、arm-local 单一工作区、Robot motion envelope、startup、
+workspace-entry clearance 和轴/关节限位，并明确 envelope 不是碰撞模型。
 
 ## 6. 明确不提供的接口
 

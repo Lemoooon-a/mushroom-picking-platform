@@ -52,19 +52,19 @@ cd host
 
 ### 2.1 Base TCP 五轴目标预览
 
-`plan-base` 读取当前五轴逻辑状态与已验证的 Base 标定，计算当前/目标局部坐标和侧别，再调用
+`plan-base` 读取当前五轴逻辑状态与已验证的机械几何，计算当前/目标局部坐标和工作区状态，再调用
 只读 `validate_positions()` 检查每一个完整五轴阶段。当前 Slide 有合法解时必须保持；否则依次
-尝试正负偏置中心和 10 mm 有限 fallback。
+尝试唯一工作区中心和 10 mm 有限 fallback。
 
-同侧打印一个 `DIRECT`；正负侧切换打印 `LIFT`、`TRANSIT`、`LOWER`。当前 Robot motion
-envelope 的 side-switch 策略是 Base `Z=150 mm` 绝对最低高度，实际切换高度为当前、目标与
-150 mm 三者中的最高值，并由正式运动学换算
-为 Z 轴目标。当前 TCP 已高于 150 mm 时不会继续上抬，`LIFT` 为零位移检查并直接进入横移。
+`INSIDE→INSIDE` 打印一个 `DIRECT`；`OUTSIDE→INSIDE` 打印 `LIFT`、`TRANSIT`、`LOWER`。当前 Robot motion
+envelope 的 workspace-entry 策略是 Base `Z=200 mm` 绝对最低高度，实际过渡高度为当前、目标与
+200 mm 三者中的最高值，并由正式运动学换算
+为 Z 轴目标。当前 TCP 已高于 200 mm 时不会继续上抬，`LIFT` 为零位移检查并直接进入横移。
 输出包含每阶段 Base 位姿、五轴目标、局部
 工作区和 FK 残差。它没有 `--slide-mm`、`--allow-unvalidated-frame-transform` 或 `--execute`；标定
 缺失或未验证会拒绝规划，不会 submit、wait、home、stop、torque enable 或写回标定。
 
-正负偏置矩形是运动学约束，不只是可视化提示；最终普通五轴解必须位于其中一侧。真实 Base
+唯一 arm-local 矩形 `[100,600]×[150,350] mm` 是运动学约束，不只是可视化提示；最终普通五轴解必须位于其中。真实 Base
 目标执行仍是后续独立任务。
 
 ## 3. STM32 Maintenance
@@ -211,14 +211,13 @@ quit
 ```
 
 `tray_x_mm/tray_y_mm/tray_z_mm` 必须从 `workspace` 显示、且经用户确认的 Base-frame 培养槽范围
-内选择。本机当前确认范围为 X `[20, 480] mm`、Y `[20, 700] mm`、Z `[0, 180] mm`；缺失或
+内选择。本机当前确认范围为 X `[100, 600] mm`、Y `[150, 800] mm`、Z `[10, 200] mm`；缺失或
 未确认配置会在打开硬件前拒绝 CLI 启动。
 
-`workspace` 还会分别显示 arm-local 正负偏置区、startup pose、side-switch clearance 和轴/关节
-限位，并明确 Tray 不是机械范围、offset 不是 Base 坐标、Robot motion envelope 不是碰撞模型。
+`workspace` 还会显示 arm-local 单一工作区、startup pose、workspace-entry clearance 和轴/关节
+限位，并明确 Tray 不是机械范围、arm-local workspace 不是 Base 坐标、Robot motion envelope 不是碰撞模型。
 
-这里的 Z 是最终 TCP 在 Base frame 中的绝对高度；`0 mm` 不是 Z 轴逻辑零位，`180 mm` 是当前
-Base 标定和 Tool/TCP 几何计算出的 Z 回零 TCP 高度。配置是静态快照，标定或工具长度变化后必须
+这里的 Z 是最终 TCP 在 Base frame 中的绝对高度。配置是静态快照，工具长度或任务边界变化后必须
 重新计算并确认。
 
 吸盘实际映射：`grip`=`SU`（泵 ON、释放阀 CLOSED），`release`=`SR`（泵 OFF、阀 OPEN，固件默认

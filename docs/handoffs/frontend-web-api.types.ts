@@ -22,7 +22,7 @@ export type RobotState =
 
 export type AxisName = "slide" | "z" | "shoulder" | "elbow" | "rotation";
 export type AxisKind = "linear" | "rotary";
-export type ScanPositionIndex = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+export type ScanPositionIndex = 1 | 2 | 3 | 4;
 export type HandEyeCalibrationStatus = "missing" | "provisional" | "validated";
 export type MotionCommandStatus =
   | "accepted"
@@ -67,7 +67,7 @@ export interface ApiErrorResponse {
 export interface RobotCapabilities {
   base_frame_motion: boolean;
   tray_workspace_gate: boolean;
-  offset_planning: boolean;
+  workspace_planning: boolean;
   robot_motion_envelope: boolean;
   joint_holding: boolean;
   suction_command: boolean;
@@ -178,14 +178,12 @@ export interface RigidTransformJson {
   rotation_rpy_deg: [number, number, number];
 }
 
-export type WorkspaceSide = "positive" | "negative" | "outside";
+export type WorkspaceStatus = "inside" | "outside";
 
 export type SlideSelectionReason =
   | "keep_current_slide"
-  | "positive_offset_center"
-  | "negative_offset_center"
-  | "positive_offset_fallback"
-  | "negative_offset_fallback"
+  | "workspace_center"
+  | "workspace_fallback"
   | "fixed_slide";
 
 export interface FiveAxisSolution {
@@ -196,7 +194,7 @@ export interface FiveAxisSolution {
   rotation_deg: number;
   local_x_mm: number;
   local_y_mm: number;
-  workspace_side: WorkspaceSide;
+  workspace_status: WorkspaceStatus;
   slide_selection_reason: SlideSelectionReason;
   elbow_branch: string;
   position_error_xyz_mm: [number, number, number];
@@ -230,9 +228,9 @@ export interface BaseMovePlan {
   requested_base_T_tool_target: RigidTransformJson;
   current_local_x_mm: number;
   current_local_y_mm: number;
-  current_workspace_side: WorkspaceSide;
-  target_workspace_side: WorkspaceSide;
-  requires_side_switch_clearance: boolean;
+  current_workspace_status: WorkspaceStatus;
+  target_workspace_status: WorkspaceStatus;
+  requires_workspace_entry_clearance: boolean;
   clearance_lift_mm: number;
   clearance_base_z_mm: number | null;
   stages: BaseMoveStage[];
@@ -349,7 +347,7 @@ export interface PickResult {
 }
 
 export interface ScanPositionResult {
-  /** Fixed 1-based scan position index. Valid configured positions are 1 through 8. */
+  /** Fixed 1-based scan position index. Valid configured positions are 1 through 4. */
   scan_index: ScanPositionIndex;
   detected_count: number;
   picked_count: number;

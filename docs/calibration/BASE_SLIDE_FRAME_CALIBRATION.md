@@ -8,8 +8,8 @@
 ## 当前顶部 Z Home 定义
 
 当前标定对应新的顶部 Z Home：Base `+Z` 和 Z 逻辑正方向向上，顶部为逻辑 `0 mm`，向下伸出为
-负值。本轮偏置工作区和跨区规划只读取既有 `base_T_slide_zero` 及其 `validated` 状态，不重新计算
-矩阵、不修改时间戳，也不会自动把 provisional 状态升级为 validated。
+负值。当前 arm-local 工作区和 workspace-entry 规划均不读取 `base_T_slide_zero`；既有字段只供
+历史审计，不重新计算矩阵、不修改时间戳，也不会自动把 provisional 状态升级为 validated。
 
 如果未来再次改变 Z Home 物理位置、Z 逻辑方向或 `Z=0` 的机械含义，必须重新标定并按独立
 参考位姿流程重新验证 Base–Slide-zero。
