@@ -44,7 +44,12 @@ class BaseSlideCalibrationTests(unittest.TestCase):
             x_mm=100, y_mm=-200, z_mm=300, yaw_deg=0
         )
         result = self._recover(known)
-        np.testing.assert_allclose(result.base_T_slide_zero.matrix, known.matrix)
+        np.testing.assert_allclose(
+            result.base_T_slide_zero.matrix,
+            known.matrix,
+            rtol=0.0,
+            atol=1e-12,
+        )
 
     def test_known_yaw(self) -> None:
         known = RigidTransform.from_xyz_yaw_deg(

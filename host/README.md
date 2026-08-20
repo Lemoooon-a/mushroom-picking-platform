@@ -242,7 +242,7 @@ address 同样只是本次启动的运行时信息，不是永久设备身份。
 `COMx`，代码不按操作系统构造路径。`gs_usb` 不是串口，因此不返回串口路径。Windows
 使用 `gs_usb` 时需要由部署人员正确安装 WinUSB 兼容驱动，发现代码不会修改系统驱动。
 Windows 还通过 `requirements.txt` 安装 `libusb-package`，程序会在系统未提供 libusb 时
-显式加载虚拟环境内的 `libusb-1.0.dll`。
+显式加载虚拟环境内的 `libusb-1.0.dll`。Linux 和 macOS 使用系统安装的 libusb。
 
 只读诊断命令如下；它们只枚举 USB descriptor 或匹配配置，不打开串口、不启动 CAN、
 不设置 bitrate，也不发送任何控制命令：

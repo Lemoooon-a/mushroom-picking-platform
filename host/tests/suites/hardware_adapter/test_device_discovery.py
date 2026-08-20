@@ -315,13 +315,21 @@ class GsUsbDiscoveryTests(unittest.TestCase):
         _scan: Mock,
     ) -> None:
         bundled_backend = object()
+        bundled_package = SimpleNamespace(find_library=Mock())
         get_backend.side_effect = [None, bundled_backend]
 
-        self.assertEqual(list_gs_usb_devices(), ())
+        with patch.dict(
+            "sys.modules",
+            {"libusb_package": bundled_package},
+        ):
+            self.assertEqual(list_gs_usb_devices(), ())
 
         self.assertEqual(get_backend.call_count, 2)
         self.assertEqual(get_backend.call_args_list[0], call())
-        self.assertIn("find_library", get_backend.call_args_list[1].kwargs)
+        self.assertIs(
+            get_backend.call_args_list[1].kwargs["find_library"],
+            bundled_package.find_library,
+        )
 
     @patch("drivers.device_discovery.GsUsb.scan")
     def test_unique_match_returns_device_and_metadata(self, scan: Mock) -> None:

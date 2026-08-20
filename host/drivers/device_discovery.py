@@ -242,8 +242,8 @@ def _ensure_gs_usb_backend() -> None:
         import libusb_package
     except ImportError as exc:
         raise RuntimeError(
-            "libusb 1.0 backend is unavailable; install the Windows dependencies "
-            "from requirements.txt"
+            "libusb 1.0 backend is unavailable; install system libusb or the "
+            "platform dependencies from requirements.txt"
         ) from exc
     if libusb1.get_backend(find_library=libusb_package.find_library) is None:
         raise RuntimeError("libusb 1.0 backend could not be loaded")
