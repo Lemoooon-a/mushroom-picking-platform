@@ -1,0 +1,268 @@
+<mxfile host="Electron">
+  <diagram id="bygevo71-ryhv" name="Page-1">
+    <mxGraphModel dx="2443" dy="995" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="100" pageHeight="80" background="#FFFFFF" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="6ldO5Jqf9uK5U63YUw69-7" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;" value="" vertex="1">
+          <mxGeometry height="620" width="890" x="-795" y="10" as="geometry" />
+        </mxCell>
+        <mxCell id="title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=20;fontStyle=1;fontColor=#0F172A;" value="Mushroom Picking Robot – System Workflow and Data Flow" vertex="1">
+          <mxGeometry height="32" width="525" x="-595" y="10" as="geometry" />
+        </mxCell>
+        <mxCell id="frontend-group" parent="1" style="swimlane;html=1;horizontal=1;startSize=30;rounded=1;arcSize=10;fillColor=#DCEEFF;swimlaneFillColor=#F7FBFF;strokeColor=#3B82F6;strokeWidth=2;fontSize=15;fontStyle=1;fontColor=#1E3A8A;collapsible=0;" value="FRONTEND" vertex="1">
+          <mxGeometry height="350" width="175" x="-770" y="115" as="geometry" />
+        </mxCell>
+        <mxCell id="backend-group" parent="1" style="swimlane;html=1;horizontal=1;startSize=30;rounded=1;arcSize=10;fillColor=#EDE9FE;swimlaneFillColor=#FBFAFF;strokeColor=#7C3AED;strokeWidth=2.5;fontSize=15;fontStyle=1;fontColor=#4C1D95;collapsible=0;" value="BACKEND" vertex="1">
+          <mxGeometry height="385" width="385" x="-550" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="be-transform" parent="backend-group" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#A78BFA;strokeWidth=1.5;fontColor=#3B0764;fontSize=11;align=center;verticalAlign=middle;spacing=3;" value="&lt;b&gt;⑦ Coordinate Transform&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9.5px&quot;&gt;Camera XYZ + axis snapshot&lt;br&gt;→ Base-frame target&lt;/font&gt;" vertex="1">
+          <mxGeometry height="68" width="145" x="10" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="be-task" parent="backend-group" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#F5F3FF;strokeColor=#7C3AED;strokeWidth=2.5;fontColor=#3B0764;fontSize=13;align=center;verticalAlign=middle;spacing=4;" value="&lt;b&gt;Task Controller&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;③ Orchestrate workflow&lt;br&gt;Move to scan position&lt;/font&gt;" vertex="1">
+          <mxGeometry height="75" width="185" x="155" y="37" as="geometry" />
+        </mxCell>
+        <mxCell id="6ldO5Jqf9uK5U63YUw69-1" edge="1" parent="backend-group" source="be-api" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;strokeWidth=2.4;curved=0;endArrow=block;endFill=1;strokeColor=light-dark(#253B53,#253B53);" target="be-task">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="be-api" parent="backend-group" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#A78BFA;strokeWidth=1.5;fontColor=#3B0764;fontSize=12;align=center;verticalAlign=middle;" value="&lt;b&gt;Web API&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;HTTP JSON&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="105" x="10" y="47" as="geometry" />
+        </mxCell>
+        <mxCell id="be-vision" parent="backend-group" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#A78BFA;strokeWidth=1.5;fontColor=#3B0764;fontSize=12;align=center;verticalAlign=middle;" value="&lt;b&gt;Vision Interface&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;Fresh capture&lt;br&gt;Target response&lt;/font&gt;" vertex="1">
+          <mxGeometry height="58" width="120" x="187.5" y="135" as="geometry" />
+        </mxCell>
+        <mxCell id="6ldO5Jqf9uK5U63YUw69-2" edge="1" parent="backend-group" source="be-vision" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;strokeWidth=2.4;curved=0;endArrow=block;endFill=1;strokeColor=light-dark(#253B53,#253B53);entryX=1;entryY=0.5;entryDx=0;entryDy=0;" target="be-transform">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="170" y="150" as="sourcePoint" />
+            <mxPoint x="195" y="150" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tcp-request-label" parent="backend-group" style="text;html=1;strokeColor=none;fillColor=default;align=center;verticalAlign=middle;fontSize=8.3;fontColor=#0F172A;labelBackgroundColor=none;labelBorderColor=none;textShadow=0;rounded=1;shadow=0;" value="④ TCP JSON&lt;br&gt;&lt;b&gt;Capture Request&lt;/b&gt;" vertex="1">
+          <mxGeometry height="28" width="60" x="345" y="37" as="geometry" />
+        </mxCell>
+        <mxCell id="e-plan-motion" edge="1" parent="backend-group" source="be-planning" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2.5;strokeColor=#243B53;endArrow=block;endFill=1;labelBackgroundColor=light-dark(#FBFAFF,#FFFFFF);fontSize=8.2;exitX=0;exitY=0.68;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="be-motion" value="Five-axis Targets">
+          <mxGeometry relative="1" x="0.1809" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="128" y="253" />
+              <mxPoint x="128" y="280" />
+              <mxPoint x="127" y="280" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="size-class-label" parent="backend-group" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=8;fontColor=#475569;" value="Size Class" vertex="1">
+          <mxGeometry height="8" width="84" x="206" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="tcp-response-label" parent="backend-group" style="text;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=8.1;fontColor=#475569;" value="⑥ Target Detection&lt;br&gt;XYZ • Conf • Size" vertex="1">
+          <mxGeometry height="28" width="65" x="325" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="6ldO5Jqf9uK5U63YUw69-8" edge="1" parent="backend-group" source="be-task" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;strokeWidth=2.4;curved=0;endArrow=block;endFill=1;strokeColor=light-dark(#253B53,#253B53);entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="be-vision">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="278" y="120" as="sourcePoint" />
+            <mxPoint x="245" y="120" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="vision-group" parent="1" style="swimlane;html=1;horizontal=1;startSize=30;rounded=1;arcSize=10;fillColor=#D1FAE5;swimlaneFillColor=#F7FFFB;strokeColor=#10B981;strokeWidth=2;fontSize=15;fontStyle=1;fontColor=#065F46;collapsible=0;labelBackgroundColor=light-dark(#fbfaff, #ededed);" value="VISION" vertex="1">
+          <mxGeometry height="380" width="222.5" x="-137.5" y="85" as="geometry" />
+        </mxCell>
+        <mxCell id="vi-target" parent="vision-group" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#10B981;strokeWidth=2;fontColor=#064E3B;fontSize=11.5;align=center;verticalAlign=middle;" value="&lt;b&gt;Target Selection&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9.5px&quot;&gt;Camera-frame XYZ&lt;br&gt;Confidence • Size Class&lt;/font&gt;" vertex="1">
+          <mxGeometry height="65" width="145" x="32.5" y="295" as="geometry" />
+        </mxCell>
+        <mxCell id="e-target-gateway" edge="1" parent="vision-group" source="vi-target" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=1.3;strokeColor=#10B981;endArrow=blockThin;endFill=1;exitX=1;exitY=0.5;entryX=1;entryY=0.5;entryDx=0;entryDy=0;exitDx=0;exitDy=0;" target="vi-gateway" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="213" y="327" />
+              <mxPoint x="213" y="59" />
+            </Array>
+            <mxPoint x="175" y="316.5" as="sourcePoint" />
+            <mxPoint x="190" y="53" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="vi-note" parent="vision-group" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=8.5;fontColor=#047857;" value="Target response: target_detection / no_target / error" vertex="1">
+          <mxGeometry height="18" width="175" x="17.5" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="vi-seg" parent="vision-group" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#34D399;strokeWidth=1.5;fontColor=#064E3B;fontSize=10.5;align=center;verticalAlign=middle;" value="&lt;b&gt;Mushroom&lt;br&gt;Segmentation&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;Instance Mask&lt;/font&gt;" vertex="1">
+          <mxGeometry height="70" width="82" x="17.5" y="195" as="geometry" />
+        </mxCell>
+        <mxCell id="vi-geometry" parent="vision-group" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#34D399;strokeWidth=1.5;fontColor=#064E3B;fontSize=10.5;align=center;verticalAlign=middle;" value="&lt;b&gt;Depth &amp;amp;&lt;br&gt;3D Geometry&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;XYZ + Diameter&lt;/font&gt;" vertex="1">
+          <mxGeometry height="70" width="85" x="107.5" y="195" as="geometry" />
+        </mxCell>
+        <mxCell id="e-seg-geom" edge="1" parent="vision-group" source="vi-seg" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=1.5;strokeColor=#243B53;endArrow=block;endFill=1;labelBackgroundColor=default;fontSize=8;exitX=0.5;exitY=1;entryX=0.25;entryY=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;" target="vi-geometry" value="Mask">
+          <mxGeometry relative="1" x="-0.0228" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="59" y="280" />
+              <mxPoint x="129" y="280" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-geom-target" edge="1" parent="vision-group" source="vi-geometry" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2.2;strokeColor=#243B53;endArrow=block;endFill=1;labelBackgroundColor=none;fontSize=8.2;exitX=0.5;exitY=1;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" target="vi-target" value="XYZ + Diameter">
+          <mxGeometry relative="1" x="-0.225" y="28" as="geometry">
+            <mxPoint x="28" y="-23" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="vi-acq" parent="vision-group" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#34D399;strokeWidth=1.5;fontColor=#064E3B;fontSize=11.5;align=center;verticalAlign=middle;" value="&lt;b&gt;RGB-D Acquisition&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9.5px&quot;&gt;⑤ Fresh aligned frame&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="175" x="17.5" y="105" as="geometry" />
+        </mxCell>
+        <mxCell id="e-acq-seg" edge="1" parent="vision-group" source="vi-acq" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2.1;strokeColor=#243B53;endArrow=block;endFill=1;labelBackgroundColor=#FFFFFF;fontSize=9;exitX=0.233;exitY=1.003;entryX=0.5;entryY=0;exitDx=0;exitDy=0;exitPerimeter=0;" target="vi-seg" value="RGB">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-acq-geom" edge="1" parent="vision-group" source="vi-acq" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=1.5;strokeColor=#64748B;endArrow=block;endFill=1;labelBackgroundColor=#FFFFFF;fontSize=8;exitX=0.757;exitY=0.998;entryX=0.5;entryY=0;exitDx=0;exitDy=0;exitPerimeter=0;" target="vi-geometry" value="Aligned Depth">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vi-gateway" parent="vision-group" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#34D399;strokeWidth=1.5;fontColor=#064E3B;fontSize=11.5;align=center;verticalAlign=middle;" value="&lt;b&gt;Vision Gateway&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9.5px&quot;&gt;TCP JSON request / response&lt;/font&gt;" vertex="1">
+          <mxGeometry height="48" width="175" x="17.5" y="35" as="geometry" />
+        </mxCell>
+        <mxCell id="e-gateway-acq" edge="1" parent="vision-group" source="vi-gateway" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2.2;strokeColor=#243B53;endArrow=block;endFill=1;labelBackgroundColor=#FFFFFF;fontSize=9;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="vi-acq" value="Fresh frame">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="hardware-group" parent="1" style="swimlane;html=1;horizontal=1;startSize=28;rounded=1;arcSize=10;fillColor=#FFEDD5;swimlaneFillColor=#FFFBF5;strokeColor=#F59E0B;strokeWidth=2;fontSize=14;fontStyle=1;fontColor=#92400E;collapsible=0;" value="ROBOT HARDWARE" vertex="1">
+          <mxGeometry height="105" width="565" x="-626.5" y="510" as="geometry" />
+        </mxCell>
+        <mxCell id="6ldO5Jqf9uK5U63YUw69-6" edge="1" parent="1" source="user" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=2.4;endArrow=block;endFill=1;curved=0;" target="fe-ui">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-785" y="88" />
+              <mxPoint x="-785" y="181" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="user" parent="1" style="rounded=1;arcSize=50;html=1;whiteSpace=wrap;fillColor=#0F172A;strokeColor=#0F172A;fontColor=#FFFFFF;fontSize=13;fontStyle=1;" value="USER" vertex="1">
+          <mxGeometry height="34" width="105" x="-735" y="71" as="geometry" />
+        </mxCell>
+        <mxCell id="fe-ui" parent="1" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#60A5FA;strokeWidth=1.5;fontColor=#172554;fontSize=12;align=center;verticalAlign=middle;spacing=4;" value="&lt;b&gt;Control &amp;amp; Monitoring UI&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;① Pick One / Pick All&lt;br&gt;Robot &amp;amp; task status&lt;/font&gt;" vertex="1">
+          <mxGeometry height="62" width="145" x="-755" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="fe-logic" parent="1" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#60A5FA;strokeWidth=1.5;fontColor=#172554;fontSize=11;align=center;verticalAlign=middle;spacing=3;" value="&lt;b&gt;Command &amp;amp; Task Logic&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9.5px&quot;&gt;Startup • Stop • Move&lt;br&gt;Pick task sequencing&lt;/font&gt;" vertex="1">
+          <mxGeometry height="65" width="145" x="-755" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="fe-client" parent="1" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#60A5FA;strokeWidth=1.5;fontColor=#172554;fontSize=12;align=center;verticalAlign=middle;spacing=4;" value="&lt;b&gt;HTTP API &amp;amp;&lt;br&gt;Vision Stream Client&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;Commands • Results • Preview&lt;/font&gt;" vertex="1">
+          <mxGeometry height="67" width="145" x="-755" y="335" as="geometry" />
+        </mxCell>
+        <mxCell id="fe-note" parent="1" style="shape=note;html=1;whiteSpace=wrap;size=14;fillColor=#EFF6FF;strokeColor=#93C5FD;fontColor=#1E40AF;fontSize=9.5;align=center;verticalAlign=middle;" value="Pick All = Frontend repeats Pick One" vertex="1">
+          <mxGeometry height="28" width="135" x="-750" y="422" as="geometry" />
+        </mxCell>
+        <mxCell id="be-planning" parent="1" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#A78BFA;strokeWidth=1.5;fontColor=#3B0764;fontSize=11;align=center;verticalAlign=middle;spacing=3;" value="&lt;b&gt;⑧ Kinematics &amp;amp; Motion Planning&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9.3px&quot;&gt;Approach • Contact • Lift • Place&lt;br&gt;Five-axis targets + safe stages&lt;/font&gt;" vertex="1">
+          <mxGeometry height="70" width="170" x="-385" y="285" as="geometry" />
+        </mxCell>
+        <mxCell id="normal-bin" parent="1" style="rounded=1;arcSize=50;html=1;whiteSpace=wrap;fillColor=#ECFDF5;strokeColor=#34D399;fontColor=#065F46;fontSize=8.2;align=center;verticalAlign=middle;" value="normal&lt;br&gt;Normal Bin" vertex="1">
+          <mxGeometry height="27" width="82" x="-385" y="370" as="geometry" />
+        </mxCell>
+        <mxCell id="large-bin" parent="1" style="rounded=1;arcSize=50;html=1;whiteSpace=wrap;fillColor=#FFF7ED;strokeColor=#FB923C;fontColor=#9A3412;fontSize=8.2;align=center;verticalAlign=middle;" value="oversized&lt;br&gt;Large Bin" vertex="1">
+          <mxGeometry height="27" width="82" x="-297" y="370" as="geometry" />
+        </mxCell>
+        <mxCell id="be-motion" parent="1" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#A78BFA;strokeWidth=1.5;fontColor=#3B0764;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;Unified Motion Controller&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9.5px&quot;&gt;Coordinated five-axis execution&lt;/font&gt;" vertex="1">
+          <mxGeometry height="48" width="185" x="-515" y="405" as="geometry" />
+        </mxCell>
+        <mxCell id="be-drivers" parent="1" style="rounded=1;arcSize=12;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#A78BFA;strokeWidth=1.5;fontColor=#3B0764;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;Hardware&lt;br&gt;Drivers&lt;/b&gt;" vertex="1">
+          <mxGeometry height="48" width="85" x="-300" y="405" as="geometry" />
+        </mxCell>
+        <mxCell id="hw-slide" parent="1" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#F59E0B;strokeWidth=1.4;fontColor=#78350F;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;Slide + Z&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9.5px&quot;&gt;STM32&lt;/font&gt;" vertex="1">
+          <mxGeometry height="52" width="125" x="-621.5" y="545" as="geometry" />
+        </mxCell>
+        <mxCell id="hw-can" parent="1" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#F59E0B;strokeWidth=1.4;fontColor=#78350F;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;Shoulder + Elbow&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9.5px&quot;&gt;CAN Motors&lt;/font&gt;" vertex="1">
+          <mxGeometry height="52" width="125" x="-481.5" y="545" as="geometry" />
+        </mxCell>
+        <mxCell id="hw-rotation" parent="1" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#F59E0B;strokeWidth=1.4;fontColor=#78350F;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;Rotation&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9.5px&quot;&gt;Feetech Servo&lt;/font&gt;" vertex="1">
+          <mxGeometry height="52" width="125" x="-341.5" y="545" as="geometry" />
+        </mxCell>
+        <mxCell id="hw-suction" parent="1" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#F59E0B;strokeWidth=1.4;fontColor=#78350F;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;Suction&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9.5px&quot;&gt;Pump + Valve&lt;/font&gt;" vertex="1">
+          <mxGeometry height="52" width="125" x="-201.5" y="545" as="geometry" />
+        </mxCell>
+        <mxCell id="pick-execution" parent="1" style="text;html=1;strokeColor=none;fillColor=#FFFFFF;align=left;verticalAlign=middle;fontSize=8.2;fontStyle=1;fontColor=#92400E;" value="⑨ Execute: Approach → Grip → Lift → Place → Release" vertex="1">
+          <mxGeometry height="18" width="220" x="-626.5" y="473" as="geometry" />
+        </mxCell>
+        <mxCell id="e-ui-logic" edge="1" parent="1" source="fe-ui" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2.2;strokeColor=#243B53;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="fe-logic" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-logic-client" edge="1" parent="1" source="fe-logic" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2.2;strokeColor=#243B53;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="fe-client" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-fe-be-command" edge="1" parent="1" source="fe-client" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2.8;strokeColor=#243B53;endArrow=block;endFill=1;exitX=1;exitY=0.25;entryX=0;entryY=0.3;exitDx=0;exitDy=0;" target="be-api" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-580" y="352" />
+              <mxPoint x="-580" y="144" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-be-fe-status" edge="1" parent="1" source="be-api" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=1.4;strokeColor=#64748B;endArrow=block;endFill=1;exitX=0;exitY=0.75;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-570" y="168" />
+              <mxPoint x="-570" y="385" />
+            </Array>
+            <mxPoint x="-610" y="385" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-vi-gateway-request" edge="1" parent="1" source="be-vision" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2.5;strokeColor=#243B53;endArrow=block;endFill=1;exitX=1;exitY=0.25;entryX=0;entryY=0.5;entryDx=0;entryDy=0;exitDx=0;exitDy=0;" target="vi-gateway" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-195" y="229" />
+              <mxPoint x="-195" y="144" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-transform-plan" edge="1" parent="1" source="be-transform" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2.5;strokeColor=light-dark(#253B53,#000000);endArrow=block;endFill=1;labelBackgroundColor=none;fontSize=8.5;exitX=0.5;exitY=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="be-planning" value="Base Target">
+          <mxGeometry relative="1" x="0.277" y="10" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="-467" y="320" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-plan-normal" edge="1" parent="1" source="be-planning" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;dashPattern=4 3;strokeWidth=1.2;strokeColor=#10B981;endArrow=block;endFill=1;exitX=0.25;exitY=1;entryX=0.5;entryY=0;" target="normal-bin" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-plan-large" edge="1" parent="1" source="be-planning" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;dashPattern=4 3;strokeWidth=1.2;strokeColor=#F97316;endArrow=block;endFill=1;exitX=0.75;exitY=1;entryX=0.5;entryY=0;" target="large-bin" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-motion-drivers" edge="1" parent="1" source="be-motion" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2.5;strokeColor=#243B53;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="be-drivers" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-drivers-hw" edge="1" parent="1" source="be-drivers" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2.8;strokeColor=#243B53;endArrow=block;endFill=1;exitX=0.35;exitY=1;entryX=0.419;entryY=0.012;entryDx=0;entryDy=0;entryPerimeter=0;" target="hardware-group" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-270" y="480" />
+              <mxPoint x="-390" y="480" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-monitoring" edge="1" parent="1" source="vi-gateway" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;dashPattern=7 5;strokeWidth=1.7;strokeColor=#0EA5E9;endArrow=block;endFill=1;labelBackgroundColor=#FFFFFF;fontSize=9;fontColor=#0369A1;exitX=0;exitY=0.25;entryX=0.88;entryY=0;exitDx=0;exitDy=0;" target="fe-ui" value="MJPEG Stream + Health Status&lt;br&gt;&lt;font style=&quot;font-size:8px&quot;&gt;Monitoring path (not robot control)&lt;/font&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-155" y="132" />
+              <mxPoint x="-155" y="63" />
+              <mxPoint x="-627" y="63" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="http-command-label" parent="1" style="text;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=8.2;fontStyle=1;fontColor=default;labelBackgroundColor=none;html=1;textShadow=0;labelBorderColor=none;rounded=1;" value="② HTTP JSON&lt;br&gt;Commands" vertex="1">
+          <mxGeometry height="27" width="62" x="-595" y="105" as="geometry" />
+        </mxCell>
+        <mxCell id="http-status-label" parent="1" style="text;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=8.2;fontColor=#475569;rounded=1;labelBackgroundColor=none;direction=west;" value="⑩ ← Status&lt;br&gt;Result • Fault" vertex="1">
+          <mxGeometry height="28" width="62" x="-610" y="394" as="geometry" />
+        </mxCell>
+        <mxCell id="hw-command-label" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=8;fontColor=#0F172A;" value="Axis Commands&lt;br&gt;Grip / Release" vertex="1">
+          <mxGeometry height="24" width="72" x="-369" y="486" as="geometry" />
+        </mxCell>
+        <mxCell id="hw-feedback-label" parent="1" style="text;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=8;fontColor=#475569;" value="Position • Arrived&lt;br&gt;Ack • Fault" vertex="1">
+          <mxGeometry height="24" width="78" x="-231.5" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="e-hw-drivers" edge="1" parent="1" source="hardware-group" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=1.4;strokeColor=#64748B;endArrow=block;endFill=1;exitX=0.697;exitY=0.002;entryX=0.75;entryY=1;entryDx=0;entryDy=0;exitDx=0;exitDy=0;exitPerimeter=0;" target="be-drivers" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-236" y="510" />
+              <mxPoint x="-236" y="453" />
+            </Array>
+            <mxPoint x="-266.17999999999995" y="510.5" as="sourcePoint" />
+            <mxPoint x="-246.9799999999999" y="453.5000000000001" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="6ldO5Jqf9uK5U63YUw69-10" edge="1" parent="1" source="vi-gateway" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=1;entryY=0.75;entryDx=0;entryDy=0;strokeColor=light-dark(#64748B,#000000);curved=0;strokeWidth=2.4;endArrow=block;endFill=1;" target="be-vision">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

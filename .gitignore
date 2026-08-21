@@ -35,6 +35,9 @@ log/
 node_modules/
 *.egg-info/
 
+# Generated analysis and figure outputs
+/outputs/
+
 # Runtime logs
 logs/
 *.log
